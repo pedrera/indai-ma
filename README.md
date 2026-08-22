@@ -1,6 +1,6 @@
 # indAI MA
 
-Versión 0.2 de un asistente web para el sector industrial, construido con Streamlit y acceso desacoplado al proveedor del LLM.
+Versión 0.3 de un asistente web B2B multigás para los sectores sanitario e industrial, construido con Streamlit y acceso desacoplado al proveedor del LLM.
 
 ## Requisitos
 
@@ -44,10 +44,25 @@ La sidebar permite cambiar el proveedor y el modelo durante la sesión sin modif
 
 La interfaz de usuario obtiene la implementación configurada sin depender directamente del proveedor.
 
+## Modos
+
+- **Chat**: conversación con memoria durante la sesión activa.
+- **Gas B2B Portfolio Analysis**: genera y valida con Pydantic un análisis estructurado de demanda, suministro, posiciones cortas y riesgos comerciales para gas natural, biometano, GNL y mezclas de hidrógeno.
+
+El modo de análisis solicita JSON explícito al modelo y valida la respuesta antes de mostrarla. Una respuesta inválida genera un mensaje controlado y no detiene la aplicación.
+
+Las generaciones se ejecutan fuera del hilo de interfaz. Mientras el modelo trabaja, la aplicación muestra su estado y permite interrumpir realmente la petición con **Detener generación**. El timeout total se configura en `.env`:
+
+```env
+LLM_TIMEOUT_SECONDS=300
+```
+
+Una cancelación o timeout conserva el historial anterior y no añade una respuesta incompleta.
+
 ## Ejecución
 
 ```powershell
 streamlit run app.py
 ```
 
-La versión 0.2 conserva el historial conversacional en la sesión activa de Streamlit y lo envía como contexto en cada consulta. El botón **Nueva conversación** limpia solo ese historial. No existe persistencia entre sesiones ni se utiliza una base de datos.
+La versión 0.3 conserva el historial conversacional en la sesión activa de Streamlit. El botón **Nueva conversación** limpia solo ese historial. No existe persistencia entre sesiones ni se utiliza una base de datos.
