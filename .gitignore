@@ -1,0 +1,7 @@
+.env
+.idea/
+venv/
+__pycache__/
+*.py[cod]
+*.iml
+streamlit.*.log
