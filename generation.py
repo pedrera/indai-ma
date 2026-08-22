@@ -1,11 +1,15 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from queue import Empty, Queue
 from threading import Lock, Thread
-from time import monotonic
+from time import monotonic, perf_counter
 
+from diagnostics import get_performance_logger
 from llm_client import GenerationCancelledError, LLMProvider, LLMTimeoutError
+
+
+logger = get_performance_logger()
 
 
 class GenerationStatus(str, Enum):
@@ -21,6 +25,10 @@ class GenerationResult:
     status: GenerationStatus
     content: str | None = None
     error: str | None = None
+    elapsed_seconds: float | None = None
+    provider_name: str | None = None
+    model_name: str | None = None
+    tool_executions: list[dict] = field(default_factory=list)
 
 
 class GenerationJob:
@@ -78,10 +86,23 @@ class GenerationJob:
         return self._get_cancel_reason()
 
     def _run(self) -> None:
+        run_started_at = monotonic()
+        provider_started_at = perf_counter()
         try:
-            content = self.provider.generate_response(
+            print(
+                "[LLM] Iniciando llamada "
+                f"provider={self.provider.provider_name} "
+                f"model={self.provider.model}",
+                flush=True,
+            )
+            response = self.provider.generate_response(
                 self.messages,
                 timeout_seconds=self.timeout_seconds,
+            )
+            print(
+                "[LLM] Respuesta completa recibida "
+                f"elapsed_seconds={perf_counter() - provider_started_at:.3f}",
+                flush=True,
             )
             cancel_reason = self._get_cancel_reason()
             if cancel_reason is not None:
@@ -89,7 +110,8 @@ class GenerationJob:
             else:
                 result = GenerationResult(
                     status=GenerationStatus.COMPLETED,
-                    content=content,
+                    content=response.content,
+                    tool_executions=response.tool_executions,
                 )
         except GenerationCancelledError:
             result = GenerationResult(
@@ -110,6 +132,22 @@ class GenerationJob:
                     error=str(error),
                 )
 
+        result = replace(
+            result,
+            elapsed_seconds=perf_counter() - provider_started_at,
+            provider_name=self.provider.provider_name,
+            model_name=self.provider.model,
+        )
+
+        logger.info(
+            "stage=generation_job provider=%s model=%s status=%s "
+            "duration_seconds=%.4f message_count=%d",
+            self.provider.provider_name,
+            self.provider.model,
+            result.status.value,
+            monotonic() - run_started_at,
+            len(self.messages),
+        )
         self._result_queue.put(result)
 
     def _get_cancel_reason(self) -> GenerationStatus | None:

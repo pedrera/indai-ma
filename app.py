@@ -1,5 +1,8 @@
 import streamlit as st
+from time import perf_counter
+from uuid import uuid4
 
+from diagnostics import get_performance_logger
 from gas_analysis import (
     GasAnalysisError,
     GasB2BPortfolioAnalysis,
@@ -21,6 +24,27 @@ from llm_client import (
 )
 
 
+logger = get_performance_logger()
+
+GAS_TYPE_LABELS = {
+    "natural_gas": "Gas natural",
+    "biomethane": "Biometano",
+    "lng": "GNL",
+    "hydrogen_blend": "Mezcla de hidrógeno",
+}
+RISK_LEVEL_LABELS = {
+    "low": "Bajo",
+    "medium": "Medio",
+    "high": "Alto",
+    "critical": "Crítico",
+}
+POSITION_LABELS = {
+    "LONG": "Larga",
+    "SHORT": "Corta",
+    "BALANCED": "Equilibrada",
+}
+
+
 st.set_page_config(page_title="indAI MA", page_icon="🏭")
 
 st.title("indAI MA")
@@ -30,12 +54,18 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "gas_analysis_result" not in st.session_state:
     st.session_state.gas_analysis_result = None
+if "gas_analysis_metadata" not in st.session_state:
+    st.session_state.gas_analysis_metadata = None
 if "generation_job" not in st.session_state:
     st.session_state.generation_job = None
 if "generation_kind" not in st.session_state:
     st.session_state.generation_kind = None
 if "generation_notice" not in st.session_state:
     st.session_state.generation_notice = None
+if "operation_started_at" not in st.session_state:
+    st.session_state.operation_started_at = None
+if "operation_id" not in st.session_state:
+    st.session_state.operation_id = None
 
 generation_active = st.session_state.generation_job is not None
 
@@ -103,8 +133,27 @@ with st.sidebar:
 def start_generation(
     messages: list[dict[str, str]],
     generation_kind: str,
+    operation_started_at: float | None = None,
+    operation_id: str | None = None,
 ) -> None:
+    prompt_started_at = perf_counter()
+    operation_started_at = operation_started_at or prompt_started_at
     provider = get_llm_provider(selected_provider, selected_model)
+    approximate_prompt_chars = sum(
+        len(str(message.get("content", ""))) for message in messages
+    )
+    operation_id = operation_id or uuid4().hex[:8]
+    logger.info(
+        "stage=prompt_build operation_id=%s mode=%s provider=%s model=%s "
+        "duration_seconds=%.4f message_count=%d approximate_prompt_chars=%d",
+        operation_id,
+        generation_kind,
+        selected_provider,
+        selected_model,
+        perf_counter() - prompt_started_at,
+        len(messages),
+        approximate_prompt_chars,
+    )
     job = GenerationJob(
         provider=provider,
         messages=messages,
@@ -113,13 +162,68 @@ def start_generation(
     st.session_state.generation_job = job
     st.session_state.generation_kind = generation_kind
     st.session_state.generation_notice = None
+    st.session_state.operation_started_at = operation_started_at
+    st.session_state.operation_id = operation_id
     job.start()
+
+
+def format_provider_name(provider_name: str | None) -> str:
+    names = {"lmstudio": "LM Studio", "openai": "OpenAI"}
+    return names.get(provider_name or "", provider_name or "Proveedor desconocido")
+
+
+def format_response_metadata(
+    elapsed_seconds: float,
+    provider_name: str | None,
+    model_name: str | None,
+) -> str:
+    return (
+        f"{elapsed_seconds:.1f} s · {format_provider_name(provider_name)} · "
+        f"{model_name or 'Modelo desconocido'}"
+    )
+
+
+def format_interrupted_generation(
+    message: str,
+    result: GenerationResult,
+) -> str:
+    if result.elapsed_seconds is None:
+        return message
+    return f"{message} Tiempo transcurrido: {result.elapsed_seconds:.1f} s."
+
+
+def render_tool_executions(tool_executions: list[dict]) -> None:
+    for execution in tool_executions:
+        arguments = execution["arguments"]
+        position_label = POSITION_LABELS.get(
+            execution["interpretation"],
+            execution["interpretation"],
+        )
+        st.markdown(f"🔧 **{execution['name']}**")
+        st.caption(
+            f"Demanda: {arguments['expected_demand_gwh']:g} GWh · "
+            f"Suministro: {arguments['contracted_supply_gwh']:g} GWh · "
+            f"Resultado: {execution['result']:g} GWh "
+            f"({position_label}) · "
+            f"Tiempo de ejecución: {execution['elapsed_seconds'] * 1000:.3f} ms"
+        )
 
 
 def render_chat() -> None:
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.write(message["content"])
+            render_tool_executions(message.get("tool_executions", []))
+            if message["role"] == "assistant" and message.get(
+                "response_time_seconds"
+            ) is not None:
+                st.caption(
+                    format_response_metadata(
+                        message["response_time_seconds"],
+                        message.get("provider"),
+                        message.get("model"),
+                    )
+                )
 
     user_message = st.chat_input(
         "Escribe tu consulta",
@@ -144,6 +248,17 @@ def render_chat() -> None:
 def render_gas_analysis_result(analysis: GasB2BPortfolioAnalysis) -> None:
     st.subheader("Resultado del análisis")
     st.write(analysis.summary)
+    metadata = st.session_state.gas_analysis_metadata
+    if metadata is not None:
+        st.caption(
+            "Tiempo total del análisis: "
+            + format_response_metadata(
+                metadata["response_time_seconds"],
+                metadata.get("provider"),
+                metadata.get("model"),
+            )
+        )
+        render_tool_executions(metadata.get("tool_executions", []))
 
     total_demand = sum(item.demand_gwh for item in analysis.portfolio)
     total_short_position = sum(
@@ -155,16 +270,28 @@ def render_gas_analysis_result(analysis: GasB2BPortfolioAnalysis) -> None:
         "Posición corta esperada",
         f"{total_short_position:,.2f} GWh",
     )
-    metric_columns[2].metric("Riesgo de margen", analysis.margin_risk.value)
+    metric_columns[2].metric(
+        "Riesgo de margen",
+        RISK_LEVEL_LABELS.get(
+            analysis.margin_risk.value,
+            analysis.margin_risk.value,
+        ),
+    )
 
     portfolio_rows = [
         {
-            "Gas": item.gas_type.value,
+            "Gas": GAS_TYPE_LABELS.get(item.gas_type.value, item.gas_type.value),
             "Demanda (GWh)": item.demand_gwh,
             "Suministro contratado (GWh)": item.contracted_supply_gwh,
             "Posición corta (GWh)": item.expected_short_position_gwh,
-            "Riesgo de suministro": item.supply_risk.value,
-            "Riesgo de precio": item.price_risk.value,
+            "Riesgo de suministro": RISK_LEVEL_LABELS.get(
+                item.supply_risk.value,
+                item.supply_risk.value,
+            ),
+            "Riesgo de precio": RISK_LEVEL_LABELS.get(
+                item.price_risk.value,
+                item.price_risk.value,
+            ),
         }
         for item in analysis.portfolio
     ]
@@ -201,10 +328,18 @@ def render_gas_analysis() -> None:
         type="primary",
         disabled=selected_model is None or generation_active,
     ):
+        operation_started_at = perf_counter()
+        operation_id = uuid4().hex[:8]
         st.session_state.gas_analysis_result = None
+        st.session_state.gas_analysis_metadata = None
         try:
             messages = build_gas_analysis_messages(portfolio_description)
-            start_generation(messages, "gas_analysis")
+            start_generation(
+                messages,
+                "gas_analysis",
+                operation_started_at,
+                operation_id,
+            )
             st.rerun()
         except (GasAnalysisError, ValueError) as error:
             st.error(str(error))
@@ -215,38 +350,77 @@ def render_gas_analysis() -> None:
 
 def finish_generation(result: GenerationResult) -> None:
     generation_kind = st.session_state.generation_kind
+    operation_started_at = st.session_state.operation_started_at
+    operation_id = st.session_state.operation_id
     st.session_state.generation_job = None
     st.session_state.generation_kind = None
+
+    def log_operation_total(status: str = result.status.value) -> None:
+        logger.info(
+            "stage=operation_total operation_id=%s mode=%s provider=%s model=%s "
+            "status=%s duration_seconds=%.4f",
+            operation_id,
+            generation_kind,
+            selected_provider,
+            selected_model,
+            status,
+            perf_counter() - operation_started_at,
+        )
+        st.session_state.operation_started_at = None
+        st.session_state.operation_id = None
 
     if result.status == GenerationStatus.COMPLETED:
         if generation_kind == "chat":
             st.session_state.messages.append(
-                {"role": "assistant", "content": result.content or ""}
+                {
+                    "role": "assistant",
+                    "content": result.content or "",
+                    "response_time_seconds": result.elapsed_seconds,
+                    "provider": result.provider_name,
+                    "model": result.model_name,
+                    "tool_executions": result.tool_executions,
+                }
             )
         else:
             try:
                 st.session_state.gas_analysis_result = (
                     parse_gas_portfolio_analysis(result.content or "")
                 )
+                st.session_state.gas_analysis_metadata = {
+                    "response_time_seconds": result.elapsed_seconds,
+                    "provider": result.provider_name,
+                    "model": result.model_name,
+                    "tool_executions": result.tool_executions,
+                }
             except GasAnalysisError as error:
                 st.session_state.generation_notice = ("error", str(error))
+                log_operation_total("parse_or_validation_error")
+                return
+        log_operation_total()
         return
 
     if result.status == GenerationStatus.CANCELLED:
         st.session_state.generation_notice = (
             "info",
-            "Generación cancelada.",
+            format_interrupted_generation("Generación cancelada.", result),
         )
     elif result.status == GenerationStatus.TIMED_OUT:
         st.session_state.generation_notice = (
             "warning",
-            "La generación superó el tiempo límite y fue cancelada.",
+            format_interrupted_generation(
+                "La generación superó el tiempo límite y fue cancelada.",
+                result,
+            ),
         )
     else:
         st.session_state.generation_notice = (
             "error",
-            result.error or "El proveedor no pudo completar la generación.",
+            format_interrupted_generation(
+                result.error or "El proveedor no pudo completar la generación.",
+                result,
+            ),
         )
+    log_operation_total()
 
 
 @st.fragment(run_every=0.5)

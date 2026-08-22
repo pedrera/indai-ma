@@ -1,7 +1,13 @@
 import json
 from enum import Enum
+from time import perf_counter
 
 from pydantic import BaseModel, Field, ValidationError
+
+from diagnostics import get_performance_logger
+
+
+logger = get_performance_logger()
 
 
 class GasType(str, Enum):
@@ -43,6 +49,7 @@ class GasAnalysisError(ValueError):
 def build_gas_analysis_messages(
     portfolio_description: str,
 ) -> list[dict[str, str]]:
+    started_at = perf_counter()
     description = portfolio_description.strip()
     if not description:
         raise GasAnalysisError("Introduce los datos de la cartera que quieres analizar.")
@@ -61,6 +68,11 @@ additional text. The JSON must conform exactly to this schema:
 
 Use only these gas types: natural_gas, biomethane, lng, hydrogen_blend.
 Use only these risk levels: low, medium, high, critical.
+Write every descriptive text in Spanish, including summary, commercial_impact,
+affected_customer_segments, recommended_actions, assumptions, and any other
+human-readable explanation. Keep all enum values and JSON field names exactly
+as defined in the schema; do not translate values such as natural_gas, low,
+medium, high, or critical.
 Express all energy quantities in GWh. If information is missing, make a reasonable
 commercial estimate and explain the assumption briefly in the summary.
 
@@ -68,7 +80,15 @@ Portfolio information:
 {description}
 """.strip()
 
-    return [{"role": "user", "content": prompt}]
+    messages = [{"role": "user", "content": prompt}]
+    logger.info(
+        "stage=prompt_build mode=gas_analysis duration_seconds=%.4f "
+        "message_count=%d approximate_prompt_chars=%d",
+        perf_counter() - started_at,
+        len(messages),
+        len(prompt),
+    )
+    return messages
 
 
 def parse_gas_portfolio_analysis(
@@ -76,6 +96,8 @@ def parse_gas_portfolio_analysis(
 ) -> GasB2BPortfolioAnalysis:
     json_text = _remove_json_code_fence(response_text)
 
+    parsing_started_at = perf_counter()
+    print("[GAS_ANALYSIS] Iniciando parsing JSON", flush=True)
     try:
         data = json.loads(json_text)
     except json.JSONDecodeError as error:
@@ -83,9 +105,24 @@ def parse_gas_portfolio_analysis(
             "El LLM no devolvió JSON válido. "
             f"Error cerca de la línea {error.lineno}, columna {error.colno}."
         ) from error
+    finally:
+        logger.info(
+            "stage=json_parsing mode=gas_analysis duration_seconds=%.4f "
+            "response_chars=%d",
+            perf_counter() - parsing_started_at,
+            len(response_text),
+        )
 
+    validation_started_at = perf_counter()
     try:
-        return GasB2BPortfolioAnalysis.model_validate(data)
+        analysis = GasB2BPortfolioAnalysis.model_validate(data)
+        print(
+            "[GAS_ANALYSIS] Validación Pydantic completada "
+            f"parsing_seconds={validation_started_at - parsing_started_at:.3f} "
+            f"validation_seconds={perf_counter() - validation_started_at:.3f}",
+            flush=True,
+        )
+        return analysis
     except ValidationError as error:
         details = "; ".join(
             f"{'.'.join(str(part) for part in item['loc'])}: {item['msg']}"
@@ -94,6 +131,11 @@ def parse_gas_portfolio_analysis(
         raise GasAnalysisError(
             f"La respuesta JSON no cumple el modelo de análisis: {details}."
         ) from error
+    finally:
+        logger.info(
+            "stage=pydantic_validation mode=gas_analysis duration_seconds=%.4f",
+            perf_counter() - validation_started_at,
+        )
 
 
 def _remove_json_code_fence(response_text: str) -> str:

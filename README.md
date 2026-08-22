@@ -1,6 +1,6 @@
 # indAI MA
 
-Versión 0.3 de un asistente web B2B multigás para los sectores sanitario e industrial, construido con Streamlit y acceso desacoplado al proveedor del LLM.
+Versión 0.4 de un asistente web B2B multigás para los sectores sanitario e industrial, construido con Streamlit, acceso desacoplado al proveedor del LLM y cálculos deterministas mediante function calling.
 
 ## Requisitos
 
@@ -58,6 +58,12 @@ LLM_TIMEOUT_SECONDS=300
 ```
 
 Una cancelación o timeout conserva el historial anterior y no añade una respuesta incompleta.
+
+## Tools de negocio
+
+La versión 0.4 comienza con una sola tool, `calculate_supply_position`, para calcular de forma determinista la posición de suministro como suministro contratado menos demanda esperada. El modelo decide cuándo necesita la tool, la aplicación ejecuta la función Python y devuelve al modelo el resultado LONG, SHORT o BALANCED para redactar la respuesta final. La interfaz muestra cada uso de la herramienta y su tiempo de ejecución.
+
+El proveedor y el modelo seleccionados deben soportar function calling. Si LM Studio rechaza las tools, la interfaz muestra un error controlado para seleccionar un modelo compatible.
 
 ## Ejecución
 
