@@ -14,6 +14,9 @@ st.set_page_config(page_title="indAI MA", page_icon="🏭")
 st.title("indAI MA")
 st.caption("Asistente para el sector industrial")
 
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
 provider_options = get_supported_providers()
 default_provider = get_default_provider_name()
 default_provider_index = (
@@ -49,12 +52,24 @@ with st.sidebar:
         st.error(str(error))
         selected_model = None
 
+    if st.button("Nueva conversación", use_container_width=True):
+        st.session_state.messages = []
+        st.rerun()
+
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.write(message["content"])
+
 user_message = st.chat_input(
     "Escribe tu consulta",
     disabled=selected_model is None,
 )
 
 if user_message:
+    st.session_state.messages.append(
+        {"role": "user", "content": user_message}
+    )
+
     with st.chat_message("user"):
         st.write(user_message)
 
@@ -62,7 +77,10 @@ if user_message:
         try:
             with st.spinner("Generando respuesta..."):
                 provider = get_llm_provider(selected_provider, selected_model)
-                response = provider.generate_response(user_message)
+                response = provider.generate_response(st.session_state.messages)
+            st.session_state.messages.append(
+                {"role": "assistant", "content": response}
+            )
             st.write(response)
         except ValueError as error:
             st.error(str(error))

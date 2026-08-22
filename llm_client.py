@@ -12,7 +12,7 @@ SUPPORTED_PROVIDERS = ("lmstudio", "openai")
 
 class LLMProvider(ABC):
     @abstractmethod
-    def generate_response(self, user_message: str) -> str:
+    def generate_response(self, messages: list[dict[str, str]]) -> str:
         pass
 
 
@@ -25,14 +25,15 @@ class OpenAIProvider(LLMProvider):
         self.model = model_name or get_default_model_name("openai")
         self.client = OpenAI(api_key=api_key)
 
-    def generate_response(self, user_message: str) -> str:
+    def generate_response(self, messages: list[dict[str, str]]) -> str:
         response = self.client.responses.create(
             model=self.model,
             instructions=(
                 "You are indAI MA, a concise and practical assistant for the "
                 "industrial sector. Reply in the same language as the user."
             ),
-            input=user_message,
+            input=messages,
+            store=False,
         )
         return response.output_text
 
@@ -54,7 +55,7 @@ class LMStudioProvider(LLMProvider):
         self.model = model
         self.client = OpenAI(base_url=base_url, api_key="lm-studio")
 
-    def generate_response(self, user_message: str) -> str:
+    def generate_response(self, messages: list[dict[str, str]]) -> str:
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -67,7 +68,7 @@ class LMStudioProvider(LLMProvider):
                             "as the user."
                         ),
                     },
-                    {"role": "user", "content": user_message},
+                    *messages,
                 ],
             )
         except APIConnectionError as error:

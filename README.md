@@ -1,6 +1,6 @@
 # indAI MA
 
-Versión 0.1 de un asistente web mínimo para el sector industrial, construido con Streamlit y acceso desacoplado al proveedor del LLM.
+Versión 0.2 de un asistente web para el sector industrial, construido con Streamlit y acceso desacoplado al proveedor del LLM.
 
 ## Requisitos
 
@@ -50,4 +50,4 @@ La interfaz de usuario obtiene la implementación configurada sin depender direc
 streamlit run app.py
 ```
 
-La versión 0.1 procesa cada consulta de forma independiente y no conserva memoria conversacional.
+La versión 0.2 conserva el historial conversacional en la sesión activa de Streamlit y lo envía como contexto en cada consulta. El botón **Nueva conversación** limpia solo ese historial. No existe persistencia entre sesiones ni se utiliza una base de datos.
