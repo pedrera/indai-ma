@@ -31,6 +31,9 @@ def calculate_margin(
 ) -> dict[str, float]:
     margin_eur_mwh = sales_price_eur_mwh - supply_cost_eur_mwh
     return {
+        "sales_price_eur_mwh": sales_price_eur_mwh,
+        "supply_cost_eur_mwh": supply_cost_eur_mwh,
+        "volume_gwh": volume_gwh,
         "margin_eur_mwh": margin_eur_mwh,
         "total_margin_eur": margin_eur_mwh * volume_gwh * 1000,
     }

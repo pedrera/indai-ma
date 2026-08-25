@@ -5,6 +5,7 @@ from time import perf_counter
 import streamlit as st
 
 from diagnostics import (
+    GAS_PIPELINE_STAGES,
     PIPELINE_STAGES,
     PerformanceEvent,
     PerformanceSnapshot,
@@ -13,10 +14,13 @@ from diagnostics import (
 
 
 STAGE_PRESENTATION = {
+    "input_parsing": ("📝", "Input Parsing"),
+    "scenario_generation": ("📊", "Scenario Generation"),
     "prompt_build": ("✍️", "Prompt Build"),
     "provider_start": ("🔌", "Provider Start"),
     "http_request": ("🌐", "HTTP Request"),
     "model_inference": ("🧠", "Model Inference"),
+    "parse_validation": ("🔎", "Parse / Validation"),
     "tool_execution": ("🛠️", "Tool Execution"),
     "final_response": ("✅", "Final Response"),
 }
@@ -99,6 +103,10 @@ def _render_tool_events(events: list[PerformanceEvent]) -> str:
     parts = ['<div class="pi-tools">']
     for event in events:
         name = escape(str(event.metadata.get("tool_name", "tool")))
+        scenario_name = event.metadata.get("scenario_name")
+        scenario_label = (
+            f"{escape(str(scenario_name))} · " if scenario_name else ""
+        )
         arguments = _format_tool_mapping(
             event.metadata.get("tool_arguments")
         )
@@ -108,13 +116,60 @@ def _render_tool_events(events: list[PerformanceEvent]) -> str:
         )
         parts.append(
             '<div class="pi-tool">'
-            f'<div><strong>{name}</strong><time>{tool_seconds * 1000:.3f} ms</time></div>'
+            f'<div><strong>{scenario_label}{name}</strong><time>{tool_seconds * 1000:.3f} ms</time></div>'
             f'<small><b>Parámetros</b> · {arguments}</small>'
             f'<small><b>Resultado</b> · {result}</small>'
             "</div>"
         )
     parts.append("</div>")
     return "".join(parts)
+
+
+def _render_parsing_result(events: list[PerformanceEvent]) -> str:
+    result = next(
+        (
+            event.metadata.get("parsing_result")
+            for event in reversed(events)
+            if isinstance(event.metadata.get("parsing_result"), dict)
+        ),
+        None,
+    )
+    if not isinstance(result, dict):
+        return ""
+
+    def values(key: str, unit: str = "") -> str:
+        candidates = result.get(key)
+        if not isinstance(candidates, list) or not candidates:
+            return "—"
+        return ", ".join(
+            escape(f"{item:g}{unit}" if isinstance(item, (int, float)) else str(item))
+            for item in candidates
+        )
+
+    ambiguities = result.get("ambiguities")
+    ambiguity_text = (
+        ", ".join(escape(str(item)) for item in ambiguities)
+        if isinstance(ambiguities, list) and ambiguities
+        else "ninguna"
+    )
+    rows = (
+        ("Gas detectado", values("detected_gas_types")),
+        ("Demanda detectada", values("base_demand_candidates", " GWh")),
+        (
+            "Suministro detectado",
+            values("contracted_supply_candidates", " GWh"),
+        ),
+        ("Coste", values("supply_cost_candidates", " €/MWh")),
+        ("Venta", values("sales_price_candidates", " €/MWh")),
+        ("Spot", values("spot_price_candidates", " €/MWh")),
+        ("Escenarios", values("scenario_variations", " %")),
+        ("Ambigüedades", ambiguity_text),
+    )
+    content = "".join(
+        f"<small><b>{escape(label)}</b> · {value}</small>"
+        for label, value in rows
+    )
+    return f'<div class="pi-tools"><div class="pi-tool">{content}</div></div>'
 
 
 def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
@@ -147,12 +202,17 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
             unsafe_allow_html=True,
         )
 
+        pipeline_stages = (
+            GAS_PIPELINE_STAGES
+            if snapshot.mode == "gas_analysis"
+            else PIPELINE_STAGES
+        )
         event_groups = {
             stage: [event for event in snapshot.events if event.stage == stage]
-            for stage in PIPELINE_STAGES
+            for stage in pipeline_stages
         }
         timeline_parts = ['<div class="pi-timeline">']
-        for stage in PIPELINE_STAGES:
+        for stage in pipeline_stages:
             icon, label = STAGE_PRESENTATION[stage]
             events = event_groups[stage]
             status, duration = _aggregate_stage(events)
@@ -162,6 +222,8 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
             )
             if len(rounds) > 1:
                 detail = f'<small>{len(rounds)} rounds</small>'
+            elif stage == "tool_execution" and events:
+                detail = f'<small>{len(events)} ejecuciones</small>'
             timeline_parts.append(
                 dedent(
                     f"""\
@@ -176,6 +238,8 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
             )
             if stage == "tool_execution" and events:
                 timeline_parts.append(_render_tool_events(events))
+            elif stage == "input_parsing" and events:
+                timeline_parts.append(_render_parsing_result(events))
         timeline_parts.append("</div>")
         st.markdown("".join(timeline_parts), unsafe_allow_html=True)
 

@@ -1,6 +1,6 @@
 # indAI MA
 
-Versión 0.5 de un asistente web B2B multigás para los sectores sanitario e industrial, construido con Streamlit, acceso desacoplado al proveedor del LLM y cálculos deterministas mediante function calling.
+Versión 0.5.1 de un asistente web B2B multigás para los sectores sanitario e industrial, construido con Streamlit, acceso desacoplado al proveedor del LLM y cálculos deterministas mediante function calling.
 
 ## Requisitos
 
@@ -66,7 +66,7 @@ Una cancelación o timeout conserva el historial anterior y no añade una respue
 
 ## Tools de negocio
 
-La versión 0.5 incluye tools deterministas para calcular la posición de suministro (`calculate_supply_position`), margen unitario y total (`calculate_margin`), escenarios porcentuales de demanda (`calculate_demand_scenario`) y exposición económica de una posición corta al mercado spot (`calculate_spot_exposure`). En Chat, el modelo decide cuáles necesita y puede encadenarlas durante varias rondas. Gas B2B Portfolio Analysis ejecuta primero los cálculos conocidos y realiza después una única llamada al LLM sin tool calling dinámico. La interfaz y el Pipeline Inspector muestran cada ejecución y su tiempo.
+La versión 0.5.1 incluye tools deterministas para calcular la posición de suministro (`calculate_supply_position`), margen unitario y total (`calculate_margin`), escenarios porcentuales de demanda (`calculate_demand_scenario`) y exposición económica de una posición corta al mercado spot (`calculate_spot_exposure`). En Chat, el modelo decide cuáles necesita y conserva sus protecciones actuales contra bucles. Gas B2B Portfolio Analysis genera los escenarios base, +10 % y +20 %, ejecuta primero todos los cálculos conocidos y realiza después una única llamada al LLM sin tool calling dinámico. La interfaz presenta la comparación y el Pipeline Inspector muestra cada etapa y las ejecuciones agregadas por tool.
 
 El proveedor y el modelo seleccionados deben soportar function calling. Si LM Studio rechaza las tools, la interfaz muestra un error controlado para seleccionar un modelo compatible.
 

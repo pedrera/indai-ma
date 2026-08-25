@@ -5,8 +5,8 @@ from uuid import uuid4
 from diagnostics import PerformanceRecorder
 from gas_analysis import (
     GasAnalysisError,
-    GasB2BPortfolioAnalysis,
-    parse_gas_portfolio_analysis,
+    ScenarioAnalysis,
+    parse_scenario_analysis,
     prepare_gas_analysis,
 )
 from generation import (
@@ -72,6 +72,8 @@ if "pipeline_recorder" not in st.session_state:
     st.session_state.pipeline_recorder = None
 if "gas_precomputed_tool_executions" not in st.session_state:
     st.session_state.gas_precomputed_tool_executions = []
+if "gas_scenarios" not in st.session_state:
+    st.session_state.gas_scenarios = []
 if "llm_runtime_config" not in st.session_state:
     st.session_state.llm_runtime_config = LLMRuntimeConfig.from_environment()
 
@@ -366,9 +368,8 @@ def render_chat() -> None:
             st.error(str(error))
 
 
-def render_gas_analysis_result(analysis: GasB2BPortfolioAnalysis) -> None:
+def render_gas_analysis_result(analysis: ScenarioAnalysis) -> None:
     st.subheader("Resultado del análisis")
-    st.write(analysis.summary)
     metadata = st.session_state.gas_analysis_metadata
     if metadata is not None:
         st.caption(
@@ -379,54 +380,26 @@ def render_gas_analysis_result(analysis: GasB2BPortfolioAnalysis) -> None:
                 metadata.get("model"),
             )
         )
-        render_tool_executions(metadata.get("tool_executions", []))
-
-    total_demand = sum(item.demand_gwh for item in analysis.portfolio)
-    total_short_position = sum(
-        item.expected_short_position_gwh for item in analysis.portfolio
-    )
-    metric_columns = st.columns(3)
-    metric_columns[0].metric("Demanda total", f"{total_demand:,.2f} GWh")
-    metric_columns[1].metric(
-        "Posición corta esperada",
-        f"{total_short_position:,.2f} GWh",
-    )
-    metric_columns[2].metric(
-        "Riesgo de margen",
-        RISK_LEVEL_LABELS.get(
-            analysis.margin_risk.value,
-            analysis.margin_risk.value,
-        ),
-    )
-
-    portfolio_rows = [
+    scenario_rows = [
         {
-            "Gas": GAS_TYPE_LABELS.get(item.gas_type.value, item.gas_type.value),
+            "Escenario": item.name,
             "Demanda (GWh)": item.demand_gwh,
-            "Suministro contratado (GWh)": item.contracted_supply_gwh,
-            "Posición corta (GWh)": item.expected_short_position_gwh,
-            "Riesgo de suministro": RISK_LEVEL_LABELS.get(
-                item.supply_risk.value,
-                item.supply_risk.value,
-            ),
-            "Riesgo de precio": RISK_LEVEL_LABELS.get(
-                item.price_risk.value,
-                item.price_risk.value,
-            ),
+            "Posición (GWh)": item.supply_position_gwh,
+            "Short (GWh)": item.short_position_gwh,
+            "Precio spot (€/MWh)": item.spot_price_eur_mwh,
+            "Exposición spot (€)": item.spot_exposure_eur,
+            "Margen estimado (€)": item.estimated_margin_eur,
         }
-        for item in analysis.portfolio
+        for item in analysis.scenarios
     ]
-    st.dataframe(portfolio_rows, hide_index=True, width="stretch")
-
-    st.subheader("Segmentos afectados")
-    st.write(", ".join(analysis.affected_customer_segments))
-
-    st.subheader("Impacto comercial")
-    st.write(analysis.commercial_impact)
-
-    st.subheader("Acciones recomendadas")
-    for action in analysis.recommended_actions:
-        st.markdown(f"- {action}")
+    st.dataframe(scenario_rows, hide_index=True, width="stretch")
+    st.subheader("Resumen")
+    st.write(analysis.summary)
+    st.subheader("Riesgos clave")
+    for risk in analysis.key_risks:
+        st.markdown(f"- {risk}")
+    st.subheader("Recomendación")
+    st.write(analysis.recommendation)
 
 
 def render_gas_analysis() -> None:
@@ -453,6 +426,7 @@ def render_gas_analysis() -> None:
         st.session_state.gas_analysis_result = None
         st.session_state.gas_analysis_metadata = None
         st.session_state.gas_precomputed_tool_executions = []
+        st.session_state.gas_scenarios = []
         recorder = create_pipeline_recorder(operation_id, "gas_analysis")
         try:
             prepared = prepare_gas_analysis(
@@ -462,6 +436,7 @@ def render_gas_analysis() -> None:
             st.session_state.gas_precomputed_tool_executions = (
                 prepared.tool_executions
             )
+            st.session_state.gas_scenarios = prepared.scenarios
             start_generation(
                 prepared.messages,
                 "gas_analysis",
@@ -486,6 +461,7 @@ def finish_generation(result: GenerationResult) -> None:
     precomputed_tool_executions = (
         st.session_state.gas_precomputed_tool_executions
     )
+    scenarios = st.session_state.gas_scenarios
     st.session_state.generation_job = None
     st.session_state.generation_kind = None
 
@@ -500,6 +476,7 @@ def finish_generation(result: GenerationResult) -> None:
         st.session_state.operation_started_at = None
         st.session_state.operation_id = None
         st.session_state.gas_precomputed_tool_executions = []
+        st.session_state.gas_scenarios = []
 
     if result.status == GenerationStatus.COMPLETED:
         if generation_kind == "chat":
@@ -514,10 +491,20 @@ def finish_generation(result: GenerationResult) -> None:
                 }
             )
         else:
+            recorder: PerformanceRecorder = st.session_state.pipeline_recorder
             try:
                 st.session_state.gas_analysis_result = (
-                    parse_gas_portfolio_analysis(result.content or "")
+                    parse_scenario_analysis(
+                        result.content or "",
+                        scenarios,
+                        recorder,
+                    )
                 )
+                final_event = recorder.start_stage(
+                    "final_response",
+                    response_chars=len(result.content or ""),
+                )
+                recorder.complete_stage(final_event)
                 st.session_state.gas_analysis_metadata = {
                     "response_time_seconds": result.elapsed_seconds,
                     "provider": result.provider_name,
@@ -528,6 +515,11 @@ def finish_generation(result: GenerationResult) -> None:
                     ],
                 }
             except GasAnalysisError as error:
+                final_event = recorder.start_stage("final_response")
+                recorder.fail_stage(
+                    final_event,
+                    error_type="parse_or_validation_error",
+                )
                 st.session_state.generation_notice = ("error", str(error))
                 log_operation_total("parse_or_validation_error")
                 return

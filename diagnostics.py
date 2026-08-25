@@ -25,6 +25,16 @@ PIPELINE_STAGES = (
     "tool_execution",
     "final_response",
 )
+GAS_PIPELINE_STAGES = (
+    "input_parsing",
+    "scenario_generation",
+    "tool_execution",
+    "provider_start",
+    "http_request",
+    "model_inference",
+    "parse_validation",
+    "final_response",
+)
 
 
 @dataclass(frozen=True)

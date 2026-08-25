@@ -109,7 +109,10 @@ class GenerationJob:
                 timeout_seconds=self.timeout_seconds,
                 options=self.options,
             )
-            if self.recorder is not None:
+            if (
+                self.recorder is not None
+                and self.recorder.mode != "gas_analysis"
+            ):
                 final_event = self.recorder.start_stage(
                     "final_response",
                     response_chars=len(response.content),
