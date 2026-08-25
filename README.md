@@ -1,6 +1,6 @@
 # indAI MA
 
-Versión 0.4 de un asistente web B2B multigás para los sectores sanitario e industrial, construido con Streamlit, acceso desacoplado al proveedor del LLM y cálculos deterministas mediante function calling.
+Versión 0.5 de un asistente web B2B multigás para los sectores sanitario e industrial, construido con Streamlit, acceso desacoplado al proveedor del LLM y cálculos deterministas mediante function calling.
 
 ## Requisitos
 
@@ -57,11 +57,16 @@ Las generaciones se ejecutan fuera del hilo de interfaz. Mientras el modelo trab
 LLM_TIMEOUT_SECONDS=300
 ```
 
+La configuración avanzada de la sidebar permite sobrescribir durante la sesión
+los límites `LLM_MAX_OUTPUT_TOKENS` y `LLM_MAX_TOKENS`, el timeout y el modo
+thinking. Estos cambios no modifican `.env` y se conservan al iniciar una nueva
+conversación dentro de la misma sesión.
+
 Una cancelación o timeout conserva el historial anterior y no añade una respuesta incompleta.
 
 ## Tools de negocio
 
-La versión 0.4 comienza con una sola tool, `calculate_supply_position`, para calcular de forma determinista la posición de suministro como suministro contratado menos demanda esperada. El modelo decide cuándo necesita la tool, la aplicación ejecuta la función Python y devuelve al modelo el resultado LONG, SHORT o BALANCED para redactar la respuesta final. La interfaz muestra cada uso de la herramienta y su tiempo de ejecución.
+La versión 0.5 incluye tools deterministas para calcular la posición de suministro (`calculate_supply_position`), margen unitario y total (`calculate_margin`), escenarios porcentuales de demanda (`calculate_demand_scenario`) y exposición económica de una posición corta al mercado spot (`calculate_spot_exposure`). En Chat, el modelo decide cuáles necesita y puede encadenarlas durante varias rondas. Gas B2B Portfolio Analysis ejecuta primero los cálculos conocidos y realiza después una única llamada al LLM sin tool calling dinámico. La interfaz y el Pipeline Inspector muestran cada ejecución y su tiempo.
 
 El proveedor y el modelo seleccionados deben soportar function calling. Si LM Studio rechaza las tools, la interfaz muestra un error controlado para seleccionar un modelo compatible.
 
@@ -71,4 +76,4 @@ El proveedor y el modelo seleccionados deben soportar function calling. Si LM St
 streamlit run app.py
 ```
 
-La versión 0.3 conserva el historial conversacional en la sesión activa de Streamlit. El botón **Nueva conversación** limpia solo ese historial. No existe persistencia entre sesiones ni se utiliza una base de datos.
+La aplicación conserva el historial conversacional en la sesión activa de Streamlit. El botón **Nueva conversación** limpia solo ese historial. No existe persistencia entre sesiones ni se utiliza una base de datos.

@@ -20,18 +20,18 @@ from tools import (
     get_chat_completion_tools,
     get_responses_tools,
 )
-from diagnostics import get_performance_logger
+from diagnostics import PerformanceRecorder, get_performance_logger
+from runtime_config import LLMRuntimeConfig
 
 
 load_dotenv()
 logger = get_performance_logger()
 
 SUPPORTED_PROVIDERS = ("lmstudio", "openai")
-MAX_TOOL_ROUNDS = 2
-SYSTEM_INSTRUCTIONS = (
+MAX_TOOL_ROUNDS = 4
+BASE_SYSTEM_INSTRUCTIONS = (
     "You are indAI MA, a concise and practical assistant for the industrial "
-    "B2B gas sector. Reply in the same language as the user.\n\n"
-    f"{TOOL_USAGE_INSTRUCTIONS}"
+    "B2B gas sector. Reply in the same language as the user."
 )
 
 
@@ -81,7 +81,6 @@ def _print_lmstudio_request_diagnostics(
         "tools": [
             tool.get("function", {}).get("name", "unknown") for tool in tools
         ],
-        "tool_choice": None if final_generation else "auto",
         "response_format": None,
         "structured_output_requested": False,
         "reasoning_parameters": {},
@@ -89,6 +88,8 @@ def _print_lmstudio_request_diagnostics(
         "final_generation": final_generation,
         "stream": True,
     }
+    if not final_generation:
+        diagnostics["tool_choice"] = "auto"
     print(
         "[LMSTUDIO_REQUEST] "
         + json.dumps(diagnostics, ensure_ascii=False, sort_keys=True),
@@ -110,11 +111,35 @@ class LLMResponse:
     tool_executions: list[dict[str, Any]] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class GenerationOptions:
+    tool_calling_enabled: bool = True
+    max_rounds: int = MAX_TOOL_ROUNDS
+
+    def __post_init__(self) -> None:
+        if self.max_rounds < 1:
+            raise ValueError("max_rounds debe ser al menos 1.")
+
+
+CHAT_GENERATION_OPTIONS = GenerationOptions()
+GAS_ANALYSIS_GENERATION_OPTIONS = GenerationOptions(
+    tool_calling_enabled=False,
+    max_rounds=1,
+)
+
+
+def _get_system_instructions(options: GenerationOptions) -> str:
+    if not options.tool_calling_enabled:
+        return BASE_SYSTEM_INSTRUCTIONS
+    return f"{BASE_SYSTEM_INSTRUCTIONS}\n\n{TOOL_USAGE_INSTRUCTIONS}"
+
+
 class LLMProvider(ABC):
     provider_name = "unknown"
     model = "unknown"
 
-    def __init__(self) -> None:
+    def __init__(self, recorder: PerformanceRecorder | None = None) -> None:
+        self.recorder = recorder
         self._cancel_event = Event()
         self._stream_lock = Lock()
         self._active_stream: Any | None = None
@@ -124,6 +149,7 @@ class LLMProvider(ABC):
         self,
         messages: list[dict[str, str]],
         timeout_seconds: float | None = None,
+        options: GenerationOptions | None = None,
     ) -> LLMResponse:
         pass
 
@@ -160,26 +186,55 @@ class LLMProvider(ABC):
 class OpenAIProvider(LLMProvider):
     provider_name = "openai"
 
-    def __init__(self, model_name: str | None = None) -> None:
-        super().__init__()
+    def __init__(
+        self,
+        model_name: str | None = None,
+        recorder: PerformanceRecorder | None = None,
+        runtime_config: LLMRuntimeConfig | None = None,
+    ) -> None:
+        super().__init__(recorder)
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("La variable de entorno OPENAI_API_KEY no está configurada.")
 
         self.model = model_name or get_default_model_name("openai")
-        self.max_tokens = get_llm_max_tokens()
+        self.runtime_config = (
+            runtime_config or LLMRuntimeConfig.from_environment()
+        )
+        self.max_output_tokens = self.runtime_config.max_output_tokens
         self.client = OpenAI(api_key=api_key, max_retries=0)
 
     def generate_response(
         self,
         messages: list[dict[str, str]],
         timeout_seconds: float | None = None,
+        options: GenerationOptions | None = None,
     ) -> LLMResponse:
         total_started_at = perf_counter()
         self._prepare_generation()
+        options = options or CHAT_GENERATION_OPTIONS
+        timeout_seconds = (
+            timeout_seconds or self.runtime_config.timeout_seconds
+        )
+        system_instructions = _get_system_instructions(options)
         conversation_input: list[Any] = _get_conversation_messages(messages)
         tool_executions: list[dict[str, Any]] = []
-        tools = get_responses_tools()
+        tools = get_responses_tools() if options.tool_calling_enabled else []
+        if self.recorder is not None:
+            provider_event = self.recorder.start_stage(
+                "provider_start",
+                message_count=len(messages),
+                approximate_prompt_chars=(
+                    len(json.dumps(conversation_input, ensure_ascii=False))
+                    + len(system_instructions)
+                    + len(json.dumps(tools))
+                ),
+                max_tokens=self.runtime_config.max_tokens,
+                max_output_tokens=self.max_output_tokens,
+                timeout_seconds=self.runtime_config.timeout_seconds,
+                thinking_enabled=False,
+            )
+            self.recorder.complete_stage(provider_event)
         logger.info(
             "stage=provider_start provider=%s model=%s message_count=%d "
             "approximate_prompt_chars=%d",
@@ -187,28 +242,38 @@ class OpenAIProvider(LLMProvider):
             self.model,
             len(messages),
             len(json.dumps(conversation_input, ensure_ascii=False))
-            + len(SYSTEM_INSTRUCTIONS)
+            + len(system_instructions)
             + len(json.dumps(tools)),
         )
 
         try:
-            for round_number in range(1, MAX_TOOL_ROUNDS + 1):
+            for round_number in range(1, options.max_rounds + 1):
                 chunks: list[str] = []
                 output_items: list[Any] = []
                 stream = None
+                final_generation = (
+                    not options.tool_calling_enabled
+                    or round_number == options.max_rounds
+                )
                 http_started_at = perf_counter()
+                http_event = (
+                    self.recorder.start_stage("http_request", round=round_number)
+                    if self.recorder is not None
+                    else None
+                )
+                inference_event: str | None = None
 
                 try:
                     request_parameters: dict[str, Any] = {
                         "model": self.model,
-                        "instructions": SYSTEM_INSTRUCTIONS,
+                        "instructions": system_instructions,
                         "input": conversation_input,
-                        "max_output_tokens": self.max_tokens,
+                        "max_output_tokens": self.max_output_tokens,
                         "store": False,
                         "stream": True,
                         "timeout": timeout_seconds,
                     }
-                    if round_number == 1:
+                    if not final_generation:
                         request_parameters.update(
                             tools=tools,
                             tool_choice="auto",
@@ -216,10 +281,18 @@ class OpenAIProvider(LLMProvider):
 
                     stream = self.client.responses.create(**request_parameters)
                     request_seconds = perf_counter() - http_started_at
+                    if self.recorder is not None and http_event is not None:
+                        self.recorder.complete_stage(
+                            http_event, http_seconds=request_seconds
+                        )
                     self._set_active_stream(stream)
                     self._raise_if_cancelled()
 
                     inference_started_at = perf_counter()
+                    if self.recorder is not None:
+                        inference_event = self.recorder.start_stage(
+                            "model_inference", round=round_number
+                        )
                     for event in stream:
                         self._raise_if_cancelled()
                         if event.type == "response.output_text.delta":
@@ -227,7 +300,20 @@ class OpenAIProvider(LLMProvider):
                         elif event.type == "response.output_item.done":
                             output_items.append(event.item)
                     inference_seconds = perf_counter() - inference_started_at
+                    if self.recorder is not None and inference_event is not None:
+                        self.recorder.complete_stage(
+                            inference_event,
+                            inference_seconds=inference_seconds,
+                            http_total_seconds=(
+                                request_seconds + inference_seconds
+                            ),
+                        )
                 except Exception:
+                    if self.recorder is not None:
+                        if inference_event is not None:
+                            self.recorder.fail_stage(inference_event)
+                        elif http_event is not None:
+                            self.recorder.fail_stage(http_event)
                     logger.info(
                         "stage=http_call provider=%s model=%s round=%d "
                         "status=interrupted elapsed_seconds=%.4f",
@@ -250,28 +336,30 @@ class OpenAIProvider(LLMProvider):
                     for item in output_items
                     if getattr(item, "type", None) == "function_call"
                 ]
-                if round_number == 2 and function_calls:
+                if final_generation and function_calls:
                     raise ValueError(
                         "OpenAI solicitó una tool durante la generación final."
                     )
-                if round_number == 2:
+                if final_generation:
                     logger.info(
-                        "stage=http_call provider=%s model=%s round=2 "
+                        "stage=http_call provider=%s model=%s round=%d "
                         "final_generation=true request_seconds=%.4f "
                         "inference_seconds=%.4f http_total_seconds=%.4f",
                         self.provider_name,
                         self.model,
+                        round_number,
                         request_seconds,
                         inference_seconds,
                         request_seconds + inference_seconds,
                     )
                 else:
                     logger.info(
-                        "stage=http_call provider=%s model=%s round=1 "
+                        "stage=http_call provider=%s model=%s round=%d "
                         "request_seconds=%.4f inference_seconds=%.4f "
                         "http_total_seconds=%.4f tool_call_count=%d",
                         self.provider_name,
                         self.model,
+                        round_number,
                         request_seconds,
                         inference_seconds,
                         request_seconds + inference_seconds,
@@ -295,10 +383,32 @@ class OpenAIProvider(LLMProvider):
 
                 conversation_input.extend(output_items)
                 for function_call in function_calls:
-                    tool_execution = execute_tool_call(
-                        function_call.name,
-                        function_call.arguments,
+                    tool_event = (
+                        self.recorder.start_stage(
+                            "tool_execution",
+                            round=round_number,
+                            tool_name=function_call.name,
+                        )
+                        if self.recorder is not None
+                        else None
                     )
+                    try:
+                        tool_execution = execute_tool_call(
+                            function_call.name,
+                            function_call.arguments,
+                        )
+                    except Exception:
+                        if self.recorder is not None and tool_event is not None:
+                            self.recorder.fail_stage(tool_event)
+                        raise
+                    if self.recorder is not None and tool_event is not None:
+                        self.recorder.complete_stage(
+                            tool_event,
+                            tool_call_count=1,
+                            tool_seconds=tool_execution.elapsed_seconds,
+                            tool_arguments=tool_execution.arguments,
+                            tool_result=tool_execution.result,
+                        )
                     tool_executions.append(tool_execution.as_dict())
                     conversation_input.append(
                         {
@@ -328,8 +438,13 @@ class OpenAIProvider(LLMProvider):
 class LMStudioProvider(LLMProvider):
     provider_name = "lmstudio"
 
-    def __init__(self, model_name: str | None = None) -> None:
-        super().__init__()
+    def __init__(
+        self,
+        model_name: str | None = None,
+        recorder: PerformanceRecorder | None = None,
+        runtime_config: LLMRuntimeConfig | None = None,
+    ) -> None:
+        super().__init__(recorder)
         base_url = os.getenv("LMSTUDIO_BASE_URL", "").strip()
         model = model_name or get_default_model_name("lmstudio")
 
@@ -343,9 +458,15 @@ class LMStudioProvider(LLMProvider):
             )
 
         self.model = model
-        self.max_tokens = get_llm_max_tokens()
+        self.runtime_config = (
+            runtime_config or LLMRuntimeConfig.from_environment()
+        )
+        self.max_tokens = self.runtime_config.max_tokens
+        self.thinking_supported = is_qwen3_model(model)
         self.thinking_enabled = (
-            get_llm_enable_thinking() if is_qwen3_model(model) else True
+            self.runtime_config.enable_thinking
+            if self.thinking_supported
+            else False
         )
         self.client = OpenAI(
             base_url=base_url,
@@ -357,11 +478,16 @@ class LMStudioProvider(LLMProvider):
         self,
         messages: list[dict[str, str]],
         timeout_seconds: float | None = None,
+        options: GenerationOptions | None = None,
     ) -> LLMResponse:
         total_started_at = perf_counter()
         self._prepare_generation()
-        system_instructions = SYSTEM_INSTRUCTIONS
-        if not self.thinking_enabled:
+        options = options or CHAT_GENERATION_OPTIONS
+        timeout_seconds = (
+            timeout_seconds or self.runtime_config.timeout_seconds
+        )
+        system_instructions = _get_system_instructions(options)
+        if self.thinking_supported and not self.thinking_enabled:
             system_instructions += "\n\n/no_think"
 
         conversation: list[dict[str, Any]] = [
@@ -369,7 +495,25 @@ class LMStudioProvider(LLMProvider):
             *_get_conversation_messages(messages),
         ]
         tool_executions: list[dict[str, Any]] = []
-        tools = get_chat_completion_tools()
+        tools = (
+            get_chat_completion_tools()
+            if options.tool_calling_enabled
+            else []
+        )
+        if self.recorder is not None:
+            provider_event = self.recorder.start_stage(
+                "provider_start",
+                message_count=len(messages),
+                approximate_prompt_chars=(
+                    len(json.dumps(conversation, ensure_ascii=False))
+                    + len(json.dumps(tools))
+                ),
+                max_tokens=self.max_tokens,
+                max_output_tokens=self.runtime_config.max_output_tokens,
+                timeout_seconds=self.runtime_config.timeout_seconds,
+                thinking_enabled=self.thinking_enabled,
+            )
+            self.recorder.complete_stage(provider_event)
         logger.info(
             "stage=provider_start provider=%s model=%s message_count=%d "
             "approximate_prompt_chars=%d",
@@ -381,12 +525,21 @@ class LMStudioProvider(LLMProvider):
         )
 
         try:
-            for round_number in range(1, MAX_TOOL_ROUNDS + 1):
+            for round_number in range(1, options.max_rounds + 1):
                 chunks: list[str] = []
                 tool_calls: dict[int, dict[str, str]] = {}
                 stream = None
                 http_started_at = perf_counter()
-                final_generation = round_number == 2
+                http_event = (
+                    self.recorder.start_stage("http_request", round=round_number)
+                    if self.recorder is not None
+                    else None
+                )
+                inference_event: str | None = None
+                final_generation = (
+                    not options.tool_calling_enabled
+                    or round_number == options.max_rounds
+                )
                 request_tools = [] if final_generation else tools
 
                 try:
@@ -417,10 +570,18 @@ class LMStudioProvider(LLMProvider):
                         **request_parameters
                     )
                     request_seconds = perf_counter() - http_started_at
+                    if self.recorder is not None and http_event is not None:
+                        self.recorder.complete_stage(
+                            http_event, http_seconds=request_seconds
+                        )
                     self._set_active_stream(stream)
                     self._raise_if_cancelled()
 
                     inference_started_at = perf_counter()
+                    if self.recorder is not None:
+                        inference_event = self.recorder.start_stage(
+                            "model_inference", round=round_number
+                        )
                     for chunk in stream:
                         self._raise_if_cancelled()
                         if not chunk.choices:
@@ -443,7 +604,20 @@ class LMStudioProvider(LLMProvider):
                                 if tool_call.function.arguments:
                                     entry["arguments"] += tool_call.function.arguments
                     inference_seconds = perf_counter() - inference_started_at
+                    if self.recorder is not None and inference_event is not None:
+                        self.recorder.complete_stage(
+                            inference_event,
+                            inference_seconds=inference_seconds,
+                            http_total_seconds=(
+                                request_seconds + inference_seconds
+                            ),
+                        )
                 except Exception:
+                    if self.recorder is not None:
+                        if inference_event is not None:
+                            self.recorder.fail_stage(inference_event)
+                        elif http_event is not None:
+                            self.recorder.fail_stage(http_event)
                     logger.info(
                         "stage=http_call provider=%s model=%s round=%d "
                         "status=interrupted elapsed_seconds=%.4f",
@@ -463,22 +637,24 @@ class LMStudioProvider(LLMProvider):
 
                 if final_generation:
                     logger.info(
-                        "stage=http_call provider=%s model=%s round=2 "
+                        "stage=http_call provider=%s model=%s round=%d "
                         "final_generation=true request_seconds=%.4f "
                         "inference_seconds=%.4f http_total_seconds=%.4f",
                         self.provider_name,
                         self.model,
+                        round_number,
                         request_seconds,
                         inference_seconds,
                         request_seconds + inference_seconds,
                     )
                 else:
                     logger.info(
-                        "stage=http_call provider=%s model=%s round=1 "
+                        "stage=http_call provider=%s model=%s round=%d "
                         "request_seconds=%.4f inference_seconds=%.4f "
                         "http_total_seconds=%.4f tool_call_count=%d",
                         self.provider_name,
                         self.model,
+                        round_number,
                         request_seconds,
                         inference_seconds,
                         request_seconds + inference_seconds,
@@ -531,10 +707,32 @@ class LMStudioProvider(LLMProvider):
                     }
                 )
                 for tool_call in ordered_calls:
-                    tool_execution = execute_tool_call(
-                        tool_call["name"],
-                        tool_call["arguments"],
+                    tool_event = (
+                        self.recorder.start_stage(
+                            "tool_execution",
+                            round=round_number,
+                            tool_name=tool_call["name"],
+                        )
+                        if self.recorder is not None
+                        else None
                     )
+                    try:
+                        tool_execution = execute_tool_call(
+                            tool_call["name"],
+                            tool_call["arguments"],
+                        )
+                    except Exception:
+                        if self.recorder is not None and tool_event is not None:
+                            self.recorder.fail_stage(tool_event)
+                        raise
+                    if self.recorder is not None and tool_event is not None:
+                        self.recorder.complete_stage(
+                            tool_event,
+                            tool_call_count=1,
+                            tool_seconds=tool_execution.elapsed_seconds,
+                            tool_arguments=tool_execution.arguments,
+                            tool_result=tool_execution.result,
+                        )
                     tool_executions.append(tool_execution.as_dict())
                     conversation.append(
                         {
@@ -575,25 +773,11 @@ def get_supported_providers() -> tuple[str, ...]:
 
 
 def get_llm_max_tokens() -> int:
-    raw_value = os.getenv("LLM_MAX_TOKENS", "384").strip()
-    try:
-        max_tokens = int(raw_value)
-    except ValueError as error:
-        raise ValueError("LLM_MAX_TOKENS debe ser un número entero.") from error
-
-    if max_tokens <= 0:
-        raise ValueError("LLM_MAX_TOKENS debe ser mayor que cero.")
-
-    return max_tokens
+    return LLMRuntimeConfig.from_environment().max_tokens
 
 
 def get_llm_enable_thinking() -> bool:
-    raw_value = os.getenv("LLM_ENABLE_THINKING", "false").strip().lower()
-    if raw_value == "true":
-        return True
-    if raw_value == "false":
-        return False
-    raise ValueError("LLM_ENABLE_THINKING debe ser 'true' o 'false'.")
+    return LLMRuntimeConfig.from_environment().enable_thinking
 
 
 def is_qwen3_model(model_name: str) -> bool:
@@ -657,12 +841,14 @@ def get_available_models(provider_name: str) -> list[str]:
 def get_llm_provider(
     provider_name: str | None = None,
     model_name: str | None = None,
+    recorder: PerformanceRecorder | None = None,
+    runtime_config: LLMRuntimeConfig | None = None,
 ) -> LLMProvider:
     normalized_name = (provider_name or get_default_provider_name()).strip().lower()
 
     if normalized_name == "openai":
-        return OpenAIProvider(model_name)
+        return OpenAIProvider(model_name, recorder, runtime_config)
     if normalized_name == "lmstudio":
-        return LMStudioProvider(model_name)
+        return LMStudioProvider(model_name, recorder, runtime_config)
 
     raise ValueError("LLM_PROVIDER debe ser 'openai' o 'lmstudio'.")

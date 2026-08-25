@@ -2,29 +2,31 @@ import streamlit as st
 from time import perf_counter
 from uuid import uuid4
 
-from diagnostics import get_performance_logger
+from diagnostics import PerformanceRecorder
 from gas_analysis import (
     GasAnalysisError,
     GasB2BPortfolioAnalysis,
-    build_gas_analysis_messages,
     parse_gas_portfolio_analysis,
+    prepare_gas_analysis,
 )
 from generation import (
     GenerationJob,
     GenerationResult,
     GenerationStatus,
-    get_generation_timeout_seconds,
 )
 from llm_client import (
+    CHAT_GENERATION_OPTIONS,
+    GAS_ANALYSIS_GENERATION_OPTIONS,
+    GenerationOptions,
     get_available_models,
     get_default_model_name,
     get_default_provider_name,
     get_llm_provider,
     get_supported_providers,
 )
+from pipeline_inspector import inject_pipeline_styles, render_pipeline_inspector
+from runtime_config import LLMRuntimeConfig
 
-
-logger = get_performance_logger()
 
 GAS_TYPE_LABELS = {
     "natural_gas": "Gas natural",
@@ -45,7 +47,7 @@ POSITION_LABELS = {
 }
 
 
-st.set_page_config(page_title="indAI MA", page_icon="🏭")
+st.set_page_config(page_title="indAI MA", page_icon="🏭", layout="wide")
 
 st.title("indAI MA")
 st.caption("Asistente para el sector industrial")
@@ -66,6 +68,12 @@ if "operation_started_at" not in st.session_state:
     st.session_state.operation_started_at = None
 if "operation_id" not in st.session_state:
     st.session_state.operation_id = None
+if "pipeline_recorder" not in st.session_state:
+    st.session_state.pipeline_recorder = None
+if "gas_precomputed_tool_executions" not in st.session_state:
+    st.session_state.gas_precomputed_tool_executions = []
+if "llm_runtime_config" not in st.session_state:
+    st.session_state.llm_runtime_config = LLMRuntimeConfig.from_environment()
 
 generation_active = st.session_state.generation_job is not None
 
@@ -112,6 +120,58 @@ with st.sidebar:
         st.error(str(error))
         selected_model = None
 
+    runtime_defaults: LLMRuntimeConfig = st.session_state.llm_runtime_config
+    with st.expander("Configuración avanzada del LLM"):
+        max_output_tokens = st.number_input(
+            "Max output tokens",
+            min_value=32,
+            max_value=8192,
+            value=runtime_defaults.max_output_tokens,
+            step=32,
+            key="llm_max_output_tokens",
+            disabled=generation_active,
+            help=(
+                "Límite de salida utilizado por proveedores que diferencian "
+                "output tokens."
+            ),
+        )
+        max_tokens = st.number_input(
+            "Max tokens",
+            min_value=32,
+            max_value=8192,
+            value=runtime_defaults.max_tokens,
+            step=32,
+            key="llm_max_tokens",
+            disabled=generation_active,
+            help="Límite máximo de tokens generados por el modelo.",
+        )
+        timeout_seconds = st.number_input(
+            "Timeout (segundos)",
+            min_value=10,
+            max_value=900,
+            value=runtime_defaults.timeout_seconds,
+            step=10,
+            key="llm_timeout_seconds",
+            disabled=generation_active,
+            help="Tiempo máximo permitido para completar la operación.",
+        )
+        enable_thinking = st.toggle(
+            "Thinking",
+            value=runtime_defaults.enable_thinking,
+            key="llm_enable_thinking",
+            disabled=generation_active,
+            help=(
+                "Activa o desactiva el modo de razonamiento en modelos "
+                "compatibles."
+            ),
+        )
+    st.session_state.llm_runtime_config = LLMRuntimeConfig(
+        max_output_tokens=int(max_output_tokens),
+        max_tokens=int(max_tokens),
+        timeout_seconds=int(timeout_seconds),
+        enable_thinking=enable_thinking,
+    )
+
     if st.button(
         "Nueva conversación",
         width="stretch",
@@ -130,35 +190,65 @@ with st.sidebar:
         st.rerun()
 
 
+def create_pipeline_recorder(
+    operation_id: str,
+    generation_kind: str,
+) -> PerformanceRecorder:
+    recorder = PerformanceRecorder(
+        operation_id=operation_id,
+        provider=selected_provider,
+        model=selected_model,
+        mode=generation_kind,
+    )
+    st.session_state.pipeline_recorder = recorder
+    return recorder
+
+
 def start_generation(
     messages: list[dict[str, str]],
     generation_kind: str,
     operation_started_at: float | None = None,
     operation_id: str | None = None,
+    recorder: PerformanceRecorder | None = None,
+    options: GenerationOptions = CHAT_GENERATION_OPTIONS,
+    prompt_already_recorded: bool = False,
 ) -> None:
     prompt_started_at = perf_counter()
     operation_started_at = operation_started_at or prompt_started_at
-    provider = get_llm_provider(selected_provider, selected_model)
     approximate_prompt_chars = sum(
         len(str(message.get("content", ""))) for message in messages
     )
     operation_id = operation_id or uuid4().hex[:8]
-    logger.info(
-        "stage=prompt_build operation_id=%s mode=%s provider=%s model=%s "
-        "duration_seconds=%.4f message_count=%d approximate_prompt_chars=%d",
+    recorder = recorder or create_pipeline_recorder(
         operation_id,
         generation_kind,
-        selected_provider,
-        selected_model,
-        perf_counter() - prompt_started_at,
-        len(messages),
-        approximate_prompt_chars,
     )
-    job = GenerationJob(
-        provider=provider,
-        messages=messages,
-        timeout_seconds=get_generation_timeout_seconds(),
-    )
+    if not prompt_already_recorded:
+        recorder.record_stage(
+            "prompt_build",
+            duration_seconds=perf_counter() - operation_started_at,
+            message_count=len(messages),
+            approximate_prompt_chars=approximate_prompt_chars,
+        )
+    try:
+        provider = get_llm_provider(
+            selected_provider,
+            selected_model,
+            recorder=recorder,
+            runtime_config=st.session_state.llm_runtime_config,
+        )
+        job = GenerationJob(
+            provider=provider,
+            messages=messages,
+            timeout_seconds=(
+                st.session_state.llm_runtime_config.timeout_seconds
+            ),
+            recorder=recorder,
+            options=options,
+        )
+    except Exception:
+        recorder.finish("failed")
+        raise
     st.session_state.generation_job = job
     st.session_state.generation_kind = generation_kind
     st.session_state.generation_notice = None
@@ -194,19 +284,50 @@ def format_interrupted_generation(
 
 def render_tool_executions(tool_executions: list[dict]) -> None:
     for execution in tool_executions:
-        arguments = execution["arguments"]
-        position_label = POSITION_LABELS.get(
-            execution["interpretation"],
-            execution["interpretation"],
-        )
-        st.markdown(f"🔧 **{execution['name']}**")
-        st.caption(
-            f"Demanda: {arguments['expected_demand_gwh']:g} GWh · "
-            f"Suministro: {arguments['contracted_supply_gwh']:g} GWh · "
-            f"Resultado: {execution['result']:g} GWh "
-            f"({position_label}) · "
-            f"Tiempo de ejecución: {execution['elapsed_seconds'] * 1000:.3f} ms"
-        )
+        arguments = execution.get("arguments", {})
+        result = execution.get("result", {})
+        if not isinstance(result, dict):
+            result = {
+                "position_gwh": result,
+                "interpretation": execution.get("interpretation", ""),
+            }
+        name = execution.get("name", "tool")
+        duration_ms = execution.get("elapsed_seconds", 0) * 1000
+        st.markdown(f"🔧 **{name}**")
+
+        if name == "calculate_supply_position":
+            interpretation = str(result.get("interpretation", ""))
+            details = (
+                f"Demanda: {arguments.get('expected_demand_gwh', 0):g} GWh · "
+                f"Suministro: {arguments.get('contracted_supply_gwh', 0):g} GWh · "
+                f"Posición: {result.get('position_gwh', 0):g} GWh "
+                f"({POSITION_LABELS.get(interpretation, interpretation)})"
+            )
+        elif name == "calculate_margin":
+            details = (
+                f"Venta: {arguments.get('sales_price_eur_mwh', 0):g} €/MWh · "
+                f"Coste: {arguments.get('supply_cost_eur_mwh', 0):g} €/MWh · "
+                f"Volumen: {arguments.get('volume_gwh', 0):g} GWh · "
+                f"Margen: {result.get('margin_eur_mwh', 0):g} €/MWh · "
+                f"Margen total: {result.get('total_margin_eur', 0):,.2f} €"
+            )
+        elif name == "calculate_demand_scenario":
+            details = (
+                f"Demanda base: {result.get('base_demand_gwh', 0):g} GWh · "
+                f"Variación: {result.get('variation_percent', 0):g} % · "
+                f"Demanda escenario: {result.get('scenario_demand_gwh', 0):g} GWh"
+            )
+        elif name == "calculate_spot_exposure":
+            details = (
+                f"Demanda: {arguments.get('expected_demand_gwh', 0):g} GWh · "
+                f"Suministro: {arguments.get('contracted_supply_gwh', 0):g} GWh · "
+                f"Posición corta: {result.get('short_position_gwh', 0):g} GWh · "
+                f"Spot: {result.get('spot_price_eur_mwh', 0):g} €/MWh · "
+                f"Exposición: {result.get('exposure_eur', 0):,.2f} €"
+            )
+        else:
+            details = f"Parámetros: {arguments} · Resultado: {result}"
+        st.caption(f"{details} · Tiempo de ejecución: {duration_ms:.3f} ms")
 
 
 def render_chat() -> None:
@@ -322,7 +443,6 @@ def render_gas_analysis() -> None:
             "contratado de 95 GWh, clientes hospitalarios con contratos fijos..."
         ),
     )
-
     if st.button(
         "Analizar cartera",
         type="primary",
@@ -332,16 +452,28 @@ def render_gas_analysis() -> None:
         operation_id = uuid4().hex[:8]
         st.session_state.gas_analysis_result = None
         st.session_state.gas_analysis_metadata = None
+        st.session_state.gas_precomputed_tool_executions = []
+        recorder = create_pipeline_recorder(operation_id, "gas_analysis")
         try:
-            messages = build_gas_analysis_messages(portfolio_description)
+            prepared = prepare_gas_analysis(
+                portfolio_description,
+                recorder,
+            )
+            st.session_state.gas_precomputed_tool_executions = (
+                prepared.tool_executions
+            )
             start_generation(
-                messages,
+                prepared.messages,
                 "gas_analysis",
                 operation_started_at,
                 operation_id,
+                recorder=recorder,
+                options=GAS_ANALYSIS_GENERATION_OPTIONS,
+                prompt_already_recorded=True,
             )
             st.rerun()
         except (GasAnalysisError, ValueError) as error:
+            recorder.finish("failed")
             st.error(str(error))
 
     if st.session_state.gas_analysis_result is not None:
@@ -350,24 +482,24 @@ def render_gas_analysis() -> None:
 
 def finish_generation(result: GenerationResult) -> None:
     generation_kind = st.session_state.generation_kind
-    operation_started_at = st.session_state.operation_started_at
     operation_id = st.session_state.operation_id
+    precomputed_tool_executions = (
+        st.session_state.gas_precomputed_tool_executions
+    )
     st.session_state.generation_job = None
     st.session_state.generation_kind = None
 
     def log_operation_total(status: str = result.status.value) -> None:
-        logger.info(
-            "stage=operation_total operation_id=%s mode=%s provider=%s model=%s "
-            "status=%s duration_seconds=%.4f",
-            operation_id,
-            generation_kind,
-            selected_provider,
-            selected_model,
-            status,
-            perf_counter() - operation_started_at,
-        )
+        recorder: PerformanceRecorder | None = st.session_state.pipeline_recorder
+        if recorder is not None and recorder.operation_id == operation_id:
+            recorder.finish(
+                "completed"
+                if status == GenerationStatus.COMPLETED.value
+                else status
+            )
         st.session_state.operation_started_at = None
         st.session_state.operation_id = None
+        st.session_state.gas_precomputed_tool_executions = []
 
     if result.status == GenerationStatus.COMPLETED:
         if generation_kind == "chat":
@@ -390,7 +522,10 @@ def finish_generation(result: GenerationResult) -> None:
                     "response_time_seconds": result.elapsed_seconds,
                     "provider": result.provider_name,
                     "model": result.model_name,
-                    "tool_executions": result.tool_executions,
+                    "tool_executions": [
+                        *precomputed_tool_executions,
+                        *result.tool_executions,
+                    ],
                 }
             except GasAnalysisError as error:
                 st.session_state.generation_notice = ("error", str(error))
@@ -448,9 +583,21 @@ def render_generation_status() -> None:
     st.rerun()
 
 
-if selected_mode == "Chat":
-    render_chat()
-else:
-    render_gas_analysis()
+@st.fragment(run_every=0.5)
+def render_pipeline_panel() -> None:
+    recorder: PerformanceRecorder | None = st.session_state.pipeline_recorder
+    render_pipeline_inspector(recorder.snapshot() if recorder else None)
 
-render_generation_status()
+
+inject_pipeline_styles()
+main_column, inspector_column = st.columns([2.15, 1], gap="large", wrap=True)
+with main_column:
+    if selected_mode == "Chat":
+        render_chat()
+    else:
+        render_gas_analysis()
+
+    render_generation_status()
+
+with inspector_column:
+    render_pipeline_panel()

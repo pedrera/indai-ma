@@ -1,12 +1,17 @@
-import os
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from queue import Empty, Queue
 from threading import Lock, Thread
 from time import monotonic, perf_counter
 
-from diagnostics import get_performance_logger
-from llm_client import GenerationCancelledError, LLMProvider, LLMTimeoutError
+from diagnostics import PerformanceRecorder, get_performance_logger
+from llm_client import (
+    GenerationCancelledError,
+    GenerationOptions,
+    LLMProvider,
+    LLMTimeoutError,
+)
+from runtime_config import LLMRuntimeConfig
 
 
 logger = get_performance_logger()
@@ -37,10 +42,14 @@ class GenerationJob:
         provider: LLMProvider,
         messages: list[dict[str, str]],
         timeout_seconds: float,
+        recorder: PerformanceRecorder | None = None,
+        options: GenerationOptions | None = None,
     ) -> None:
         self.provider = provider
         self.messages = [dict(message) for message in messages]
         self.timeout_seconds = timeout_seconds
+        self.recorder = recorder
+        self.options = options
         self.started_at = monotonic()
         self._cancel_reason: GenerationStatus | None = None
         self._lock = Lock()
@@ -98,7 +107,14 @@ class GenerationJob:
             response = self.provider.generate_response(
                 self.messages,
                 timeout_seconds=self.timeout_seconds,
+                options=self.options,
             )
+            if self.recorder is not None:
+                final_event = self.recorder.start_stage(
+                    "final_response",
+                    response_chars=len(response.content),
+                )
+                self.recorder.complete_stage(final_event)
             print(
                 "[LLM] Respuesta completa recibida "
                 f"elapsed_seconds={perf_counter() - provider_started_at:.3f}",
@@ -156,13 +172,4 @@ class GenerationJob:
 
 
 def get_generation_timeout_seconds() -> float:
-    raw_value = os.getenv("LLM_TIMEOUT_SECONDS", "300").strip()
-    try:
-        timeout_seconds = float(raw_value)
-    except ValueError as error:
-        raise ValueError("LLM_TIMEOUT_SECONDS debe ser un número.") from error
-
-    if timeout_seconds <= 0:
-        raise ValueError("LLM_TIMEOUT_SECONDS debe ser mayor que cero.")
-
-    return timeout_seconds
+    return float(LLMRuntimeConfig.from_environment().timeout_seconds)
