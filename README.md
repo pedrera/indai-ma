@@ -1,6 +1,6 @@
 # indAI MA
 
-Versión 0.5.1 de un asistente web B2B multigás para los sectores sanitario e industrial, construido con Streamlit, acceso desacoplado al proveedor del LLM y cálculos deterministas mediante function calling.
+Versión 0.6.0 de un asistente web B2B multigás para los sectores sanitario e industrial, con cálculos deterministas y una primera capacidad RAG local para documentación empresarial.
 
 ## Requisitos
 
@@ -38,6 +38,9 @@ Versión 0.5.1 de un asistente web B2B multigás para los sectores sanitario e i
    LLM_PROVIDER=lmstudio
    LMSTUDIO_BASE_URL=http://localhost:1234/v1
    LMSTUDIO_MODEL=deepseek/deepseek-r1-0528-qwen3-8b
+   RAG_EMBEDDING_MODEL=text-embedding-nomic-embed-text-v1.5
+   RAG_TOP_K=4
+   RAG_INDEX_PATH=.indai_ma/rag_index
    ```
 
 La sidebar permite cambiar el proveedor y el modelo durante la sesión sin modificar `.env`. Para LM Studio, los modelos de chat se consultan dinámicamente al servidor local y se excluyen los modelos de embeddings. Para OpenAI se muestra por ahora el modelo configurado en `OPENAI_MODEL`.
@@ -70,10 +73,44 @@ La versión 0.5.1 incluye tools deterministas para calcular la posición de sumi
 
 El proveedor y el modelo seleccionados deben soportar function calling. Si LM Studio rechaza las tools, la interfaz muestra un error controlado para seleccionar un modelo compatible.
 
+## RAG local
+
+La versión 0.6.0 permite indexar documentos `.txt` y `.pdf` desde el bloque
+**Documentación RAG** de la sidebar. La extracción, el chunking, los embeddings
+y la búsqueda se ejecutan localmente. Los embeddings se solicitan a LM Studio
+mediante `text-embedding-nomic-embed-text-v1.5`; OpenAI no se utiliza para esa
+operación.
+
+El índice se guarda por defecto en `.indai_ma/rag_index`, resuelto respecto a
+la raíz de la aplicación, y contiene `manifest.json`, `documents.json` y
+`chunks.jsonl`. Se excluye de Git y se recarga desde disco al iniciar o ejecutar
+de nuevo Streamlit. Para colecciones pequeñas, la búsqueda utiliza cosine
+similarity sin una base vectorial externa. Cada respuesta RAG muestra los
+documentos, secciones, páginas y fragmentos recuperados.
+
+El contenido documental se trata como datos no confiables y nunca como
+instrucciones del sistema. Los cálculos de negocio continúan ejecutándose con
+las tools Python. Los PDF escaneados sin capa de texto no son compatibles porque
+esta versión no incluye OCR.
+
+Cuando Scenario Analysis no encuentra un tipo de gas explícito en la consulta,
+puede resolverlo de forma determinista desde los chunks ya recuperados. La
+consulta del usuario tiene prioridad, pero una discrepancia entre usuario y
+documentación se rechaza como conflicto en lugar de asumir un valor.
+
+Gas B2B Portfolio Analysis distingue de forma determinista las consultas
+documentales de las cuantitativas. Las preguntas sobre cláusulas, flexibilidad,
+take-or-pay o condiciones contractuales pasan directamente de la recuperación
+RAG a una única interpretación del LLM, sin parsing de cartera ni tools. Solo
+las consultas con intención de cálculo y evidencia numérica suficiente activan
+el workflow cuantitativo existente.
+
 ## Ejecución
 
 ```powershell
 streamlit run app.py
 ```
 
-La aplicación conserva el historial conversacional en la sesión activa de Streamlit. El botón **Nueva conversación** limpia solo ese historial. No existe persistencia entre sesiones ni se utiliza una base de datos.
+La aplicación conserva el historial conversacional en la sesión activa de
+Streamlit. El botón **Nueva conversación** limpia solo ese historial y no afecta
+al índice RAG persistente. No se utiliza una base de datos externa.

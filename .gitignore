@@ -5,3 +5,4 @@ __pycache__/
 *.py[cod]
 *.iml
 streamlit.*.log
+.indai_ma/

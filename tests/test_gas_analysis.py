@@ -10,6 +10,7 @@ from gas_analysis import (
     parse_scenario_input,
     prepare_gas_analysis,
 )
+from gas_type_resolution import resolve_gas_type
 
 
 def _recorder(operation_id: str) -> PerformanceRecorder:
@@ -43,6 +44,74 @@ def _natural_language_case() -> str:
 
 
 class ScenarioOrchestrationTests(unittest.TestCase):
+    def test_forecast_consumption_is_detected_as_demand(self) -> None:
+        result = parse_scenario_input(
+            "El Hospital prevé consumir 4,8 GWh."
+        )
+        self.assertEqual(result.base_demand_candidates, [4.8])
+
+    def test_demand_language_variants(self) -> None:
+        cases = (
+            "prevé consumir 4,8 GWh",
+            "consumo previsto de 4,8 GWh",
+            "demanda prevista de 4,8 GWh",
+            "esperamos un consumo de 4,8 GWh",
+        )
+        for text in cases:
+            with self.subTest(text=text):
+                self.assertEqual(
+                    parse_scenario_input(text).base_demand_candidates,
+                    [4.8],
+                )
+
+    def test_provisioned_volume_is_detected_as_supply(self) -> None:
+        result = parse_scenario_input(
+            "Tenemos 4,3 GWh de gas ya aprovisionado."
+        )
+        self.assertEqual(result.contracted_supply_candidates, [4.3])
+
+    def test_supply_language_variants(self) -> None:
+        cases = (
+            "tenemos 4,3 GWh ya aprovisionados",
+            "4,3 GWh de gas ya aprovisionado",
+            "disponemos de 4,3 GWh aprovisionados",
+            "tenemos contratados 4,3 GWh",
+            "suministro contratado de 4,3 GWh",
+        )
+        for text in cases:
+            with self.subTest(text=text):
+                self.assertEqual(
+                    parse_scenario_input(text).contracted_supply_candidates,
+                    [4.3],
+                )
+
+    def test_dot_decimals_keep_demand_and_supply_associated(self) -> None:
+        result = parse_scenario_input(
+            "El Hospital prevé consumir 4.8 GWh y tenemos 4.3 GWh "
+            "aprovisionados."
+        )
+        self.assertEqual(result.base_demand_candidates, [4.8])
+        self.assertEqual(result.contracted_supply_candidates, [4.3])
+
+    def test_rag_gas_resolution_combines_with_quantitative_values(self) -> None:
+        text = """El Hospital Costa Sur prevé consumir 4,8 GWh el próximo mes.
+Tenemos 4,3 GWh de gas ya aprovisionado para este cliente y el precio actual
+del mercado spot es de 42 €/MWh.
+
+Utilizando las condiciones de su contrato, analiza nuestra posición de
+aprovisionamiento, la flexibilidad contractual, el volumen que tendremos
+que cubrir y el impacto económico."""
+        resolution = resolve_gas_type(
+            text,
+            ["CONTRATO MARCO DE SUMINISTRO DE GAS NATURAL"],
+        )
+        result = parse_scenario_input(text, resolution)
+        self.assertEqual(result.detected_gas_types, ["natural_gas"])
+        self.assertEqual(result.gas_type_source, "rag")
+        self.assertEqual(result.base_demand_candidates, [4.8])
+        self.assertEqual(result.contracted_supply_candidates, [4.3])
+        self.assertEqual(result.spot_price_candidates, [42])
+
     def test_exact_multiline_prompt_has_diagnostic_parse_result(self) -> None:
         text = """Somos una empresa mayorista de gases que suministra gas natural a clientes
 industriales y sanitarios.

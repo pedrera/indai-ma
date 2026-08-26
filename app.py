@@ -6,9 +6,9 @@ from diagnostics import PerformanceRecorder
 from gas_analysis import (
     GasAnalysisError,
     ScenarioAnalysis,
-    parse_scenario_analysis,
-    prepare_gas_analysis,
 )
+from gas_query_orchestration import prepare_gas_query
+from gas_response_handling import GasResponseContract, handle_gas_response
 from generation import (
     GenerationJob,
     GenerationResult,
@@ -17,6 +17,7 @@ from generation import (
 from llm_client import (
     CHAT_GENERATION_OPTIONS,
     GAS_ANALYSIS_GENERATION_OPTIONS,
+    RAG_CHAT_GENERATION_OPTIONS,
     GenerationOptions,
     get_available_models,
     get_default_model_name,
@@ -24,8 +25,11 @@ from llm_client import (
     get_llm_provider,
     get_supported_providers,
 )
+from embeddings import LMStudioEmbeddingProvider, get_embedding_model_name
 from pipeline_inspector import inject_pipeline_styles, render_pipeline_inspector
+from rag_service import RAGService, build_rag_messages, sanitize_rag_citations
 from runtime_config import LLMRuntimeConfig
+from vector_store import LocalVectorStore, VectorStoreError
 
 
 GAS_TYPE_LABELS = {
@@ -58,6 +62,12 @@ if "gas_analysis_result" not in st.session_state:
     st.session_state.gas_analysis_result = None
 if "gas_analysis_metadata" not in st.session_state:
     st.session_state.gas_analysis_metadata = None
+if "gas_documentary_result" not in st.session_state:
+    st.session_state.gas_documentary_result = None
+if "gas_documentary_sources" not in st.session_state:
+    st.session_state.gas_documentary_sources = []
+if "gas_response_contract" not in st.session_state:
+    st.session_state.gas_response_contract = None
 if "generation_job" not in st.session_state:
     st.session_state.generation_job = None
 if "generation_kind" not in st.session_state:
@@ -76,6 +86,22 @@ if "gas_scenarios" not in st.session_state:
     st.session_state.gas_scenarios = []
 if "llm_runtime_config" not in st.session_state:
     st.session_state.llm_runtime_config = LLMRuntimeConfig.from_environment()
+if "rag_enabled" not in st.session_state:
+    st.session_state.rag_enabled = False
+if "rag_pending_sources" not in st.session_state:
+    st.session_state.rag_pending_sources = []
+if "rag_notice" not in st.session_state:
+    st.session_state.rag_notice = None
+if "rag_clear_confirmation" not in st.session_state:
+    st.session_state.rag_clear_confirmation = False
+try:
+    st.session_state.rag_store = LocalVectorStore.from_environment(
+        get_embedding_model_name()
+    )
+    st.session_state.rag_store_error = None
+except VectorStoreError as error:
+    st.session_state.rag_store = None
+    st.session_state.rag_store_error = str(error)
 
 generation_active = st.session_state.generation_job is not None
 
@@ -206,6 +232,109 @@ def create_pipeline_recorder(
     return recorder
 
 
+def render_rag_configuration() -> None:
+    store: LocalVectorStore | None = st.session_state.rag_store
+    with st.sidebar:
+        with st.expander("Documentación RAG"):
+            if st.session_state.rag_store_error:
+                st.error(st.session_state.rag_store_error)
+                return
+            st.caption(f"Documentos indexados: {store.document_count}")
+            st.caption(f"Chunks indexados: {store.chunk_count}")
+            uploaded_files = st.file_uploader(
+                "Documentos empresariales",
+                type=["txt", "pdf"],
+                accept_multiple_files=True,
+                disabled=generation_active,
+                help="Los documentos se procesan localmente mediante LM Studio.",
+            )
+            if st.button(
+                "Indexar documentos",
+                disabled=generation_active or not uploaded_files,
+                width="stretch",
+            ):
+                operation_id = uuid4().hex[:8]
+                embedding_model = get_embedding_model_name()
+                recorder = PerformanceRecorder(
+                    operation_id,
+                    "lmstudio",
+                    embedding_model,
+                    "rag_index",
+                )
+                st.session_state.pipeline_recorder = recorder
+                try:
+                    service = RAGService(
+                        LMStudioEmbeddingProvider(model=embedding_model),
+                        store,
+                        recorder,
+                    )
+                    result = service.ingest(
+                        [(item.name, item.getvalue()) for item in uploaded_files]
+                    )
+                    st.session_state.rag_store = store.reopen()
+                    recorder.finish("completed")
+                    st.session_state.rag_notice = (
+                        "success",
+                        f"Indexados {result.document_count} documentos y "
+                        f"{result.chunk_count} chunks. "
+                        f"Duplicados omitidos: {result.duplicate_count}.",
+                    )
+                    st.rerun()
+                except Exception as error:
+                    recorder.finish("failed")
+                    st.session_state.rag_notice = ("error", str(error))
+                    st.rerun()
+            notice = st.session_state.rag_notice
+            if notice:
+                getattr(st, notice[0])(notice[1])
+            st.toggle(
+                "Usar documentación en Chat",
+                key="rag_enabled",
+                disabled=generation_active or store.chunk_count == 0,
+                help="Recupera fragmentos locales antes de consultar al LLM.",
+            )
+            if store.chunk_count and st.button(
+                "Vaciar índice RAG",
+                disabled=generation_active,
+                width="stretch",
+            ):
+                st.session_state.rag_clear_confirmation = True
+                st.rerun()
+            if st.session_state.rag_clear_confirmation:
+                st.warning(
+                    "Esta acción eliminará todos los documentos y embeddings "
+                    "del índice RAG local."
+                )
+                confirm_column, cancel_column = st.columns(2)
+                if confirm_column.button(
+                    "Confirmar vaciado",
+                    type="primary",
+                    disabled=generation_active,
+                ):
+                    store.clear()
+                    verified_empty = store.reopen()
+                    if (
+                        verified_empty.document_count
+                        or verified_empty.chunk_count
+                    ):
+                        st.session_state.rag_notice = (
+                            "error",
+                            "No se ha podido verificar el vaciado del índice.",
+                        )
+                    else:
+                        st.session_state.rag_store = verified_empty
+                        st.session_state.rag_enabled = False
+                        st.session_state.rag_notice = (
+                            "info",
+                            "Índice RAG vaciado de forma persistente.",
+                        )
+                    st.session_state.rag_clear_confirmation = False
+                    st.rerun()
+                if cancel_column.button("Cancelar"):
+                    st.session_state.rag_clear_confirmation = False
+                    st.rerun()
+
+
 def start_generation(
     messages: list[dict[str, str]],
     generation_kind: str,
@@ -332,11 +461,34 @@ def render_tool_executions(tool_executions: list[dict]) -> None:
         st.caption(f"{details} · Tiempo de ejecución: {duration_ms:.3f} ms")
 
 
+def render_rag_sources(sources: list[dict]) -> None:
+    if not sources:
+        return
+    with st.expander("Fuentes consultadas"):
+        for source in sources:
+            page_start = source.get("page_start")
+            page_end = source.get("page_end")
+            page_label = (
+                str(page_start)
+                if page_start == page_end
+                else f"{page_start}-{page_end}"
+            )
+            st.markdown(f"**{source.get('document_name', 'Documento')}**")
+            st.caption(
+                f"Sección: {source.get('section') or 'Sin sección'} · "
+                f"Página: {page_label} · Chunk: {source.get('chunk_id')} · "
+                f"Similitud: {float(source.get('score', 0)):.3f}"
+            )
+            if source.get("excerpt"):
+                st.write(source["excerpt"])
+
+
 def render_chat() -> None:
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.write(message["content"])
             render_tool_executions(message.get("tool_executions", []))
+            render_rag_sources(message.get("rag_sources", []))
             if message["role"] == "assistant" and message.get(
                 "response_time_seconds"
             ) is not None:
@@ -362,9 +514,36 @@ def render_chat() -> None:
             st.write(user_message)
 
         try:
-            start_generation(st.session_state.messages, "chat")
+            if st.session_state.rag_enabled:
+                operation_id = uuid4().hex[:8]
+                recorder = create_pipeline_recorder(operation_id, "rag_chat")
+                store: LocalVectorStore = st.session_state.rag_store
+                service = RAGService(
+                    LMStudioEmbeddingProvider(), store, recorder
+                )
+                retrieval = service.retrieve(user_message)
+                st.session_state.rag_pending_sources = [
+                    {
+                        **item.source_dict(),
+                        "excerpt": item.chunk.text[:320],
+                    }
+                    for item in retrieval.matches
+                ]
+                start_generation(
+                    build_rag_messages(st.session_state.messages, retrieval),
+                    "rag_chat",
+                    operation_id=operation_id,
+                    recorder=recorder,
+                    options=RAG_CHAT_GENERATION_OPTIONS,
+                    prompt_already_recorded=True,
+                )
+            else:
+                start_generation(st.session_state.messages, "chat")
             st.rerun()
-        except ValueError as error:
+        except Exception as error:
+            recorder = st.session_state.pipeline_recorder
+            if recorder is not None and recorder.mode == "rag_chat":
+                recorder.finish("failed")
             st.error(str(error))
 
 
@@ -425,21 +604,48 @@ def render_gas_analysis() -> None:
         operation_id = uuid4().hex[:8]
         st.session_state.gas_analysis_result = None
         st.session_state.gas_analysis_metadata = None
+        st.session_state.gas_documentary_result = None
+        st.session_state.gas_documentary_sources = []
         st.session_state.gas_precomputed_tool_executions = []
         st.session_state.gas_scenarios = []
+        st.session_state.rag_pending_sources = []
+        st.session_state.gas_response_contract = None
         recorder = create_pipeline_recorder(operation_id, "gas_analysis")
         try:
-            prepared = prepare_gas_analysis(
-                portfolio_description,
-                recorder,
+            store: LocalVectorStore = st.session_state.rag_store
+            rag_service = (
+                RAGService(LMStudioEmbeddingProvider(), store, recorder)
+                if store is not None and store.chunk_count
+                else None
             )
-            st.session_state.gas_precomputed_tool_executions = (
-                prepared.tool_executions
+            prepared_query = prepare_gas_query(
+                portfolio_description, recorder, rag_service
             )
-            st.session_state.gas_scenarios = prepared.scenarios
+            st.session_state.gas_response_contract = (
+                prepared_query.response_contract
+            )
+            if prepared_query.quantitative_analysis is not None:
+                st.session_state.gas_precomputed_tool_executions = (
+                    prepared_query.quantitative_analysis.tool_executions
+                )
+                st.session_state.gas_scenarios = (
+                    prepared_query.quantitative_analysis.scenarios
+                )
+            st.session_state.rag_pending_sources = [
+                {
+                    **item.source_dict(),
+                    "excerpt": item.chunk.text[:320],
+                }
+                for item in prepared_query.retrieval.matches
+            ]
+            generation_kind = (
+                "gas_documentary"
+                if prepared_query.intent.intent == "documentary"
+                else "gas_analysis"
+            )
             start_generation(
-                prepared.messages,
-                "gas_analysis",
+                prepared_query.messages,
+                generation_kind,
                 operation_started_at,
                 operation_id,
                 recorder=recorder,
@@ -453,6 +659,10 @@ def render_gas_analysis() -> None:
 
     if st.session_state.gas_analysis_result is not None:
         render_gas_analysis_result(st.session_state.gas_analysis_result)
+    if st.session_state.gas_documentary_result is not None:
+        st.subheader("Resultado del análisis")
+        st.write(st.session_state.gas_documentary_result)
+        render_rag_sources(st.session_state.gas_documentary_sources)
 
 
 def finish_generation(result: GenerationResult) -> None:
@@ -462,6 +672,8 @@ def finish_generation(result: GenerationResult) -> None:
         st.session_state.gas_precomputed_tool_executions
     )
     scenarios = st.session_state.gas_scenarios
+    rag_sources = st.session_state.rag_pending_sources
+    response_contract = st.session_state.gas_response_contract
     st.session_state.generation_job = None
     st.session_state.generation_kind = None
 
@@ -477,51 +689,67 @@ def finish_generation(result: GenerationResult) -> None:
         st.session_state.operation_id = None
         st.session_state.gas_precomputed_tool_executions = []
         st.session_state.gas_scenarios = []
+        st.session_state.rag_pending_sources = []
+        st.session_state.gas_response_contract = None
 
     if result.status == GenerationStatus.COMPLETED:
-        if generation_kind == "chat":
+        if generation_kind in {"chat", "rag_chat"}:
+            response_content = result.content or ""
+            if generation_kind == "rag_chat":
+                response_content = sanitize_rag_citations(
+                    response_content, rag_sources
+                )
             st.session_state.messages.append(
                 {
                     "role": "assistant",
-                    "content": result.content or "",
+                    "content": response_content,
                     "response_time_seconds": result.elapsed_seconds,
                     "provider": result.provider_name,
                     "model": result.model_name,
                     "tool_executions": result.tool_executions,
+                    "rag_sources": (
+                        rag_sources if generation_kind == "rag_chat" else []
+                    ),
                 }
             )
         else:
             recorder: PerformanceRecorder = st.session_state.pipeline_recorder
             try:
-                st.session_state.gas_analysis_result = (
-                    parse_scenario_analysis(
-                        result.content or "",
-                        scenarios,
-                        recorder,
+                if response_contract is None:
+                    raise GasAnalysisError(
+                        "No se ha definido el contrato de salida del análisis."
                     )
+                handled = handle_gas_response(
+                    GasResponseContract(response_contract),
+                    result.content or "",
+                    recorder,
+                    scenarios,
+                    rag_sources,
                 )
-                final_event = recorder.start_stage(
-                    "final_response",
-                    response_chars=len(result.content or ""),
-                )
-                recorder.complete_stage(final_event)
-                st.session_state.gas_analysis_metadata = {
-                    "response_time_seconds": result.elapsed_seconds,
-                    "provider": result.provider_name,
-                    "model": result.model_name,
-                    "tool_executions": [
-                        *precomputed_tool_executions,
-                        *result.tool_executions,
-                    ],
-                }
+                if handled.contract in {
+                    GasResponseContract.DOCUMENT_TEXT,
+                    GasResponseContract.QUANTITATIVE_TEXT,
+                }:
+                    st.session_state.gas_documentary_result = (
+                        handled.documentary_content
+                    )
+                    st.session_state.gas_documentary_sources = rag_sources
+                else:
+                    st.session_state.gas_analysis_result = (
+                        handled.scenario_analysis
+                    )
+                    st.session_state.gas_analysis_metadata = {
+                        "response_time_seconds": result.elapsed_seconds,
+                        "provider": result.provider_name,
+                        "model": result.model_name,
+                        "tool_executions": [
+                            *precomputed_tool_executions,
+                            *result.tool_executions,
+                        ],
+                    }
             except GasAnalysisError as error:
-                final_event = recorder.start_stage("final_response")
-                recorder.fail_stage(
-                    final_event,
-                    error_type="parse_or_validation_error",
-                )
                 st.session_state.generation_notice = ("error", str(error))
-                log_operation_total("parse_or_validation_error")
+                log_operation_total("response_handling_error")
                 return
         log_operation_total()
         return
@@ -581,6 +809,7 @@ def render_pipeline_panel() -> None:
     render_pipeline_inspector(recorder.snapshot() if recorder else None)
 
 
+render_rag_configuration()
 inject_pipeline_styles()
 main_column, inspector_column = st.columns([2.15, 1], gap="large", wrap=True)
 with main_column:

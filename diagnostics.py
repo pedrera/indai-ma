@@ -15,6 +15,7 @@ class PerformanceStatus(str, Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    SKIPPED = "skipped"
 
 
 PIPELINE_STAGES = (
@@ -33,6 +34,49 @@ GAS_PIPELINE_STAGES = (
     "http_request",
     "model_inference",
     "parse_validation",
+    "final_response",
+)
+RAG_INDEX_PIPELINE_STAGES = (
+    "document_parsing",
+    "chunking",
+    "embedding",
+    "index_persistence",
+)
+RAG_CHAT_PIPELINE_STAGES = (
+    "query_embedding",
+    "vector_search",
+    "retrieved_context",
+    "provider_start",
+    "http_request",
+    "model_inference",
+    "tool_execution",
+    "final_response",
+)
+GAS_RAG_PIPELINE_STAGES = (
+    "query_embedding",
+    "vector_search",
+    "retrieved_context",
+    *GAS_PIPELINE_STAGES,
+)
+GAS_DOCUMENTARY_PIPELINE_STAGES = (
+    "query_embedding",
+    "vector_search",
+    "retrieved_context",
+    "provider_start",
+    "http_request",
+    "model_inference",
+    "final_response",
+)
+GAS_POSITION_PIPELINE_STAGES = (
+    "query_embedding",
+    "vector_search",
+    "retrieved_context",
+    "input_parsing",
+    "tool_execution",
+    "contractual_calculation",
+    "provider_start",
+    "http_request",
+    "model_inference",
     "final_response",
 )
 

@@ -6,7 +6,12 @@ import streamlit as st
 
 from diagnostics import (
     GAS_PIPELINE_STAGES,
+    GAS_DOCUMENTARY_PIPELINE_STAGES,
+    GAS_POSITION_PIPELINE_STAGES,
+    GAS_RAG_PIPELINE_STAGES,
     PIPELINE_STAGES,
+    RAG_CHAT_PIPELINE_STAGES,
+    RAG_INDEX_PIPELINE_STAGES,
     PerformanceEvent,
     PerformanceSnapshot,
     PerformanceStatus,
@@ -14,7 +19,15 @@ from diagnostics import (
 
 
 STAGE_PRESENTATION = {
+    "document_parsing": ("📄", "Document Parsing"),
+    "chunking": ("✂️", "Chunking"),
+    "embedding": ("🧬", "Embedding"),
+    "index_persistence": ("🗂️", "Index Persistence"),
+    "query_embedding": ("🧬", "Query Embedding"),
+    "vector_search": ("🔍", "Vector Search"),
+    "retrieved_context": ("📚", "Retrieved Context"),
     "input_parsing": ("📝", "Input Parsing"),
+    "contractual_calculation": ("📐", "Contractual Calculations"),
     "scenario_generation": ("📊", "Scenario Generation"),
     "prompt_build": ("✍️", "Prompt Build"),
     "provider_start": ("🔌", "Provider Start"),
@@ -29,6 +42,7 @@ STATUS_LABELS = {
     "running": "En curso",
     "completed": "Completada",
     "failed": "Fallida",
+    "skipped": "Omitida",
     "cancelled": "Cancelada",
     "timed_out": "Timeout",
 }
@@ -52,6 +66,8 @@ def _aggregate_stage(
         status = PerformanceStatus.FAILED
     elif PerformanceStatus.RUNNING in statuses:
         status = PerformanceStatus.RUNNING
+    elif statuses == {PerformanceStatus.SKIPPED}:
+        status = PerformanceStatus.SKIPPED
     else:
         status = PerformanceStatus.COMPLETED
     return status, sum(_event_duration(event) for event in events)
@@ -107,6 +123,18 @@ def _render_tool_events(events: list[PerformanceEvent]) -> str:
         scenario_label = (
             f"{escape(str(scenario_name))} · " if scenario_name else ""
         )
+        if event.status == PerformanceStatus.SKIPPED:
+            missing = event.metadata.get("missing_inputs", [])
+            missing_text = ", ".join(
+                escape(str(item)) for item in missing
+            ) or "inputs no disponibles"
+            parts.append(
+                '<div class="pi-tool">'
+                f'<div><strong>{scenario_label}{name}</strong><time>Omitida</time></div>'
+                f'<small><b>Motivo</b> · Faltan: {missing_text}</small>'
+                "</div>"
+            )
+            continue
         arguments = _format_tool_mapping(
             event.metadata.get("tool_arguments")
         )
@@ -152,8 +180,27 @@ def _render_parsing_result(events: list[PerformanceEvent]) -> str:
         if isinstance(ambiguities, list) and ambiguities
         else "ninguna"
     )
+    gas_labels = {
+        "natural_gas": "Gas natural",
+        "biomethane": "Biometano",
+        "lng": "GNL",
+        "hydrogen_blend": "Mezcla de hidrógeno",
+    }
+    detected = result.get("detected_gas_types")
+    gas_text = (
+        ", ".join(
+            escape(gas_labels.get(str(item), str(item))) for item in detected
+        )
+        if isinstance(detected, list) and detected
+        else "—"
+    )
+    source_text = {
+        "user": "Usuario",
+        "rag": "Documento RAG",
+    }.get(result.get("gas_type_source"), "—")
     rows = (
-        ("Gas detectado", values("detected_gas_types")),
+        ("Gas detectado", gas_text),
+        ("Origen", escape(source_text)),
         ("Demanda detectada", values("base_demand_candidates", " GWh")),
         (
             "Suministro detectado",
@@ -172,6 +219,136 @@ def _render_parsing_result(events: list[PerformanceEvent]) -> str:
     return f'<div class="pi-tools"><div class="pi-tool">{content}</div></div>'
 
 
+def _render_contractual_result(events: list[PerformanceEvent]) -> str:
+    event = next(
+        (
+            event
+            for event in reversed(events)
+            if isinstance(event.metadata.get("contractual_result"), dict)
+        ),
+        None,
+    )
+    result = event.metadata.get("contractual_result") if event else None
+    if not isinstance(result, dict):
+        return ""
+
+    def metric(label: str, key: str, unit: str) -> str:
+        value = result.get(key)
+        formatted = (
+            f"{value:,.3f}".rstrip("0").rstrip(".")
+            if isinstance(value, (int, float))
+            else "—"
+        )
+        return (
+            f"<small><b>{escape(label)}</b> · "
+            f"{escape(formatted)} {escape(unit)}</small>"
+        )
+
+    content = "".join(
+        (
+            metric("Contractual excess", "contractual_excess_gwh", "GWh"),
+            (
+                f"<small><b>Supply short</b> · "
+                f"{float(event.metadata['supply_short_gwh']):,.3f} GWh</small>"
+                if event and event.metadata.get("supply_short_gwh") is not None
+                else ""
+            ),
+            (
+                f"<small><b>Spot coverage volume</b> · "
+                f"{float(event.metadata['spot_coverage_volume_mwh']):,.0f} MWh</small>"
+                if event and event.metadata.get("spot_coverage_volume_mwh") is not None
+                else ""
+            ),
+            (
+                f"<small><b>Spot coverage cost</b> · "
+                f"{float(event.metadata['spot_coverage_cost_eur']):,.0f} €</small>"
+                if event and event.metadata.get("spot_coverage_cost_eur") is not None
+                else ""
+            ),
+            metric("Contractual maximum", "contractual_max_gwh", "GWh"),
+            metric(
+                "Contractual excess price",
+                "contractual_excess_price_eur_mwh",
+                "€/MWh",
+            ),
+        )
+    )
+    return f'<div class="pi-tools"><div class="pi-tool">{content}</div></div>'
+
+
+def _render_retrieved_sources(events: list[PerformanceEvent]) -> str:
+    sources = next(
+        (
+            event.metadata.get("sources")
+            for event in reversed(events)
+            if isinstance(event.metadata.get("sources"), list)
+        ),
+        [],
+    )
+    resolution = next(
+        (
+            event.metadata.get("gas_type_resolution")
+            for event in reversed(events)
+            if isinstance(event.metadata.get("gas_type_resolution"), dict)
+        ),
+        None,
+    )
+    if not sources and not resolution:
+        return ""
+    parts = ['<div class="pi-tools">']
+    if isinstance(resolution, dict) and resolution.get("gas_type"):
+        labels = {
+            "natural_gas": "Gas natural",
+            "biomethane": "Biometano",
+            "lng": "GNL",
+            "hydrogen_blend": "Mezcla de hidrógeno",
+        }
+        gas_type = str(resolution["gas_type"])
+        source = "Usuario" if resolution.get("source") == "user" else "Documento RAG"
+        parts.append(
+            '<div class="pi-tool">'
+            f'<small><b>Gas detectado</b> · {escape(labels.get(gas_type, gas_type))}</small>'
+            f'<small><b>Origen</b> · {escape(source)}</small>'
+            "</div>"
+        )
+    elif isinstance(resolution, dict) and resolution.get("status") in {
+        "conflict",
+        "ambiguous",
+    }:
+        conflicts = resolution.get("conflicts", [])
+        labels = {
+            "natural_gas": "Gas natural",
+            "biomethane": "Biometano",
+            "lng": "GNL",
+            "hydrogen_blend": "Mezcla de hidrógeno",
+        }
+        conflict_text = ", ".join(
+            escape(labels.get(str(item), str(item)))
+            for item in conflicts
+        )
+        parts.append(
+            '<div class="pi-tool">'
+            '<small><b>Resolución de gas</b> · Conflicto</small>'
+            f'<small><b>Candidatos</b> · {conflict_text}</small>'
+            "</div>"
+        )
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        name = escape(str(source.get("document_name", "Documento")))
+        section = escape(str(source.get("section") or "Sin sección"))
+        page = escape(str(source.get("page_start", "—")))
+        score = float(source.get("score", 0) or 0)
+        parts.append(
+            '<div class="pi-tool">'
+            f'<div><strong>{name}</strong><time>{score:.3f}</time></div>'
+            f'<small><b>Sección</b> · {section} · página {page}</small>'
+            "</div>"
+        )
+    parts.append("</div>")
+    return "".join(parts)
+
+
 def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
     with st.expander("Pipeline Inspector", expanded=True):
         if snapshot is None:
@@ -186,7 +363,12 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
         provider = {"lmstudio": "LM Studio", "openai": "OpenAI"}.get(
             snapshot.provider, snapshot.provider
         )
-        mode = "Chat" if snapshot.mode == "chat" else "Gas Analysis"
+        mode = {
+            "chat": "Chat",
+            "rag_chat": "RAG Chat",
+            "rag_index": "RAG Indexing",
+            "gas_analysis": "Gas Analysis",
+        }.get(snapshot.mode, snapshot.mode)
         st.markdown(
             dedent(
                 f"""\
@@ -202,11 +384,35 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
             unsafe_allow_html=True,
         )
 
-        pipeline_stages = (
-            GAS_PIPELINE_STAGES
-            if snapshot.mode == "gas_analysis"
-            else PIPELINE_STAGES
+        pipeline_stages = {
+            "gas_analysis": GAS_PIPELINE_STAGES,
+            "rag_chat": RAG_CHAT_PIPELINE_STAGES,
+            "rag_index": RAG_INDEX_PIPELINE_STAGES,
+        }.get(snapshot.mode, PIPELINE_STAGES)
+        if snapshot.mode == "gas_analysis" and any(
+            event.stage == "query_embedding" for event in snapshot.events
+        ):
+            pipeline_stages = GAS_RAG_PIPELINE_STAGES
+        query_intent = next(
+            (
+                event.metadata.get("intent")
+                for event in reversed(snapshot.events)
+                if event.stage == "query_classification"
+            ),
+            None,
         )
+        if snapshot.mode == "gas_analysis" and query_intent == "documentary":
+            pipeline_stages = GAS_DOCUMENTARY_PIPELINE_STAGES
+        analysis_kind = next(
+            (
+                event.metadata.get("analysis_kind")
+                for event in reversed(snapshot.events)
+                if event.stage == "input_parsing"
+            ),
+            None,
+        )
+        if snapshot.mode == "gas_analysis" and analysis_kind == "position":
+            pipeline_stages = GAS_POSITION_PIPELINE_STAGES
         event_groups = {
             stage: [event for event in snapshot.events if event.stage == stage]
             for stage in pipeline_stages
@@ -214,6 +420,8 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
         timeline_parts = ['<div class="pi-timeline">']
         for stage in pipeline_stages:
             icon, label = STAGE_PRESENTATION[stage]
+            if snapshot.mode == "rag_chat" and stage == "tool_execution":
+                label = "Business Tools"
             events = event_groups[stage]
             status, duration = _aggregate_stage(events)
             detail = ""
@@ -224,6 +432,24 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
                 detail = f'<small>{len(rounds)} rounds</small>'
             elif stage == "tool_execution" and events:
                 detail = f'<small>{len(events)} ejecuciones</small>'
+            elif stage == "document_parsing" and events:
+                count = events[-1].metadata.get("document_count", 0)
+                detail = f"<small>{escape(str(count))} documentos</small>"
+            elif stage == "chunking" and events:
+                count = events[-1].metadata.get("chunk_count", 0)
+                detail = f"<small>{escape(str(count))} chunks</small>"
+            elif stage == "index_persistence" and events:
+                count = events[-1].metadata.get(
+                    "persisted_chunk_count",
+                    events[-1].metadata.get("chunk_count", 0),
+                )
+                detail = f"<small>{escape(str(count))} chunks</small>"
+            elif stage in {"embedding", "vector_search", "retrieved_context"} and events:
+                count = events[-1].metadata.get(
+                    "embedding_count",
+                    events[-1].metadata.get("retrieved_chunk_count", 0),
+                )
+                detail = f"<small>{escape(str(count))} elementos</small>"
             timeline_parts.append(
                 dedent(
                     f"""\
@@ -240,6 +466,10 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
                 timeline_parts.append(_render_tool_events(events))
             elif stage == "input_parsing" and events:
                 timeline_parts.append(_render_parsing_result(events))
+            elif stage == "contractual_calculation" and events:
+                timeline_parts.append(_render_contractual_result(events))
+            elif stage == "retrieved_context" and events:
+                timeline_parts.append(_render_retrieved_sources(events))
         timeline_parts.append("</div>")
         st.markdown("".join(timeline_parts), unsafe_allow_html=True)
 
