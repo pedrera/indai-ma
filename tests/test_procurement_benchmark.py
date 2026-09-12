@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -29,7 +30,8 @@ class BenchmarkTests(unittest.TestCase):
     @staticmethod
     def successful_runner(mode, provider, recorder):
         recorder.record_stage("agent_observation", observation_type="tool_skipped")
-        recorder.record_stage("final_response_validation", deterministic_fallback=True)
+        recorder.record_stage("final_response_validation", deterministic_fallback=True,
+                              validation_reasons=["unsupported_economic_amount"])
         return SimpleNamespace(run=lambda *_: SimpleNamespace(
             status=AgentStatus.COMPLETED, content="SHORT", termination_reason="final_answer"
         ))
@@ -41,6 +43,7 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]["config"]["timeout_seconds"], 30)
         self.assertEqual(rows[0]["record"]["result_summary"], "SHORT")
+        self.assertEqual(rows[0]["validation_reasons"], ["unsupported_economic_amount"])
         summary = summarize(rows)[0]
         self.assertEqual(summary["completed"], 2)
         self.assertEqual(summary["fallbacks"], 2)
@@ -56,6 +59,38 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual([r["record"]["status"] for r in rows], ["failed", "completed"])
         self.assertEqual(rows[0]["record"]["termination_reason"], "RuntimeError")
         self.assertNotIn("private endpoint", str(rows))
+        self.assertIsNone(rows[0]["validation_reasons"])
+
+    def test_legacy_records_have_unknown_reasons_without_rewriting_database(self):
+        import json
+        batch = self.run_batch(self.successful_runner, repetitions=1,
+                               modes=("deterministic",), cases={"short": "request"})
+        with closing(sqlite3.connect(self.path)) as connection:
+            payload = json.loads(connection.execute(
+                "SELECT payload FROM comparison_runs"
+            ).fetchone()[0])
+            del payload["validation_reasons"]
+            connection.execute("UPDATE comparison_runs SET payload = ?", (json.dumps(payload),))
+            connection.commit()
+        self.assertIsNone(self.store.read(batch)[0]["validation_reasons"])
+        with closing(sqlite3.connect(self.path)) as connection:
+            stored = json.loads(connection.execute(
+                "SELECT payload FROM comparison_runs"
+            ).fetchone()[0])
+        self.assertNotIn("validation_reasons", stored)
+
+    def test_accepted_validation_persists_empty_reasons(self):
+        def factory(mode, provider, recorder):
+            recorder.record_stage("final_response_validation", deterministic_fallback=False,
+                                  validation_reasons=[])
+            return SimpleNamespace(run=lambda *_: SimpleNamespace(
+                status=AgentStatus.COMPLETED, content="SHORT", termination_reason="final_answer"
+            ))
+        batch = self.run_batch(factory, repetitions=1, modes=("deterministic",),
+                               cases={"short": "request"})
+        row = self.store.read(batch)[0]
+        self.assertEqual(row["validation_reasons"], [])
+        self.assertFalse(row["fallback"])
 
     def test_percentiles_exclude_failures_and_use_nearest_rank(self):
         batch = self.run_batch(self.successful_runner, repetitions=1,

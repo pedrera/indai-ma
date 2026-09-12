@@ -71,6 +71,10 @@ def run_benchmark(store, *, provider_name, model, config, repetitions=3,
                 snapshot = recorder.snapshot()
                 record = replace(build_execution_comparison_record(snapshot, content),
                                  termination_reason=reason)
+                validation_events = [
+                    e for e in snapshot.events
+                    if e.stage == "final_response_validation"
+                ]
                 store.append(
                     record, batch_id=batch_id, case_id=case_id, repetition=repetition,
                     provider=provider_name, model=model, config=asdict(config),
@@ -79,6 +83,13 @@ def run_benchmark(store, *, provider_name, model, config, repetitions=3,
                     fallback=any(e.stage == "final_response_validation" and
                                  e.metadata.get("deterministic_fallback") for e in snapshot.events),
                     plan_failed=reason == "plan_validation_failed",
+                    validation_reasons=(
+                        [reason for e in validation_events
+                         for reason in e.metadata["validation_reasons"]]
+                        if validation_events and all(
+                            "validation_reasons" in e.metadata for e in validation_events
+                        ) else None
+                    ),
                 )
                 progress(f"{case_id} / {mode} / {repetition}: {status}")
     return batch_id

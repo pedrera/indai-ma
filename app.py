@@ -3,6 +3,7 @@ from time import perf_counter
 from uuid import uuid4
 
 from diagnostics import PerformanceRecorder
+from benchmark_ui import render_benchmark_history
 from clipboard_text import build_all_clipboard_text, build_response_clipboard_text
 from clipboard_ui import render_clipboard_button
 from execution_metrics import build_operation_metrics
@@ -789,6 +790,8 @@ def render_gas_analysis() -> None:
 
 def render_procurement_agent() -> None:
     st.subheader("ProcurementAgent")
+    with st.expander("Comparar benchmarks guardados"):
+        render_benchmark_history()
     st.write(
         "El agente decide qué cálculos deterministas necesita para evaluar "
         "la cobertura de suministro y la exposición al mercado."

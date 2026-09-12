@@ -36,7 +36,7 @@ class ComparisonStore:
     def append(self, record: ExecutionComparisonRecord, *, batch_id: str,
                case_id: str, repetition: int, provider: str, model: str,
                config: dict, skipped_actions: int = 0, fallback: bool = False,
-               plan_failed: bool = False):
+               plan_failed: bool = False, validation_reasons=None):
         payload = {
             "schema_version": 1,
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -49,6 +49,10 @@ class ComparisonStore:
             "skipped_actions": skipped_actions,
             "fallback": fallback,
             "plan_failed": plan_failed,
+            "validation_reasons": (
+                list(dict.fromkeys(validation_reasons))
+                if validation_reasons is not None else None
+            ),
             "record": asdict(record),
         }
         with self._connect() as connection:
@@ -64,4 +68,19 @@ class ComparisonStore:
                 "SELECT payload FROM comparison_runs WHERE batch_id = ? ORDER BY rowid",
                 (batch_id,),
             ).fetchall()
-        return [json.loads(row[0]) for row in rows]
+        payloads = [json.loads(row[0]) for row in rows]
+        for payload in payloads:
+            # Older runs did not store reasons; unknown is different from empty.
+            payload.setdefault("validation_reasons", None)
+        return payloads
+
+    def list_batches(self):
+        """List newest batches first, without loading response payloads."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT batch_id, COUNT(*), MIN(json_extract(payload, '$.created_at')) "
+                "FROM comparison_runs "
+                "GROUP BY batch_id ORDER BY MAX(rowid) DESC"
+            ).fetchall()
+        return [{"batch_id": batch_id, "run_count": count, "first_saved_at": saved_at}
+                for batch_id, count, saved_at in rows]

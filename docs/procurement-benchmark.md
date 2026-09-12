@@ -1,5 +1,22 @@
 # Benchmark repetible de Procurement
 
+En Streamlit, abre **ProcurementAgent → Comparar benchmarks guardados** para
+seleccionar un lote, filtrar casos y estrategias y consultar métricas y respuestas.
+**Actualizar historial** recarga los intentos guardados, incluidos los de un lote
+en curso. **Descargar informe JSON** exporta solo las ejecuciones filtradas y su
+resumen. La vista consulta la base predeterminada; no inicia llamadas LLM.
+El selector muestra la fecha de la primera ejecución guardada en UTC y marca
+el lote con actividad guardada más reciente. **Ver lote más reciente** permite
+seleccionarlo directamente. Las descargas incluyen fecha UTC e identificador
+completo de lote en el nombre para distinguirlas de informes anteriores.
+
+El detalle muestra si se aplicó fallback y los códigos de los motivos de
+validación, por ejemplo `unsupported_economic_amount`. El JSON incluye
+`validation_reasons` en cada ejecución: una lista vacía significa validación sin
+incidencias y `null` significa que no se registraron motivos (lotes antiguos o
+ejecuciones sin validación final). Los lotes antiguos no se modifican; sus motivos
+no pueden reconstruirse a partir de la respuesta final guardada.
+
 El benchmark ejecuta secuencialmente los cinco casos de referencia con las
 estrategias existentes. No se activa desde una consulta de Streamlit.
 El comando por defecto solo muestra el número de ejecuciones previsto:
