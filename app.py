@@ -3,6 +3,9 @@ from time import perf_counter
 from uuid import uuid4
 
 from diagnostics import PerformanceRecorder
+from clipboard_text import build_all_clipboard_text, build_response_clipboard_text
+from clipboard_ui import render_clipboard_button
+from execution_metrics import build_operation_metrics
 from gas_analysis import (
     GasAnalysisError,
     ScenarioAnalysis,
@@ -10,10 +13,17 @@ from gas_analysis import (
 from gas_query_orchestration import prepare_gas_query
 from gas_response_handling import GasResponseContract, handle_gas_response
 from generation import (
+    AgentJob,
     GenerationJob,
     GenerationResult,
     GenerationStatus,
 )
+from procurement_agent import ProcurementAgent, ProviderDecisionModel
+from procurement_deterministic import (
+    ProcurementDeterministicWorkflow,
+    ProviderSynthesisModel,
+)
+from procurement_planner import ProcurementAgentPlanner, ProviderPlannerModel
 from llm_client import (
     CHAT_GENERATION_OPTIONS,
     GAS_ANALYSIS_GENERATION_OPTIONS,
@@ -68,6 +78,10 @@ if "gas_documentary_sources" not in st.session_state:
     st.session_state.gas_documentary_sources = []
 if "gas_response_contract" not in st.session_state:
     st.session_state.gas_response_contract = None
+if "procurement_agent_result" not in st.session_state:
+    st.session_state.procurement_agent_result = None
+if "procurement_agent_metadata" not in st.session_state:
+    st.session_state.procurement_agent_metadata = None
 if "generation_job" not in st.session_state:
     st.session_state.generation_job = None
 if "generation_kind" not in st.session_state:
@@ -117,7 +131,7 @@ with st.sidebar:
     st.header("Configuración")
     selected_mode = st.radio(
         "Modo",
-        ("Chat", "Gas B2B Portfolio Analysis"),
+        ("Chat", "Gas B2B Portfolio Analysis", "ProcurementAgent"),
         key="selected_mode",
         disabled=generation_active,
     )
@@ -388,6 +402,60 @@ def start_generation(
     job.start()
 
 
+def start_procurement_agent(
+    request: str, orchestration_mode: str = "react_agent"
+) -> None:
+    operation_id = uuid4().hex[:8]
+    generation_kind = {
+        "deterministic": "procurement_deterministic",
+        "planner_agent": "procurement_planner",
+        "react_agent": "procurement_agent",
+    }[orchestration_mode]
+    recorder = create_pipeline_recorder(operation_id, generation_kind)
+    recorder.record_stage(
+        "prompt_build",
+        message_count=1,
+        approximate_prompt_chars=len(request),
+        orchestration_mode=orchestration_mode,
+    )
+    try:
+        provider = get_llm_provider(
+            selected_provider,
+            selected_model,
+            recorder=recorder,
+            runtime_config=st.session_state.llm_runtime_config,
+        )
+        if orchestration_mode == "deterministic":
+            runner = ProcurementDeterministicWorkflow(
+                ProviderSynthesisModel(provider), recorder=recorder
+            )
+        elif orchestration_mode == "planner_agent":
+            runner = ProcurementAgentPlanner(
+                ProviderPlannerModel(provider), recorder=recorder
+            )
+        else:
+            runner = ProcurementAgent(
+                ProviderDecisionModel(provider), recorder=recorder
+            )
+        job = AgentJob(
+            agent=runner,
+            request=request,
+            timeout_seconds=st.session_state.llm_runtime_config.timeout_seconds,
+            provider=provider,
+        )
+    except Exception:
+        recorder.finish("failed")
+        raise
+    st.session_state.procurement_agent_result = None
+    st.session_state.procurement_agent_metadata = None
+    st.session_state.generation_job = job
+    st.session_state.generation_kind = generation_kind
+    st.session_state.generation_notice = None
+    st.session_state.operation_started_at = perf_counter()
+    st.session_state.operation_id = operation_id
+    job.start()
+
+
 def format_provider_name(provider_name: str | None) -> str:
     names = {"lmstudio": "LM Studio", "openai": "OpenAI"}
     return names.get(provider_name or "", provider_name or "Proveedor desconocido")
@@ -461,6 +529,34 @@ def render_tool_executions(tool_executions: list[dict]) -> None:
         st.caption(f"{details} · Tiempo de ejecución: {duration_ms:.3f} ms")
 
 
+def render_response_copy_actions(
+    response,
+    tool_executions: list[dict],
+    *,
+    key: str,
+    operation_id: str | None = None,
+) -> None:
+    render_clipboard_button(
+        build_response_clipboard_text(response),
+        "Copy response",
+        key=f"{key}-response",
+    )
+    recorder: PerformanceRecorder | None = st.session_state.pipeline_recorder
+    snapshot = recorder.snapshot() if recorder is not None else None
+    is_current_terminal_operation = (
+        snapshot is not None
+        and snapshot.status
+        in {"completed", "failed", "timed_out", "cancelled"}
+        and (operation_id is None or snapshot.operation_id == operation_id)
+    )
+    if is_current_terminal_operation:
+        render_clipboard_button(
+            build_all_clipboard_text(response, tool_executions, snapshot),
+            "Copy all",
+            key=f"{key}-all-{snapshot.operation_id}",
+        )
+
+
 def render_rag_sources(sources: list[dict]) -> None:
     if not sources:
         return
@@ -484,9 +580,24 @@ def render_rag_sources(sources: list[dict]) -> None:
 
 
 def render_chat() -> None:
-    for message in st.session_state.messages:
+    latest_assistant_index = next(
+        (
+            index
+            for index in range(len(st.session_state.messages) - 1, -1, -1)
+            if st.session_state.messages[index]["role"] == "assistant"
+        ),
+        None,
+    )
+    for index, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):
             st.write(message["content"])
+            if index == latest_assistant_index:
+                render_response_copy_actions(
+                    message["content"],
+                    message.get("tool_executions", []),
+                    key=f"chat-{index}",
+                    operation_id=message.get("operation_id"),
+                )
             render_tool_executions(message.get("tool_executions", []))
             render_rag_sources(message.get("rag_sources", []))
             if message["role"] == "assistant" and message.get(
@@ -579,6 +690,12 @@ def render_gas_analysis_result(analysis: ScenarioAnalysis) -> None:
         st.markdown(f"- {risk}")
     st.subheader("Recomendación")
     st.write(analysis.recommendation)
+    render_response_copy_actions(
+        analysis,
+        (metadata or {}).get("tool_executions", []),
+        key="gas-analysis",
+        operation_id=(metadata or {}).get("operation_id"),
+    )
 
 
 def render_gas_analysis() -> None:
@@ -662,7 +779,70 @@ def render_gas_analysis() -> None:
     if st.session_state.gas_documentary_result is not None:
         st.subheader("Resultado del análisis")
         st.write(st.session_state.gas_documentary_result)
+        render_response_copy_actions(
+            st.session_state.gas_documentary_result,
+            [],
+            key="gas-documentary",
+        )
         render_rag_sources(st.session_state.gas_documentary_sources)
+
+
+def render_procurement_agent() -> None:
+    st.subheader("ProcurementAgent")
+    st.write(
+        "El agente decide qué cálculos deterministas necesita para evaluar "
+        "la cobertura de suministro y la exposición al mercado."
+    )
+    orchestration_label = st.radio(
+        "Orchestration mode",
+        ("Deterministic", "Planner Agent", "ReAct Agent"),
+        horizontal=True,
+        key="procurement_orchestration_mode",
+        disabled=generation_active,
+    )
+    orchestration_mode = {
+        "Deterministic": "deterministic",
+        "Planner Agent": "planner_agent",
+        "ReAct Agent": "react_agent",
+    }[orchestration_label]
+    request = st.text_area(
+        "Posición de aprovisionamiento",
+        height=220,
+        placeholder=(
+            "Ejemplo: demanda prevista de gas natural de 120 GWh, suministro "
+            "contratado de 95 GWh y precio spot de 42 EUR/MWh."
+        ),
+        key="procurement_agent_request",
+    )
+    if st.button(
+        "Ejecutar ProcurementAgent",
+        type="primary",
+        disabled=selected_model is None or generation_active or not request.strip(),
+    ):
+        try:
+            start_procurement_agent(request, orchestration_mode)
+            st.rerun()
+        except ValueError as error:
+            st.error(str(error))
+    if st.session_state.procurement_agent_result is not None:
+        st.subheader("Resultado del agente")
+        st.write(st.session_state.procurement_agent_result)
+        metadata = st.session_state.procurement_agent_metadata or {}
+        render_response_copy_actions(
+            st.session_state.procurement_agent_result,
+            metadata.get("tool_executions", []),
+            key="procurement-agent",
+            operation_id=metadata.get("operation_id"),
+        )
+        render_tool_executions(metadata.get("tool_executions", []))
+        if metadata:
+            st.caption(
+                "Last execution metrics · "
+                f"Mode: {metadata.get('orchestration_mode', '—')} · "
+                f"Total: {metadata.get('response_time_seconds', 0):.1f} s · "
+                f"LLM calls: {metadata.get('llm_call_count', 0)} · "
+                f"Tool calls: {len(metadata.get('tool_executions', []))}"
+            )
 
 
 def finish_generation(result: GenerationResult) -> None:
@@ -680,10 +860,11 @@ def finish_generation(result: GenerationResult) -> None:
     def log_operation_total(status: str = result.status.value) -> None:
         recorder: PerformanceRecorder | None = st.session_state.pipeline_recorder
         if recorder is not None and recorder.operation_id == operation_id:
+            operation_status = result.execution_status or status
             recorder.finish(
                 "completed"
-                if status == GenerationStatus.COMPLETED.value
-                else status
+                if operation_status == GenerationStatus.COMPLETED.value
+                else operation_status
             )
         st.session_state.operation_started_at = None
         st.session_state.operation_id = None
@@ -693,7 +874,34 @@ def finish_generation(result: GenerationResult) -> None:
         st.session_state.gas_response_contract = None
 
     if result.status == GenerationStatus.COMPLETED:
-        if generation_kind in {"chat", "rag_chat"}:
+        if generation_kind in {
+            "procurement_agent",
+            "procurement_planner",
+            "procurement_deterministic",
+        }:
+            recorder = st.session_state.pipeline_recorder
+            operation_metrics = (
+                build_operation_metrics(recorder.snapshot())
+                if recorder is not None
+                else None
+            )
+            st.session_state.procurement_agent_result = result.content or ""
+            st.session_state.procurement_agent_metadata = {
+                "operation_id": operation_id,
+                "response_time_seconds": result.elapsed_seconds,
+                "provider": result.provider_name,
+                "model": result.model_name,
+                "tool_executions": result.tool_executions,
+                "llm_call_count": (
+                    operation_metrics.llm_call_count if operation_metrics else 0
+                ),
+                "orchestration_mode": {
+                    "procurement_agent": "ReAct Agent",
+                    "procurement_planner": "Planner Agent",
+                    "procurement_deterministic": "Deterministic",
+                }[generation_kind],
+            }
+        elif generation_kind in {"chat", "rag_chat"}:
             response_content = result.content or ""
             if generation_kind == "rag_chat":
                 response_content = sanitize_rag_citations(
@@ -702,6 +910,7 @@ def finish_generation(result: GenerationResult) -> None:
             st.session_state.messages.append(
                 {
                     "role": "assistant",
+                    "operation_id": operation_id,
                     "content": response_content,
                     "response_time_seconds": result.elapsed_seconds,
                     "provider": result.provider_name,
@@ -739,6 +948,7 @@ def finish_generation(result: GenerationResult) -> None:
                         handled.scenario_analysis
                     )
                     st.session_state.gas_analysis_metadata = {
+                        "operation_id": operation_id,
                         "response_time_seconds": result.elapsed_seconds,
                         "provider": result.provider_name,
                         "model": result.model_name,
@@ -815,8 +1025,10 @@ main_column, inspector_column = st.columns([2.15, 1], gap="large", wrap=True)
 with main_column:
     if selected_mode == "Chat":
         render_chat()
-    else:
+    elif selected_mode == "Gas B2B Portfolio Analysis":
         render_gas_analysis()
+    else:
+        render_procurement_agent()
 
     render_generation_status()
 

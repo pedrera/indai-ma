@@ -79,6 +79,31 @@ GAS_POSITION_PIPELINE_STAGES = (
     "model_inference",
     "final_response",
 )
+PROCUREMENT_AGENT_PIPELINE_STAGES = (
+    "agent_start",
+    "agent_decision",
+    "tool_execution",
+    "agent_observation",
+    "final_response_validation",
+    "agent_final",
+)
+PROCUREMENT_PLANNER_PIPELINE_STAGES = (
+    "agent_start",
+    "llm_call",
+    "agent_plan_created",
+    "plan_validation",
+    "tool_execution",
+    "agent_observation",
+    "final_response_validation",
+    "agent_final",
+)
+PROCUREMENT_DETERMINISTIC_PIPELINE_STAGES = (
+    "deterministic_start",
+    "tool_execution",
+    "llm_call",
+    "final_response_validation",
+    "deterministic_final",
+)
 
 
 @dataclass(frozen=True)
@@ -168,6 +193,105 @@ class PerformanceRecorder:
         self._finish_stage(
             event_id, PerformanceStatus.COMPLETED, metadata
         )
+
+    def start_llm_call(
+        self,
+        *,
+        call_number: int,
+        purpose: str,
+        provider_round: int,
+        message_count: int,
+        prompt_character_count: int,
+        tool_schema_character_count: int,
+    ) -> str | None:
+        try:
+            return self.start_stage(
+                "llm_call",
+                round=call_number,
+                call_number=call_number,
+                purpose=purpose,
+                provider_round=provider_round,
+                message_count=message_count,
+                prompt_character_count=prompt_character_count,
+                tool_schema_character_count=tool_schema_character_count,
+                timing_semantics="wall_clock",
+            )
+        except Exception:
+            self._logger.exception("Unable to start LLM call trace")
+            return None
+
+    def complete_llm_call(
+        self,
+        event_id: str | None,
+        *,
+        request_setup_seconds: float,
+        response_stream_seconds: float,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        total_tokens: int | None = None,
+        server_inference_seconds: float | None = None,
+        response_character_count: int | None = None,
+    ) -> None:
+        if event_id is None:
+            return
+        try:
+            self.complete_stage(
+                event_id,
+                request_setup_seconds=request_setup_seconds,
+                response_stream_seconds=response_stream_seconds,
+                server_inference_seconds=server_inference_seconds,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                response_character_count=response_character_count,
+                nested_metrics=(
+                    "request_setup_seconds",
+                    "response_stream_seconds",
+                    "server_inference_seconds",
+                ),
+            )
+        except Exception:
+            self._logger.exception("Unable to complete LLM call trace")
+
+    def fail_llm_call(
+        self,
+        event_id: str | None,
+        *,
+        request_setup_seconds: float | None = None,
+        response_stream_seconds: float | None = None,
+    ) -> None:
+        if event_id is None:
+            return
+        try:
+            self.fail_stage(
+                event_id,
+                request_setup_seconds=request_setup_seconds,
+                response_stream_seconds=response_stream_seconds,
+                server_inference_seconds=None,
+                input_tokens=None,
+                output_tokens=None,
+                total_tokens=None,
+                nested_metrics=(
+                    "request_setup_seconds",
+                    "response_stream_seconds",
+                ),
+            )
+        except Exception:
+            self._logger.exception("Unable to fail LLM call trace")
+
+    def update_latest_stage(self, stage: str, **metadata: Any) -> None:
+        """Best-effort trace enrichment; it must never affect execution."""
+        try:
+            with self._lock:
+                for index in range(len(self._events) - 1, -1, -1):
+                    event = self._events[index]
+                    if event.stage == stage:
+                        self._events[index] = replace(
+                            event, metadata={**event.metadata, **metadata}
+                        )
+                        return
+        except Exception:
+            self._logger.exception("Unable to enrich trace stage=%s", stage)
 
     def fail_stage(self, event_id: str, **metadata: Any) -> None:
         self._finish_stage(event_id, PerformanceStatus.FAILED, metadata)

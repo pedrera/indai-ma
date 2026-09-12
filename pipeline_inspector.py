@@ -3,6 +3,9 @@ from textwrap import dedent
 from time import perf_counter
 
 import streamlit as st
+from clipboard_text import build_diagnostics_clipboard_text
+from clipboard_ui import render_clipboard_button
+from execution_metrics import build_operation_metrics
 
 from diagnostics import (
     GAS_PIPELINE_STAGES,
@@ -12,6 +15,9 @@ from diagnostics import (
     PIPELINE_STAGES,
     RAG_CHAT_PIPELINE_STAGES,
     RAG_INDEX_PIPELINE_STAGES,
+    PROCUREMENT_AGENT_PIPELINE_STAGES,
+    PROCUREMENT_PLANNER_PIPELINE_STAGES,
+    PROCUREMENT_DETERMINISTIC_PIPELINE_STAGES,
     PerformanceEvent,
     PerformanceSnapshot,
     PerformanceStatus,
@@ -30,12 +36,22 @@ STAGE_PRESENTATION = {
     "contractual_calculation": ("📐", "Contractual Calculations"),
     "scenario_generation": ("📊", "Scenario Generation"),
     "prompt_build": ("✍️", "Prompt Build"),
-    "provider_start": ("🔌", "Provider Start"),
-    "http_request": ("🌐", "HTTP Request"),
-    "model_inference": ("🧠", "Model Inference"),
+    "provider_start": ("🔌", "Provider Preparation"),
+    "http_request": ("🌐", "Request Setup / Stream Open"),
+    "model_inference": ("🧠", "Response Streaming"),
     "parse_validation": ("🔎", "Parse / Validation"),
     "tool_execution": ("🛠️", "Tool Execution"),
     "final_response": ("✅", "Final Response"),
+    "agent_start": ("A", "ProcurementAgent"),
+    "llm_call": ("L", "LLM Call"),
+    "agent_decision": ("D", "Agent Decision"),
+    "agent_observation": ("O", "Observation"),
+    "agent_final": ("F", "Agent Final"),
+    "agent_plan_created": ("P", "Plan Created"),
+    "plan_validation": ("V", "Plan Validation"),
+    "final_response_validation": ("V", "Final Response Validation"),
+    "deterministic_start": ("D", "Deterministic Start"),
+    "deterministic_final": ("F", "Deterministic Final"),
 }
 STATUS_LABELS = {
     "pending": "Pendiente",
@@ -349,6 +365,112 @@ def _render_retrieved_sources(events: list[PerformanceEvent]) -> str:
     return "".join(parts)
 
 
+def _render_agent_timeline(snapshot: PerformanceSnapshot) -> list[str]:
+    parts: list[str] = []
+    call_metrics = {
+        call.call_number: call for call in build_operation_metrics(snapshot).llm_calls
+    }
+    visible_stages = {
+        "agent_start",
+        "llm_call",
+        "agent_decision",
+        "tool_execution",
+        "agent_observation",
+        "agent_final",
+        "agent_plan_created",
+        "plan_validation",
+        "final_response_validation",
+        "deterministic_start",
+        "deterministic_final",
+    }
+    for event in snapshot.events:
+        if event.stage not in visible_stages:
+            continue
+        icon, label = STAGE_PRESENTATION.get(event.stage, ("·", event.stage))
+        if event.stage == "llm_call":
+            call_number = int(event.metadata.get("call_number", event.round or 0))
+            label = f"LLM Call #{call_number}"
+        status = event.status.value
+        parts.append(
+            dedent(
+                f"""\
+                <div class="pi-stage pi-stage-{status}">
+                  <div class="pi-dot">{icon}</div>
+                  <div class="pi-stage-copy"><strong>{escape(label)}</strong></div>
+                  <span class="pi-state">{STATUS_LABELS.get(status, status)}</span>
+                  <time>{_format_duration(_event_duration(event))}</time>
+                </div>
+                """
+            )
+        )
+        if event.stage == "llm_call":
+            metric = call_metrics.get(int(event.metadata.get("call_number", event.round or 0)))
+            if metric:
+                inference = (
+                    _format_duration(metric.inference_time)
+                    if metric.inference_time is not None
+                    else "unavailable"
+                )
+                parts.append(
+                    '<div class="pi-tools"><div class="pi-tool">'
+                    f'<strong>{escape(metric.purpose)}</strong>'
+                    f'<small>Request wall: {_format_duration(metric.request_wall_time)} · '
+                    f'Response stream: {_format_duration(metric.response_stream_time or 0)} · '
+                    f'Server inference: {inference}</small></div></div>'
+                )
+        elif event.stage == "agent_decision":
+            action = escape(str(event.metadata.get("action", "")))
+            tool = escape(str(event.metadata.get("tool_name") or ""))
+            summary = escape(str(event.metadata.get("decision_summary", "")))
+            target = f" → {tool}" if tool else ""
+            parts.append(
+                '<div class="pi-tools"><div class="pi-tool">'
+                f'<strong>{action}{target}</strong><small>{summary}</small></div></div>'
+            )
+        elif event.stage == "tool_execution":
+            parts.append(_render_tool_events([event]))
+        elif event.stage == "agent_observation":
+            kind = escape(str(event.metadata.get("observation_type", "observation")))
+            result = _format_tool_mapping(event.metadata.get("observation_result"))
+            message = escape(str(event.metadata.get("message") or ""))
+            detail = result or message
+            parts.append(
+                '<div class="pi-tools"><div class="pi-tool">'
+                f'<strong>{kind}</strong><small>{detail}</small></div></div>'
+            )
+        elif event.stage == "agent_plan_created":
+            actions = event.metadata.get("plan_actions", [])
+            for index, action in enumerate(actions, 1):
+                parts.append(
+                    '<div class="pi-tools"><div class="pi-tool">'
+                    f'<strong>#{index} {escape(str(action.get("tool_name", "tool")))}</strong>'
+                    f'<small>{escape(_format_tool_mapping(action.get("arguments", {})))}</small>'
+                    '</div></div>'
+                )
+        elif event.stage == "final_response_validation":
+            validation_status = escape(
+                str(event.metadata.get("validation_status", "unavailable"))
+            )
+            fallback = (
+                "yes"
+                if event.metadata.get("deterministic_fallback", False)
+                else "no"
+            )
+            reasons = event.metadata.get("validation_reasons", [])
+            reason_text = (
+                ", ".join(escape(str(reason)) for reason in reasons)
+                if reasons
+                else "none"
+            )
+            parts.append(
+                '<div class="pi-tools"><div class="pi-tool">'
+                f'<strong>{validation_status}</strong>'
+                f'<small>Deterministic fallback: {fallback}</small>'
+                f'<small>Reasons: {reason_text}</small></div></div>'
+            )
+    return parts
+
+
 def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
     with st.expander("Pipeline Inspector", expanded=True):
         if snapshot is None:
@@ -368,6 +490,9 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
             "rag_chat": "RAG Chat",
             "rag_index": "RAG Indexing",
             "gas_analysis": "Gas Analysis",
+            "procurement_agent": "ProcurementAgent",
+            "procurement_planner": "Planner Agent",
+            "procurement_deterministic": "Deterministic Procurement",
         }.get(snapshot.mode, snapshot.mode)
         st.markdown(
             dedent(
@@ -384,10 +509,19 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
             unsafe_allow_html=True,
         )
 
+        render_clipboard_button(
+            build_diagnostics_clipboard_text(snapshot),
+            "Copy diagnostics",
+            key=f"diagnostics-{snapshot.operation_id}",
+        )
+
         pipeline_stages = {
             "gas_analysis": GAS_PIPELINE_STAGES,
             "rag_chat": RAG_CHAT_PIPELINE_STAGES,
             "rag_index": RAG_INDEX_PIPELINE_STAGES,
+            "procurement_agent": PROCUREMENT_AGENT_PIPELINE_STAGES,
+            "procurement_planner": PROCUREMENT_PLANNER_PIPELINE_STAGES,
+            "procurement_deterministic": PROCUREMENT_DETERMINISTIC_PIPELINE_STAGES,
         }.get(snapshot.mode, PIPELINE_STAGES)
         if snapshot.mode == "gas_analysis" and any(
             event.stage == "query_embedding" for event in snapshot.events
@@ -418,6 +552,13 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
             for stage in pipeline_stages
         }
         timeline_parts = ['<div class="pi-timeline">']
+        if snapshot.mode in {
+            "procurement_agent",
+            "procurement_planner",
+            "procurement_deterministic",
+        }:
+            timeline_parts.extend(_render_agent_timeline(snapshot))
+            pipeline_stages = ()
         for stage in pipeline_stages:
             icon, label = STAGE_PRESENTATION[stage]
             if snapshot.mode == "rag_chat" and stage == "tool_execution":
@@ -464,6 +605,26 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
             )
             if stage == "tool_execution" and events:
                 timeline_parts.append(_render_tool_events(events))
+            elif stage == "agent_decision" and events:
+                for event in events:
+                    action = escape(str(event.metadata.get("action", "")))
+                    tool = escape(str(event.metadata.get("tool_name") or ""))
+                    summary = escape(str(event.metadata.get("decision_summary", "")))
+                    target = f" → {tool}" if tool else ""
+                    timeline_parts.append(
+                        '<div class="pi-tools"><div class="pi-tool">'
+                        f'<strong>#{event.round or "—"} {action}{target}</strong>'
+                        f'<small>{summary}</small></div></div>'
+                    )
+            elif stage == "agent_observation" and events:
+                for event in events:
+                    kind = escape(str(event.metadata.get("observation_type", "observation")))
+                    result = _format_tool_mapping(event.metadata.get("observation_result"))
+                    timeline_parts.append(
+                        '<div class="pi-tools"><div class="pi-tool">'
+                        f'<strong>#{event.round or "—"} {kind}</strong>'
+                        f'<small>{result}</small></div></div>'
+                    )
             elif stage == "input_parsing" and events:
                 timeline_parts.append(_render_parsing_result(events))
             elif stage == "contractual_calculation" and events:
@@ -474,6 +635,7 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
         st.markdown("".join(timeline_parts), unsafe_allow_html=True)
 
         with st.expander("Métricas avanzadas"):
+            operation_metrics = build_operation_metrics(snapshot)
             message_count = _latest_metric(snapshot.events, "message_count")
             prompt_chars = _latest_metric(
                 snapshot.events, "approximate_prompt_chars"
@@ -482,21 +644,23 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
                 (event.round or 0 for event in snapshot.events), default=0
             )
             tool_calls = int(_metric_sum(snapshot.events, "tool_call_count"))
-            http_seconds = _metric_sum(
-                snapshot.events, "http_total_seconds"
-            )
-            inference_seconds = _metric_sum(
-                snapshot.events, "inference_seconds"
-            )
             first_row = st.columns(3)
             first_row[0].metric("Mensajes", message_count)
             first_row[1].metric("Caracteres prompt", f"{prompt_chars:,}")
             first_row[2].metric("Round", rounds or "—")
             second_row = st.columns(3)
             second_row[0].metric("Tool calls", tool_calls)
-            second_row[1].metric("Tiempo HTTP", _format_duration(http_seconds))
+            second_row[1].metric(
+                "LLM request wall",
+                _format_duration(operation_metrics.llm_request_wall_time_total),
+            )
             second_row[2].metric(
-                "Inferencia", _format_duration(inference_seconds)
+                "Server inference",
+                (
+                    _format_duration(operation_metrics.llm_inference_time_total)
+                    if operation_metrics.llm_inference_time_total is not None
+                    else "No disponible"
+                ),
             )
             max_tokens = _latest_metadata(snapshot.events, "max_tokens")
             max_output_tokens = _latest_metadata(

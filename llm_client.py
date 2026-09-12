@@ -35,6 +35,28 @@ BASE_SYSTEM_INSTRUCTIONS = (
 )
 
 
+def _read_usage(
+    usage: Any,
+    input_field: str,
+    output_field: str,
+) -> tuple[int | None, int | None, int | None]:
+    """Best-effort metrics extraction that cannot fail generation."""
+    try:
+        return (
+            getattr(usage, input_field, None),
+            getattr(usage, output_field, None),
+            getattr(usage, "total_tokens", None),
+        )
+    except Exception:
+        logger.exception("Unable to read provider token usage")
+        return None, None, None
+
+
+def _collection_character_count(value: list[Any]) -> int:
+    """Count serialized content without treating an empty JSON list as schema."""
+    return len(json.dumps(value, ensure_ascii=False)) if value else 0
+
+
 def _get_conversation_messages(
     messages: list[dict[str, Any]],
 ) -> list[dict[str, str]]:
@@ -116,6 +138,9 @@ class GenerationOptions:
     tool_calling_enabled: bool = True
     max_rounds: int = MAX_TOOL_ROUNDS
     rag_context_enabled: bool = False
+    trace_purpose: str = "generation"
+    trace_call_number: int | None = None
+    trace_tool_schema_character_count: int = 0
 
     def __post_init__(self) -> None:
         if self.max_rounds < 1:
@@ -266,7 +291,31 @@ class OpenAIProvider(LLMProvider):
                     not options.tool_calling_enabled
                     or round_number == options.max_rounds
                 )
+                request_tools = [] if final_generation else tools
                 http_started_at = perf_counter()
+                request_seconds: float | None = None
+                inference_seconds: float | None = None
+                input_tokens: int | None = None
+                output_tokens: int | None = None
+                total_tokens: int | None = None
+                llm_call_event = (
+                    self.recorder.start_llm_call(
+                        call_number=options.trace_call_number or round_number,
+                        purpose=options.trace_purpose,
+                        provider_round=round_number,
+                        message_count=len(conversation_input) + 1,
+                        prompt_character_count=(
+                            len(system_instructions)
+                            + len(json.dumps(conversation_input, ensure_ascii=False))
+                        ),
+                        tool_schema_character_count=(
+                            _collection_character_count(request_tools)
+                            + options.trace_tool_schema_character_count
+                        ),
+                    )
+                    if self.recorder is not None
+                    else None
+                )
                 http_event = (
                     self.recorder.start_stage("http_request", round=round_number)
                     if self.recorder is not None
@@ -286,7 +335,7 @@ class OpenAIProvider(LLMProvider):
                     }
                     if not final_generation:
                         request_parameters.update(
-                            tools=tools,
+                            tools=request_tools,
                             tool_choice="auto",
                         )
 
@@ -310,6 +359,12 @@ class OpenAIProvider(LLMProvider):
                             chunks.append(event.delta)
                         elif event.type == "response.output_item.done":
                             output_items.append(event.item)
+                        elif event.type == "response.completed":
+                            usage = getattr(event.response, "usage", None)
+                            if usage is not None:
+                                input_tokens, output_tokens, total_tokens = _read_usage(
+                                    usage, "input_tokens", "output_tokens"
+                                )
                     inference_seconds = perf_counter() - inference_started_at
                     if self.recorder is not None and inference_event is not None:
                         self.recorder.complete_stage(
@@ -319,12 +374,32 @@ class OpenAIProvider(LLMProvider):
                                 request_seconds + inference_seconds
                             ),
                         )
+                    if self.recorder is not None and llm_call_event is not None:
+                        self.recorder.complete_llm_call(
+                            llm_call_event,
+                            request_setup_seconds=request_seconds,
+                            response_stream_seconds=inference_seconds,
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                            total_tokens=total_tokens,
+                            response_character_count=len("".join(chunks)),
+                        )
                 except Exception:
                     if self.recorder is not None:
                         if inference_event is not None:
                             self.recorder.fail_stage(inference_event)
                         elif http_event is not None:
                             self.recorder.fail_stage(http_event)
+                        if llm_call_event is not None:
+                            self.recorder.fail_llm_call(
+                                llm_call_event,
+                                request_setup_seconds=(
+                                    request_seconds
+                                ),
+                                response_stream_seconds=(
+                                    inference_seconds
+                                ),
+                            )
                     logger.info(
                         "stage=http_call provider=%s model=%s round=%d "
                         "status=interrupted elapsed_seconds=%.4f",
@@ -541,18 +616,39 @@ class LMStudioProvider(LLMProvider):
                 tool_calls: dict[int, dict[str, str]] = {}
                 stream = None
                 http_started_at = perf_counter()
+                request_seconds: float | None = None
+                inference_seconds: float | None = None
+                input_tokens: int | None = None
+                output_tokens: int | None = None
+                total_tokens: int | None = None
+                final_generation = (
+                    not options.tool_calling_enabled
+                    or round_number == options.max_rounds
+                )
+                request_tools = [] if final_generation else tools
+                llm_call_event = (
+                    self.recorder.start_llm_call(
+                        call_number=options.trace_call_number or round_number,
+                        purpose=options.trace_purpose,
+                        provider_round=round_number,
+                        message_count=len(conversation),
+                        prompt_character_count=len(
+                            json.dumps(conversation, ensure_ascii=False)
+                        ),
+                        tool_schema_character_count=(
+                            _collection_character_count(request_tools)
+                            + options.trace_tool_schema_character_count
+                        ),
+                    )
+                    if self.recorder is not None
+                    else None
+                )
                 http_event = (
                     self.recorder.start_stage("http_request", round=round_number)
                     if self.recorder is not None
                     else None
                 )
                 inference_event: str | None = None
-                final_generation = (
-                    not options.tool_calling_enabled
-                    or round_number == options.max_rounds
-                )
-                request_tools = [] if final_generation else tools
-
                 try:
                     _print_lmstudio_request_diagnostics(
                         round_number,
@@ -595,6 +691,11 @@ class LMStudioProvider(LLMProvider):
                         )
                     for chunk in stream:
                         self._raise_if_cancelled()
+                        usage = getattr(chunk, "usage", None)
+                        if usage is not None:
+                            input_tokens, output_tokens, total_tokens = _read_usage(
+                                usage, "prompt_tokens", "completion_tokens"
+                            )
                         if not chunk.choices:
                             continue
 
@@ -623,12 +724,32 @@ class LMStudioProvider(LLMProvider):
                                 request_seconds + inference_seconds
                             ),
                         )
+                    if self.recorder is not None and llm_call_event is not None:
+                        self.recorder.complete_llm_call(
+                            llm_call_event,
+                            request_setup_seconds=request_seconds,
+                            response_stream_seconds=inference_seconds,
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                            total_tokens=total_tokens,
+                            response_character_count=len("".join(chunks)),
+                        )
                 except Exception:
                     if self.recorder is not None:
                         if inference_event is not None:
                             self.recorder.fail_stage(inference_event)
                         elif http_event is not None:
                             self.recorder.fail_stage(http_event)
+                        if llm_call_event is not None:
+                            self.recorder.fail_llm_call(
+                                llm_call_event,
+                                request_setup_seconds=(
+                                    request_seconds
+                                ),
+                                response_stream_seconds=(
+                                    inference_seconds
+                                ),
+                            )
                     logger.info(
                         "stage=http_call provider=%s model=%s round=%d "
                         "status=interrupted elapsed_seconds=%.4f",

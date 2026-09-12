@@ -250,7 +250,9 @@ TOOL_FUNCTIONS: dict[
 }
 
 
-def execute_tool_call(tool_name: str, arguments_json: str) -> ToolExecution:
+def validate_tool_arguments(
+    tool_name: str, arguments_json: str
+) -> dict[str, float]:
     spec = TOOL_SPEC_BY_NAME.get(tool_name)
     if spec is None:
         raise ToolExecutionError(f"Herramienta no permitida: {tool_name}.")
@@ -299,6 +301,11 @@ def execute_tool_call(tool_name: str, arguments_json: str) -> ToolExecution:
             "La variación de demanda no puede producir una demanda negativa."
         )
 
+    return numeric_arguments
+
+
+def execute_tool_call(tool_name: str, arguments_json: str) -> ToolExecution:
+    numeric_arguments = validate_tool_arguments(tool_name, arguments_json)
     started_at = perf_counter()
     result = TOOL_FUNCTIONS[tool_name](numeric_arguments)
     elapsed_seconds = perf_counter() - started_at

@@ -1,6 +1,37 @@
 # indAI MA
 
-Versión 0.6.0 de un asistente web B2B multigás para los sectores sanitario e industrial, con cálculos deterministas y una primera capacidad RAG local para documentación empresarial.
+Versión 0.7.0 fase 1 de un asistente web B2B multigás para los sectores
+sanitario e industrial. Mantiene el análisis determinista, Chat y RAG de
+v0.6.0, y añade las bases explícitas para comparar orquestación determinista,
+Planner y ReAct sin incorporar todavía un framework de agentes.
+
+## v0.7.0 fase 1: ProcurementAgent
+
+El área **ProcurementAgent** ofrece tres estrategias sobre las mismas tools:
+
+- **Deterministic**: la aplicación selecciona y ejecuta el workflow conocido;
+  el LLM sólo realiza la síntesis final.
+- **Planner Agent**: el LLM genera primero un plan Pydantic completo; el plan se
+  valida antes de ejecutar sus acciones secuencialmente.
+- **ReAct Agent**: el LLM decide la siguiente acción después de cada observación
+  hasta finalizar o alcanzar sus límites.
+
+Las tres estrategias reutilizan `calculate_supply_position`,
+`calculate_spot_exposure` y `calculate_demand_scenario` mediante un registro
+acotado. Incluyen validación de schemas y procedencia, prevención de duplicados,
+presupuestos de decisiones/tools, comprobación de evidencia antes de finalizar
+y fallback determinista cuando la redacción contradice resultados observables.
+
+Pipeline Inspector registra decisiones operativas, planes, acciones,
+observaciones, tools omitidas, llamadas LLM y validación final sin exponer
+chain-of-thought. Los botones **Copy response**, **Copy diagnostics** y
+**Copy all** trabajan exclusivamente con el estado disponible de la operación.
+
+El workflow **Gas B2B Portfolio Analysis** continúa siendo independiente y no
+ha sido sustituido. Consulta los resultados exploratorios en
+[`docs/v0.7.0-phase-1-benchmark.md`](docs/v0.7.0-phase-1-benchmark.md) y el
+alcance de la entrega en
+[`RELEASE_NOTES_v0.7.0.md`](RELEASE_NOTES_v0.7.0.md).
 
 ## Requisitos
 
@@ -51,6 +82,8 @@ La interfaz de usuario obtiene la implementación configurada sin depender direc
 
 - **Chat**: conversación con memoria durante la sesión activa.
 - **Gas B2B Portfolio Analysis**: genera y valida con Pydantic un análisis estructurado de demanda, suministro, posiciones cortas y riesgos comerciales para gas natural, biometano, GNL y mezclas de hidrógeno.
+- **ProcurementAgent**: permite seleccionar Deterministic, Planner Agent o
+  ReAct Agent para comparar la orquestación con la misma entrada empresarial.
 
 El modo de análisis solicita JSON explícito al modelo y valida la respuesta antes de mostrarla. Una respuesta inválida genera un mensaje controlado y no detiene la aplicación.
 
@@ -69,7 +102,7 @@ Una cancelación o timeout conserva el historial anterior y no añade una respue
 
 ## Tools de negocio
 
-La versión 0.5.1 incluye tools deterministas para calcular la posición de suministro (`calculate_supply_position`), margen unitario y total (`calculate_margin`), escenarios porcentuales de demanda (`calculate_demand_scenario`) y exposición económica de una posición corta al mercado spot (`calculate_spot_exposure`). En Chat, el modelo decide cuáles necesita y conserva sus protecciones actuales contra bucles. Gas B2B Portfolio Analysis genera los escenarios base, +10 % y +20 %, ejecuta primero todos los cálculos conocidos y realiza después una única llamada al LLM sin tool calling dinámico. La interfaz presenta la comparación y el Pipeline Inspector muestra cada etapa y las ejecuciones agregadas por tool.
+Las tools deterministas calculan la posición de suministro (`calculate_supply_position`), margen unitario y total (`calculate_margin`), escenarios porcentuales de demanda (`calculate_demand_scenario`) y exposición económica de una posición corta al mercado spot (`calculate_spot_exposure`). En Chat, el modelo decide cuáles necesita y conserva sus protecciones actuales contra bucles. Gas B2B Portfolio Analysis genera los escenarios base, +10 % y +20 %, ejecuta primero todos los cálculos conocidos y realiza después una única llamada al LLM sin tool calling dinámico. La interfaz presenta la comparación y el Pipeline Inspector muestra cada etapa y las ejecuciones agregadas por tool.
 
 El proveedor y el modelo seleccionados deben soportar function calling. Si LM Studio rechaza las tools, la interfaz muestra un error controlado para seleccionar un modelo compatible.
 

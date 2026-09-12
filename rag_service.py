@@ -161,6 +161,8 @@ class RAGService:
         self._complete(
             context_event,
             retrieved_chunk_count=len(matches),
+            persisted_document_count=self.store.document_count,
+            persisted_chunk_count=self.store.chunk_count,
             retrieved_context_chars=sum(len(item.chunk.text) for item in matches),
             sources=sources,
             gas_type_resolution=gas_resolution.as_dict(),

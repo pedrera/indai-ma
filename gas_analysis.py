@@ -226,8 +226,10 @@ def _parse_numeric_value(match: re.Match[str]) -> float:
 
 def extract_demand_scenarios(
     text: str,
+    *,
+    use_defaults: bool = True,
 ) -> tuple[tuple[str, float], ...]:
-    """Return explicitly requested scenarios or the product defaults."""
+    """Return explicitly requested scenarios, optionally using product defaults."""
     variations: list[float] = []
     if SCENARIO_BASE_PATTERN.search(text):
         variations.append(0.0)
@@ -241,7 +243,7 @@ def extract_demand_scenarios(
         if value not in variations:
             variations.append(value)
     if not variations:
-        return DEFAULT_DEMAND_SCENARIOS
+        return DEFAULT_DEMAND_SCENARIOS if use_defaults else ()
     return tuple((_scenario_name(value), value) for value in variations)
 
 
