@@ -33,6 +33,10 @@ ha sido sustituido. Consulta los resultados exploratorios en
 alcance de la entrega en
 [`RELEASE_NOTES_v0.7.0.md`](RELEASE_NOTES_v0.7.0.md).
 
+El [benchmark repetible](docs/procurement-benchmark.md) permite guardar
+comparaciones en SQLite y consultar medianas, p95, fallos y fallbacks por lote.
+Se ejecuta explícitamente por CLI; el comando por defecto no realiza llamadas LLM.
+
 ## Requisitos
 
 - Python 3.10 o superior
