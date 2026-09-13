@@ -24,12 +24,9 @@ def validate_procurement_final_response(
     if position:
         result = position.get("result", {})
         interpretation = str(result.get("interpretation", ""))
-        magnitude = abs(float(result.get("position_gwh", 0)))
         if interpretation and not _mentions_interpretation(lowered, interpretation):
             reasons.append("position_interpretation_missing")
-        negative_pattern = rf"-\s*{re.escape(_plain_number(magnitude))}(?:[.,]0+)?\s*gwh"
-        if interpretation == "SHORT" and re.search(negative_pattern, lowered):
-            reasons.append("short_deficit_presented_as_negative")
+        reasons.extend(_position_claim_reasons(lowered, result))
 
     if exposure is None and _has_unsupported_exposure_claim(lowered):
         reasons.append("economic_exposure_without_tool_result")
@@ -105,6 +102,41 @@ def build_canonical_procurement_response(
 
 def _execution(executions: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
     return next((item for item in executions if item.get("name") == name), None)
+
+
+def _position_claim_reasons(text: str, result: dict[str, Any]) -> list[str]:
+    """Check explicit quantity claims; signed net position differs from cover volume."""
+    text = re.sub(r"[*_`]+", "", text).replace("−", "-")
+    number = r"[+-]?\s*\d+(?:[.,]\d+)?"
+    labels = (
+        r"posici[oó]n\s+neta|saldo\s+neto|"
+        r"posici[oó]n(?:\s+de\s+aprovisionamiento)?|"
+        r"d[eé]ficit|excedente|exceso|volumen\s+a\s+cubrir|short|long|balanced"
+    )
+    pattern = re.compile(
+        rf"\b(?P<label>{labels})\b\s*"
+        rf"(?:(?:es|de|en|del|equivale\s+a|short|long|balanced)\s+)*"
+        rf"[:=]?\s*(?P<value>{number})\s*gwh\b"
+    )
+    signed_position = float(result.get("position_gwh", 0))
+    reasons = []
+    for match in pattern.finditer(text):
+        label = match["label"]
+        value = float(re.sub(r"\s", "", match["value"]).replace(",", "."))
+        is_net = label in {"posición neta", "posicion neta", "saldo neto"}
+        if is_net:
+            expected = signed_position
+        elif label in {"déficit", "deficit", "volumen a cubrir"}:
+            expected = max(0, -signed_position)
+        elif label in {"excedente", "exceso"}:
+            expected = max(0, signed_position)
+        else:
+            expected = abs(signed_position)
+        if value < 0 and not is_net and result.get("interpretation") == "SHORT":
+            reasons.append("short_deficit_presented_as_negative")
+        if not abs(value - expected) <= 1e-9:
+            reasons.append("position_quantity_mismatch")
+    return reasons
 
 
 def _has_unsupported_exposure_claim(text: str) -> bool:

@@ -17,6 +17,15 @@ incidencias y `null` significa que no se registraron motivos (lotes antiguos o
 ejecuciones sin validación final). Los lotes antiguos no se modifican; sus motivos
 no pueden reconstruirse a partir de la respuesta final guardada.
 
+La validación distingue una posición neta con signo (`posición neta: -25 GWh`)
+de un volumen de déficit, que debe ser positivo (`déficit de 25 GWh`). Las
+cantidades explícitas vinculadas a posición, déficit, excedente o volumen a
+cubrir se contrastan con la herramienta de posición. Una discrepancia registra
+`position_quantity_mismatch`; un déficit negativo registra además
+`short_deficit_presented_as_negative`. El historial muestra una explicación en
+español junto al código. Esta comprobación usa patrones de redacción acotados;
+no constituye una validación semántica completa de cualquier texto libre.
+
 El benchmark ejecuta secuencialmente los cinco casos de referencia con las
 estrategias existentes. No se activa desde una consulta de Streamlit.
 El comando por defecto solo muestra el número de ejecuciones previsto:

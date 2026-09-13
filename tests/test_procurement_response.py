@@ -22,6 +22,42 @@ BALANCED_POSITION = {
 
 
 class ProcurementResponseValidationTests(unittest.TestCase):
+    def test_signed_net_position_is_accepted(self):
+        for content in (
+            "Posición neta: -25 GWh. SHORT, déficit de 25 GWh.",
+            "**Posición neta**: −25,0 GWh. Posición corta.",
+            "Saldo neto de -25 GWh; SHORT en 25 GWh.",
+        ):
+            with self.subTest(content=content):
+                self.assertTrue(validate_procurement_final_response(content, [POSITION]).is_valid)
+
+    def test_wrong_position_quantities_are_rejected(self):
+        for content in (
+            "SHORT en 99 GWh.",
+            "Posición neta: 25 GWh. SHORT.",
+            "SHORT. Déficit de 26 GWh.",
+            "SHORT. Volumen a cubrir: 24 GWh.",
+            "SHORT. Excedente de 25 GWh.",
+        ):
+            with self.subTest(content=content):
+                result = validate_procurement_final_response(content, [POSITION])
+                self.assertIn("position_quantity_mismatch", result.reasons)
+                self.assertTrue(result.fallback_used)
+
+    def test_negative_deficit_is_rejected_even_with_valid_net_position(self):
+        result = validate_procurement_final_response(
+            "SHORT. Posición neta: -25 GWh. Déficit de −25 GWh.", [POSITION]
+        )
+        self.assertIn("short_deficit_presented_as_negative", result.reasons)
+
+    def test_long_and_balanced_quantities_are_checked(self):
+        for position, content in (
+            (LONG_POSITION, "LONG. Excedente de 11 GWh."),
+            (BALANCED_POSITION, "BALANCED en 5 GWh."),
+        ):
+            with self.subTest(content=content):
+                self.assertTrue(validate_procurement_final_response(content, [position]).fallback_used)
+
     def test_valid_short_response_is_preserved(self):
         content = "La posición de aprovisionamiento es SHORT en 25 GWh."
         result = validate_procurement_final_response(content, [POSITION])

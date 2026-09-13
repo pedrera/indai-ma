@@ -10,6 +10,25 @@ from comparison_store import ComparisonStore, DEFAULT_STORE
 from procurement_benchmark import summarize
 
 
+VALIDATION_LABELS = {
+    "position_quantity_mismatch": "La cantidad de posición, déficit o excedente no coincide con las herramientas",
+    "short_deficit_presented_as_negative": "El déficit o volumen SHORT se presentó con signo negativo",
+    "position_interpretation_missing": "No se indicó la clasificación de la posición",
+    "unsupported_economic_amount": "Importe económico sin respaldo en las herramientas",
+    "economic_exposure_without_tool_result": "Exposición económica sin cálculo ejecutado",
+    "unsupported_missing_information_claim": "La respuesta solicita información adicional sin respaldo",
+}
+
+
+def format_validation_reasons(reasons):
+    if reasons is None:
+        return "No registrados"
+    return "; ".join(
+        f"{VALIDATION_LABELS[reason]} ({reason})" if reason in VALIDATION_LABELS else reason
+        for reason in reasons
+    ) or "Sin incidencias"
+
+
 def render_benchmark_history(path=DEFAULT_STORE):
     st.subheader("Historial del benchmark")
     st.button("Actualizar historial", key="benchmark_refresh")
@@ -75,10 +94,7 @@ def render_benchmark_history(path=DEFAULT_STORE):
                 "Estado": r["record"]["status"],
                 "Motivo": r["record"]["termination_reason"],
                 "Fallback": r["fallback"],
-                "Motivos de validación": (
-                    "No registrados" if r.get("validation_reasons") is None
-                    else ", ".join(r["validation_reasons"]) or "Sin incidencias"
-                ),
+                "Motivos de validación": format_validation_reasons(r.get("validation_reasons")),
                 "Tiempo (s)": r["record"]["total_wall_time"],
                 "Respuesta": r["record"]["result_summary"],
             } for r in filtered], hide_index=True)
