@@ -174,21 +174,37 @@ def _mentions_interpretation(text: str, interpretation: str) -> bool:
 
 def _economic_amounts(text: str) -> list[float]:
     values: list[float] = []
-    pattern = re.compile(r"(\d[\d.,\s]*)\s*(?:€|EUR\b)(?!\s*/\s*MWh)", re.IGNORECASE)
+    text = re.sub(r"[*_`]+", "", text).replace("−", "-")
+    number = r"[+-]?\s*\d(?:[\d.,]|[ \u00a0\u202f](?=\d))*"
+    currency = r"(?:€|EUR\b|euros?\b)"
+    scale = r"(?:mill(?:ón|on|ones)(?:\s+de)?|mil)"
+    pattern = re.compile(
+        rf"(?P<suffix>{number})\s*(?P<scale>{scale})?\s*{currency}"
+        rf"|{currency}\s*(?P<prefix>{number})",
+        re.IGNORECASE,
+    )
     for match in pattern.finditer(text):
-        raw = re.sub(r"\s", "", match.group(1))
+        # Unit prices are not total exposure amounts.
+        if re.match(r"\s*(?:/|por\b)\s*(?:mwh|gwh|kwh)\b",
+                    text[match.end():], re.IGNORECASE):
+            continue
+        raw = re.sub(r"\s", "", match["suffix"] or match["prefix"])
+        multiplier = match["scale"]
         if "," in raw and "." in raw:
             decimal = "," if raw.rfind(",") > raw.rfind(".") else "."
             thousands = "." if decimal == "," else ","
             raw = raw.replace(thousands, "").replace(decimal, ".")
         elif raw.count(".") > 1 or raw.count(",") > 1:
             raw = raw.replace(".", "").replace(",", "")
-        elif re.fullmatch(r"\d+[.,]\d{3}", raw):
+        elif not multiplier and re.fullmatch(r"[+-]?\d+[.,]\d{3}", raw):
             raw = raw.replace(".", "").replace(",", "")
         else:
             raw = raw.replace(",", ".")
         try:
-            values.append(float(raw))
+            amount = float(raw)
+            if multiplier:
+                amount *= 1000 if multiplier.casefold() == "mil" else 1_000_000
+            values.append(amount)
         except ValueError:
             continue
     return values

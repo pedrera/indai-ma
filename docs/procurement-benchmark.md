@@ -26,6 +26,12 @@ cubrir se contrastan con la herramienta de posición. Una discrepancia registra
 español junto al código. Esta comprobación usa patrones de redacción acotados;
 no constituye una validación semántica completa de cualquier texto libre.
 
+La comprobación de importes conserva el signo y reconoce `€`, `EUR` antes o
+después de la cantidad, `euros`, y cantidades expresadas en miles o millones.
+Los precios por MWh, GWh o kWh se excluyen de la comparación con la exposición
+total. Un total que no coincide con un resultado de exposición ejecutado activa
+`unsupported_economic_amount`, también cuando solo difiere en el signo.
+
 El benchmark ejecuta secuencialmente los cinco casos de referencia con las
 estrategias existentes. No se activa desde una consulta de Streamlit.
 El comando por defecto solo muestra el número de ejecuciones previsto:

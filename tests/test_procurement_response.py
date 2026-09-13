@@ -22,6 +22,40 @@ BALANCED_POSITION = {
 
 
 class ProcurementResponseValidationTests(unittest.TestCase):
+    def test_negative_economic_amount_cannot_match_positive_exposure(self):
+        for amount in ("-1.050.000 €", "−1,050,000 EUR", "EUR -1050000", "**-1050000** euros"):
+            with self.subTest(amount=amount):
+                result = validate_procurement_final_response(
+                    f"SHORT 25 GWh. Coste {amount}.", [POSITION, EXPOSURE]
+                )
+                self.assertIn("unsupported_economic_amount", result.reasons)
+
+    def test_supported_currency_formats_preserve_correct_response(self):
+        for amount in ("1.050.000,00 €", "EUR 1,050,000.00", "1 050 000 euros",
+                       "+1050000 EUR", "1,05 millones de euros", "1050 mil euros"):
+            with self.subTest(amount=amount):
+                content = f"SHORT 25 GWh. Coste {amount}."
+                result = validate_procurement_final_response(content, [POSITION, EXPOSURE])
+                self.assertTrue(result.is_valid, result.reasons)
+                self.assertEqual(result.content, content)
+
+    def test_unsupported_currency_prefix_and_scaled_amounts_are_rejected(self):
+        for amount in ("EUR 900000", "900000 euros", "1,2 millones de euros", "900 mil EUR",
+                       "1 millón de euros"):
+            with self.subTest(amount=amount):
+                result = validate_procurement_final_response(
+                    f"SHORT 25 GWh. Coste {amount}.", [POSITION, EXPOSURE]
+                )
+                self.assertIn("unsupported_economic_amount", result.reasons)
+
+    def test_unit_price_is_not_compared_to_total_exposure(self):
+        for price in ("42 €/MWh", "42 EUR/MWh", "42 euros por MWh", "EUR 42/MWh"):
+            with self.subTest(price=price):
+                result = validate_procurement_final_response(
+                    f"SHORT 25 GWh. Precio {price}. Coste 1050000 EUR.", [POSITION, EXPOSURE]
+                )
+                self.assertTrue(result.is_valid, result.reasons)
+
     def test_signed_net_position_is_accepted(self):
         for content in (
             "Posición neta: -25 GWh. SHORT, déficit de 25 GWh.",
