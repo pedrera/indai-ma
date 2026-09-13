@@ -188,8 +188,8 @@ SCENARIO_BASE_PATTERN = re.compile(
     r"\bescenario\s+base\b", re.IGNORECASE
 )
 VARIATION_PATTERN = re.compile(
-    r"\b(?P<label>variaci[oó]n|escenario|incremento|reducci[oó]n|"
-    r"aumento|ca[ií]da|aumenta|incrementa|sube|disminuye|reduce|cae|"
+    r"\b(?P<label>variaci[oó]n|escenarios?|incremento|reducci[oó]n|"
+    r"aumento|ca[ií]da|aument(?:a|ase|ara|aría|e)|incrementa|sube|disminu(?:ye|yese|yera|ya)|reduce|cae|"
     r"demanda)"
     r"(?:\s+(?:de|en|un))?\s*"
     r"(?P<value>[+-]?\s*\d+(?:[.,]\d+)?)\s*%",
@@ -221,27 +221,44 @@ VOLUME_PATTERN = re.compile(
 
 
 def _parse_numeric_value(match: re.Match[str]) -> float:
-    return float(match.group("value").replace(",", "."))
+    return float(re.sub(r"\s", "", match.group("value")).replace(",", "."))
 
 
 def extract_demand_scenarios(
     text: str,
     *,
     use_defaults: bool = True,
+    strict: bool = False,
 ) -> tuple[tuple[str, float], ...]:
     """Return explicitly requested scenarios, optionally using product defaults."""
+    text = text.replace("−", "-")
     variations: list[float] = []
+    covered_percent_positions: set[int] = set()
     if SCENARIO_BASE_PATTERN.search(text):
         variations.append(0.0)
     for match in VARIATION_PATTERN.finditer(text):
         value = _parse_numeric_value(match)
         label = match.group("label").lower()
         if re.fullmatch(
-            r"reducci[oó]n|ca[ií]da|disminuye|reduce|cae", label
+            r"reducci[oó]n|ca[ií]da|disminu(?:ye|yese|yera|ya)|reduce|cae", label
         ) and value > 0:
             value = -value
         if value not in variations:
             variations.append(value)
+        covered_percent_positions.add(match.end() - 1)
+        end = match.end()
+        while continuation := re.match(
+            r"\s*(?:,|y|e)\s*(?P<value>[+-]?\s*\d+(?:[.,]\d+)?)\s*%", text[end:]
+        ):
+            next_value = _parse_numeric_value(continuation)
+            if value < 0 and not continuation["value"].lstrip().startswith(("+", "-")):
+                next_value = -next_value
+            if next_value not in variations:
+                variations.append(next_value)
+            end += continuation.end()
+            covered_percent_positions.add(end - 1)
+    if strict and any(m.start() not in covered_percent_positions for m in re.finditer("%", text)):
+        raise GasAnalysisError("Hay un porcentaje no reconocido como escenario de demanda; usa 'escenario +10 %'.")
     if not variations:
         return DEFAULT_DEMAND_SCENARIOS if use_defaults else ()
     return tuple((_scenario_name(value), value) for value in variations)

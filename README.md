@@ -1,5 +1,13 @@
 # indAI MA
 
+## v0.8.2: RiskAgent
+
+Modo independiente para comparar exposición base y escenarios de demanda,
+con cálculos deterministas, deltas y trazas por herramienta. Funciona sin LLM
+por defecto y permite priorizar los hallazgos con una única generación opcional.
+No utiliza RAG ni otros agentes. Consulta la
+[arquitectura y prueba manual de RiskAgent](docs/risk-agent.md).
+
 ## v0.8: CommercialAgent
 
 Disponible como segundo agente especializado para análisis comercial y

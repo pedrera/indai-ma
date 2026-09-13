@@ -185,7 +185,7 @@ class AgentJob:
         agent: Any,
         request: str,
         timeout_seconds: float,
-        provider: LLMProvider,
+        provider: LLMProvider | None = None,
     ) -> None:
         self.agent = agent
         self.request = request
@@ -217,7 +217,8 @@ class AgentJob:
             if self._cancel_reason is not None or self._result is not None:
                 return
             self._cancel_reason = reason
-        self.provider.cancel()
+        if self.provider is not None:
+            self.provider.cancel()
 
     @property
     def cancel_requested(self) -> bool:
@@ -262,8 +263,8 @@ class AgentJob:
             replace(
                 result,
                 elapsed_seconds=perf_counter() - started_at,
-                provider_name=self.provider.provider_name,
-                model_name=self.provider.model,
+                provider_name=self.provider.provider_name if self.provider is not None else "deterministic",
+                model_name=self.provider.model if self.provider is not None else "none",
             )
         )
 

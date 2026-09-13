@@ -9,6 +9,7 @@ from execution_metrics import build_operation_metrics
 
 from diagnostics import (
     COMMERCIAL_AGENT_PIPELINE_STAGES,
+    RISK_AGENT_PIPELINE_STAGES,
     GAS_PIPELINE_STAGES,
     GAS_DOCUMENTARY_PIPELINE_STAGES,
     GAS_POSITION_PIPELINE_STAGES,
@@ -50,6 +51,11 @@ STAGE_PRESENTATION = {
     "agent_final": ("F", "Agent Final"),
     "llm_interpretation": ("L", "Commercial Interpretation"),
     "structured_result": ("R", "Structured Commercial Result"),
+    "base_scenario": ("B", "Base Scenario"),
+    "stress_scenario": ("S", "Stress Scenario"),
+    "risk_delta": ("Δ", "Risk Delta"),
+    "risk_interpretation": ("L", "Risk Interpretation"),
+    "risk_result": ("R", "Structured Risk Result"),
     "agent_plan_created": ("P", "Plan Created"),
     "plan_validation": ("V", "Plan Validation"),
     "final_response_validation": ("V", "Final Response Validation"),
@@ -474,6 +480,36 @@ def _render_agent_timeline(snapshot: PerformanceSnapshot) -> list[str]:
     return parts
 
 
+def _render_risk_timeline(snapshot):
+    parts = []
+    for event in snapshot.events:
+        if event.stage not in RISK_AGENT_PIPELINE_STAGES:
+            continue
+        icon, label = STAGE_PRESENTATION[event.stage]
+        if event.stage == "agent_start":
+            label = "RiskAgent"
+        scenario = event.metadata.get("scenario_name", "")
+        parts.append(
+            f'<div class="pi-stage pi-stage-{event.status.value}">'
+            f'<div class="pi-dot">{icon}</div><div class="pi-stage-copy">'
+            f'<strong>{escape(label)}</strong><small>{escape(str(scenario))}</small></div>'
+            f'<span class="pi-state">{STATUS_LABELS[event.status.value]}</span>'
+            f'<time>{_format_duration(_event_duration(event))}</time></div>'
+        )
+        if event.stage == "tool_execution":
+            parts.append(_render_tool_events([event]))
+        else:
+            data = event.metadata.get("delta", event.metadata.get("risk_inputs"))
+            if event.stage == "risk_result":
+                result = event.metadata.get("structured_result", {})
+                data = {"scenario_count": event.metadata.get("scenario_count"),
+                        "scenario_names": event.metadata.get("scenario_names"),
+                        "status": result.get("status"), "warnings": result.get("warnings")}
+            if data is not None:
+                parts.append(f'<div class="pi-tools"><small>{escape(str(data))}</small></div>')
+    return parts
+
+
 def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
     with st.expander("Pipeline Inspector", expanded=True):
         if snapshot is None:
@@ -519,6 +555,7 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
         )
 
         pipeline_stages = {
+            "risk_agent": RISK_AGENT_PIPELINE_STAGES,
             "commercial_agent": COMMERCIAL_AGENT_PIPELINE_STAGES,
             "gas_analysis": GAS_PIPELINE_STAGES,
             "rag_chat": RAG_CHAT_PIPELINE_STAGES,
@@ -556,6 +593,9 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
             for stage in pipeline_stages
         }
         timeline_parts = ['<div class="pi-timeline">']
+        if snapshot.mode == "risk_agent":
+            timeline_parts.extend(_render_risk_timeline(snapshot))
+            pipeline_stages = ()
         if snapshot.mode in {
             "procurement_agent",
             "procurement_planner",
@@ -649,6 +689,11 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
                 timeline_parts.append(f'<div class="pi-tools"><small>{detail}</small></div>')
         timeline_parts.append("</div>")
         st.markdown("".join(timeline_parts), unsafe_allow_html=True)
+        if snapshot.mode == "risk_agent":
+            structured = _latest_metadata(snapshot.events, "structured_result")
+            if structured is not None:
+                with st.expander("Resultado de riesgo estructurado"):
+                    st.json(structured)
         if snapshot.mode == "commercial_agent":
             structured = _latest_metadata(snapshot.events, "structured_result")
             if structured is not None:

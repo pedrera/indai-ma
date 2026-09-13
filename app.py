@@ -6,6 +6,9 @@ from diagnostics import PerformanceRecorder
 from commercial_agent import CommercialAgent, ProviderCommercialModel
 from commercial_models import CommercialAgentResult
 from commercial_ui import render_commercial_result
+from risk_agent import RiskAgent, ProviderRiskModel
+from risk_models import RiskAgentResult
+from risk_ui import render_risk_result
 from benchmark_ui import render_benchmark_history
 from clipboard_text import build_all_clipboard_text, build_response_clipboard_text
 from clipboard_ui import render_clipboard_button
@@ -87,6 +90,9 @@ if "procurement_agent_result" not in st.session_state:
 if "commercial_result" not in st.session_state:
     st.session_state.commercial_result = None
     st.session_state.commercial_operation_id = None
+if "risk_result" not in st.session_state:
+    st.session_state.risk_result = None
+    st.session_state.risk_operation_id = None
 if "procurement_agent_metadata" not in st.session_state:
     st.session_state.procurement_agent_metadata = None
 if "generation_job" not in st.session_state:
@@ -138,7 +144,7 @@ with st.sidebar:
     st.header("Configuración")
     selected_mode = st.radio(
         "Modo",
-        ("Chat", "Gas B2B Portfolio Analysis", "ProcurementAgent", "CommercialAgent"),
+        ("Chat", "Gas B2B Portfolio Analysis", "ProcurementAgent", "CommercialAgent", "RiskAgent"),
         key="selected_mode",
         disabled=generation_active,
     )
@@ -893,6 +899,45 @@ def render_commercial_agent() -> None:
             key="commercial", operation_id=st.session_state.commercial_operation_id)
 
 
+def render_risk_agent() -> None:
+    st.subheader("RiskAgent")
+    st.write("Compara demanda, cobertura y exposición spot en la base y los escenarios solicitados.")
+    request = st.text_area("Consulta de riesgo", key="risk_request", height=170,
+        placeholder="Demanda de 4,8 GWh, suministro contratado de 4,3 GWh y precio spot de 42 EUR/MWh. Analiza escenarios +10 % y +20 %.")
+    use_llm = st.checkbox("Priorizar hallazgos con LLM (una llamada)", value=False,
+                          disabled=generation_active, key="risk_use_llm")
+    if st.button("Analizar riesgo", key="risk_start", type="primary",
+                 disabled=generation_active or not request.strip() or (use_llm and selected_model is None)):
+        operation_id = uuid4().hex[:8]
+        recorder = PerformanceRecorder(operation_id,
+            selected_provider if use_llm else "deterministic",
+            selected_model if use_llm else "none", "risk_agent")
+        st.session_state.pipeline_recorder = recorder
+        try:
+            provider = (get_llm_provider(selected_provider, selected_model, recorder=recorder,
+                        runtime_config=st.session_state.llm_runtime_config) if use_llm else None)
+            runner = RiskAgent(ProviderRiskModel(provider) if provider else None, recorder)
+            job = AgentJob(runner, request, st.session_state.llm_runtime_config.timeout_seconds, provider)
+            st.session_state.risk_result = None
+            st.session_state.risk_operation_id = operation_id
+            st.session_state.generation_job = job
+            st.session_state.generation_kind = "risk_agent"
+            st.session_state.generation_notice = None
+            st.session_state.operation_started_at = perf_counter()
+            st.session_state.operation_id = operation_id
+            job.start()
+        except Exception as error:
+            recorder.finish("failed")
+            st.error(str(error))
+        else:
+            st.rerun()
+    if st.session_state.risk_result is not None:
+        risk = RiskAgentResult.model_validate(st.session_state.risk_result)
+        render_risk_result(risk)
+        render_response_copy_actions(risk.content, risk.tool_executions, key="risk",
+                                     operation_id=st.session_state.risk_operation_id)
+
+
 def finish_generation(result: GenerationResult) -> None:
     generation_kind = st.session_state.generation_kind
     operation_id = st.session_state.operation_id
@@ -922,7 +967,9 @@ def finish_generation(result: GenerationResult) -> None:
         st.session_state.gas_response_contract = None
 
     if result.status == GenerationStatus.COMPLETED:
-        if generation_kind == "commercial_agent":
+        if generation_kind == "risk_agent":
+            st.session_state.risk_result = result.structured_result
+        elif generation_kind == "commercial_agent":
             st.session_state.commercial_result = result.structured_result
         elif generation_kind in {
             "procurement_agent",
@@ -1079,6 +1126,8 @@ with main_column:
         render_gas_analysis()
     elif selected_mode == "CommercialAgent":
         render_commercial_agent()
+    elif selected_mode == "RiskAgent":
+        render_risk_agent()
     else:
         render_procurement_agent()
 

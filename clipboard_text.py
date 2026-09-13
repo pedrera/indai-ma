@@ -137,6 +137,37 @@ def build_diagnostics_clipboard_text(
     _append_optional(lines, "Max output tokens", _latest(events, "max_output_tokens"))
     _append_optional(lines, "Timeout", _latest(events, "timeout_seconds"), lambda x: f"{x} s")
     metrics = build_operation_metrics(snapshot)
+    if snapshot.mode == "risk_agent":
+        risk_event = _latest_event(events, "risk_result")
+        data = risk_event.metadata.get("structured_result", {}) if risk_event else {}
+        base = data.get("base_scenario")
+        stress = data.get("stress_scenarios", [])
+        lines.extend(["", "Risk Execution", "--------------", "Agent: RiskAgent",
+            f"Base scenarios: {1 if base else 0}", f"Stress scenarios: {len(stress)}",
+            f"Scenario count: {len(stress) + (1 if base else 0)}",
+            f"LLM calls: {metrics.llm_call_count}",
+            f"Tool calls: {sum(bool(e.metadata.get('tool_call_count')) for e in events if e.stage == 'tool_execution')}",
+            f"RAG calls: {sum(e.stage == 'vector_search' for e in events)}",
+            f"Result status: {data.get('status', 'running')}"])
+        calculation_time = _latest(events, "calculation_wall_seconds")
+        lines.append("Deterministic calculation wall time: " + (
+            _duration(float(calculation_time)) if calculation_time is not None else "unavailable"))
+        for scenario in ([base] if base else []) + stress:
+            lines.extend(["", str(scenario["name"]),
+                f"  demand: {scenario['demand_gwh']:g} GWh",
+                f"  supply: {scenario['supply_gwh']:g} GWh",
+                f"  position: {scenario['position_gwh']:g} GWh ({scenario['interpretation']})",
+                f"  SHORT: {scenario['short_position_gwh']:g} GWh",
+                "  spot exposure: " + (f"{scenario['spot_exposure_eur']:,.2f} EUR"
+                                          if scenario['spot_exposure_eur'] is not None else "unavailable")])
+        for delta in data.get("deltas", []):
+            lines.extend(["", f"Delta — {delta['scenario_name']}",
+                f"  demand: {delta['demand_change_gwh']:+g} GWh",
+                f"  position: {delta['position_change_gwh']:+g} GWh",
+                f"  SHORT: {delta['short_position_change_gwh']:+g} GWh",
+                "  exposure: " + (f"{delta['exposure_change_eur']:+,.2f} EUR"
+                                      if delta['exposure_change_eur'] is not None else "unavailable")])
+        lines.extend(f"Warning: {warning}" for warning in data.get("warnings", []))
     lines.append(f"LLM calls: {metrics.llm_call_count}")
     lines.append(
         "LLM request wall time total: "
@@ -474,6 +505,7 @@ def _mode_label(mode: str) -> str:
         "gas_analysis": "Gas B2B Analysis",
         "procurement_agent": "ProcurementAgent",
         "commercial_agent": "CommercialAgent",
+        "risk_agent": "RiskAgent",
         "procurement_planner": "Planner Agent",
         "procurement_deterministic": "Deterministic",
         "rag_index": "RAG Indexing",
