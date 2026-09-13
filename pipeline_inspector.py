@@ -50,6 +50,7 @@ STAGE_PRESENTATION = {
     "agent_observation": ("O", "Observation"),
     "agent_final": ("F", "Agent Final"),
     "llm_interpretation": ("L", "Commercial Interpretation"),
+    "commercial_interpretation": ("L", "Commercial Interpretation"),
     "structured_result": ("R", "Structured Commercial Result"),
     "base_scenario": ("B", "Base Scenario"),
     "stress_scenario": ("S", "Stress Scenario"),
@@ -553,6 +554,11 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
             "Copy diagnostics",
             key=f"diagnostics-{snapshot.operation_id}",
         )
+
+        if snapshot.mode == "supervisor":
+            from supervisor_ui import render_supervisor_inspector
+            render_supervisor_inspector(snapshot)
+            return
 
         pipeline_stages = {
             "risk_agent": RISK_AGENT_PIPELINE_STAGES,

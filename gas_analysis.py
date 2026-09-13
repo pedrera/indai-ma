@@ -146,6 +146,9 @@ DEFAULT_DEMAND_SCENARIOS = (
 )
 
 
+DEMAND_VALUE_FIRST_PATTERN = re.compile(
+    r"(?P<value>\d+(?:[.,]\d+)?)\s*gwh\s+de\s+demanda\b", re.IGNORECASE
+)
 DEMAND_PATTERN = re.compile(
     r"\bdemanda(?:\s+(?:base|prevista|esperada|estimada|industrial))?"
     r"(?:\s+(?:de|para))?[^.;\n?]{0,80}?"
@@ -278,6 +281,10 @@ def _candidate_values(
         _parse_numeric_value(match)
         for pattern in patterns
         for match in pattern.finditer(text)
+        if pattern is not DEMAND_PATTERN or not any(
+            prior.start() <= match.start() < prior.end()
+            for prior in DEMAND_VALUE_FIRST_PATTERN.finditer(text)
+        )
     }
     return sorted(values)
 
@@ -302,6 +309,7 @@ def parse_scenario_input(
         "base_demand_gwh": _candidate_values(
             text,
             DEMAND_PATTERN,
+            DEMAND_VALUE_FIRST_PATTERN,
             DEMAND_CONSUMPTION_PATTERN,
             DEMAND_CONSUMPTION_NOUN_PATTERN,
         ),
@@ -521,6 +529,7 @@ def _extract_position(segment: str) -> dict[str, Any] | None:
     demand_values = _candidate_values(
         segment,
         DEMAND_PATTERN,
+        DEMAND_VALUE_FIRST_PATTERN,
         DEMAND_CONSUMPTION_PATTERN,
         DEMAND_CONSUMPTION_NOUN_PATTERN,
     )

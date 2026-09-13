@@ -9,6 +9,9 @@ from commercial_ui import render_commercial_result
 from risk_agent import RiskAgent, ProviderRiskModel
 from risk_models import RiskAgentResult
 from risk_ui import render_risk_result
+from supervisor import Supervisor
+from supervisor_models import SupervisorResult
+from supervisor_ui import render_supervisor_result
 from benchmark_ui import render_benchmark_history
 from clipboard_text import build_all_clipboard_text, build_response_clipboard_text
 from clipboard_ui import render_clipboard_button
@@ -93,6 +96,9 @@ if "commercial_result" not in st.session_state:
 if "risk_result" not in st.session_state:
     st.session_state.risk_result = None
     st.session_state.risk_operation_id = None
+if "supervisor_result" not in st.session_state:
+    st.session_state.supervisor_result = None
+    st.session_state.supervisor_operation_id = None
 if "procurement_agent_metadata" not in st.session_state:
     st.session_state.procurement_agent_metadata = None
 if "generation_job" not in st.session_state:
@@ -144,7 +150,7 @@ with st.sidebar:
     st.header("Configuración")
     selected_mode = st.radio(
         "Modo",
-        ("Chat", "Gas B2B Portfolio Analysis", "ProcurementAgent", "CommercialAgent", "RiskAgent"),
+        ("Chat", "Gas B2B Portfolio Analysis", "ProcurementAgent", "CommercialAgent", "RiskAgent", "Multi-Agent Supervisor"),
         key="selected_mode",
         disabled=generation_active,
     )
@@ -899,6 +905,46 @@ def render_commercial_agent() -> None:
             key="commercial", operation_id=st.session_state.commercial_operation_id)
 
 
+def render_supervisor() -> None:
+    st.subheader("Multi-Agent Supervisor")
+    st.write("Selecciona y ejecuta los especialistas necesarios para tu consulta.")
+    request = st.text_area("Consulta al Supervisor", key="supervisor_request", height=180)
+    use_synthesis = st.checkbox("Priorizar resultados con LLM (una llamada adicional)", key="supervisor_synthesis",
+                                disabled=generation_active)
+    if st.button("Ejecutar Supervisor", key="supervisor_start", type="primary",
+                 disabled=generation_active or not request.strip() or (use_synthesis and selected_model is None)):
+        operation_id = uuid4().hex[:8]
+        recorder = PerformanceRecorder(operation_id, selected_provider if selected_model else "deterministic",
+                                       selected_model or "none", "supervisor")
+        st.session_state.pipeline_recorder = recorder
+        runtime = st.session_state.llm_runtime_config
+        store = st.session_state.rag_store
+        provider_name, model_name = selected_provider, selected_model
+        def provider_factory(child_recorder):
+            return get_llm_provider(provider_name, model_name, recorder=child_recorder, runtime_config=runtime)
+        def rag_factory(child_recorder):
+            if store is None or not store.chunk_count:
+                raise ValueError("Indexa el contrato en Documentación RAG.")
+            return RAGService(LMStudioEmbeddingProvider(), store, child_recorder)
+        runner = Supervisor(recorder, provider_factory if model_name is not None else None,
+                            rag_factory, use_llm_synthesis=use_synthesis)
+        job = AgentJob(runner, request, runtime.timeout_seconds, runner)
+        st.session_state.supervisor_result = None
+        st.session_state.supervisor_operation_id = operation_id
+        st.session_state.generation_job = job
+        st.session_state.generation_kind = "supervisor"
+        st.session_state.generation_notice = None
+        st.session_state.operation_started_at = perf_counter()
+        st.session_state.operation_id = operation_id
+        job.start()
+        st.rerun()
+    if st.session_state.supervisor_result is not None:
+        result = SupervisorResult.model_validate(st.session_state.supervisor_result)
+        render_supervisor_result(result)
+        render_response_copy_actions(result.content, result.tool_executions, key="supervisor",
+                                     operation_id=st.session_state.supervisor_operation_id)
+
+
 def render_risk_agent() -> None:
     st.subheader("RiskAgent")
     st.write("Compara demanda, cobertura y exposición spot en la base y los escenarios solicitados.")
@@ -967,7 +1013,9 @@ def finish_generation(result: GenerationResult) -> None:
         st.session_state.gas_response_contract = None
 
     if result.status == GenerationStatus.COMPLETED:
-        if generation_kind == "risk_agent":
+        if generation_kind == "supervisor":
+            st.session_state.supervisor_result = result.structured_result
+        elif generation_kind == "risk_agent":
             st.session_state.risk_result = result.structured_result
         elif generation_kind == "commercial_agent":
             st.session_state.commercial_result = result.structured_result
@@ -1126,6 +1174,8 @@ with main_column:
         render_gas_analysis()
     elif selected_mode == "CommercialAgent":
         render_commercial_agent()
+    elif selected_mode == "Multi-Agent Supervisor":
+        render_supervisor()
     elif selected_mode == "RiskAgent":
         render_risk_agent()
     else:

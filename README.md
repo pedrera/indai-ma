@@ -1,5 +1,14 @@
 # indAI MA
 
+## v0.8.3: Multi-Agent Supervisor
+
+Orquestación secuencial de CommercialAgent, ProcurementAgent y RiskAgent con
+routing determinista y una clasificación LLM acotada solo para consultas
+ambiguas. Conserva resultados parciales, fuentes y modelos de cada especialista.
+La composición es determinista por defecto y las métricas distinguen herramientas
+ejecutadas de resultados reutilizados. Los modos independientes siguen disponibles.
+Véase [Supervisor: arquitectura, métricas y prueba manual](docs/supervisor.md).
+
 ## v0.8.2: RiskAgent
 
 Modo independiente para comparar exposición base y escenarios de demanda,

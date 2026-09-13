@@ -89,7 +89,7 @@ PROCUREMENT_AGENT_PIPELINE_STAGES = (
 )
 COMMERCIAL_AGENT_PIPELINE_STAGES = (
     "agent_start", "query_embedding", "vector_search", "retrieved_context",
-    "agent_decision", "tool_execution", "llm_interpretation", "structured_result", "agent_final",
+    "agent_decision", "tool_execution", "llm_interpretation", "commercial_interpretation", "structured_result", "agent_final",
 )
 RISK_AGENT_PIPELINE_STAGES = (
     "agent_start", "input_parsing", "base_scenario", "stress_scenario",

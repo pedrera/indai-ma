@@ -46,6 +46,7 @@ class CommercialCalculation(BaseModel):
 
 
 class CommercialAgentResult(BaseModel):
+    interpretation_mode: Literal["deterministic", "llm"] = "llm"
     status: CommercialStatus
     customer: str | None = None
     contract_facts: list[ContractFact] = Field(default_factory=list)

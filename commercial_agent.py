@@ -5,6 +5,7 @@ import re
 import unicodedata
 from time import perf_counter
 
+from diagnostics import PerformanceStatus
 from commercial_models import (
     CommercialAgentResult, CommercialCalculation, CommercialFinding,
     CommercialInterpretation, CommercialSource, CommercialStatus, ContractFact,
@@ -66,7 +67,10 @@ def _single(values):
 class CommercialAgent:
     name = "CommercialAgent"
 
-    def __init__(self, model, rag_service, recorder=None, registry=None):
+    def __init__(self, model, rag_service, recorder=None, registry=None, *, interpretation_mode="llm"):
+        if interpretation_mode not in {"deterministic", "llm"}:
+            raise ValueError("Unknown commercial interpretation mode")
+        self.interpretation_mode = interpretation_mode
         self.model = model
         self.rag_service = rag_service
         self.recorder = recorder
@@ -79,7 +83,7 @@ class CommercialAgent:
     def run(self, request, timeout_seconds=None):
         started = perf_counter()
         self._record("agent_start", agent_name=self.name)
-        result = CommercialAgentResult(status=CommercialStatus.PARTIAL,
+        result = CommercialAgentResult(status=CommercialStatus.PARTIAL, interpretation_mode=self.interpretation_mode,
                                        summary="Análisis comercial basado en el contrato recuperado.")
         self._record("agent_decision", action="retrieve_contract",
                      decision_summary="Recuperar evidencia contractual para la consulta comercial.")
@@ -156,37 +160,43 @@ class CommercialAgent:
                          decision_summary="La consulta no solicita un análisis de margen.")
         evidence = [{"source_number": i + 1, "text": m.chunk.text,
                      "source": sources[i].model_dump()} for i, m in enumerate(matches)]
-        self._record("agent_decision", action="interpret_contract",
-                     decision_summary="Seleccionar cláusulas comerciales relevantes en una única llamada.")
-        event = self.recorder.start_stage("llm_interpretation") if self.recorder else None
-        try:
-            remaining = None if timeout_seconds is None else timeout_seconds - (perf_counter() - started)
-            if remaining is not None and remaining <= 0:
-                raise LLMTimeoutError("Tiempo comercial agotado durante la recuperación.")
-            interpretation = self.model.interpret(request, evidence,
-                [c.model_dump() for c in result.calculations], remaining)
-            interpretation = CommercialInterpretation.model_validate(interpretation)
-            for finding in interpretation.findings:
-                index = finding.source_number - 1
-                if index >= len(matches) or finding.quote not in matches[index].chunk.text:
-                    result.warnings.append("Se descartó una cita no verificable propuesta por el modelo.")
-                    continue
-                # Return the full source excerpt to retain conditions omitted by the selection.
-                text = matches[index].chunk.text
-                if not any(f.evidence == text for f in result.commercial_findings):
-                    result.commercial_findings.append(CommercialFinding(evidence=text, source=sources[index]))
-            if not result.commercial_findings:
-                result.warnings.append("El modelo no seleccionó evidencia verificable; consulta los hechos y fuentes disponibles.")
-            if event:
-                self.recorder.complete_stage(event, finding_count=len(result.commercial_findings))
-        except (GenerationCancelledError, LLMTimeoutError):
-            if event:
-                self.recorder.fail_stage(event)
-            raise
-        except Exception:
-            if event:
-                self.recorder.fail_stage(event)
-            result.warnings.append("No se pudo validar la selección comercial del modelo; se conservan los hechos y cálculos.")
+        if self.interpretation_mode == "deterministic":
+            result.commercial_findings = [CommercialFinding(evidence=m.chunk.text, source=source)
+                                          for m, source in zip(matches, sources)]
+            self._record("commercial_interpretation", status=PerformanceStatus.SKIPPED,
+                         interpretation_mode="deterministic", reason="Evidencia contractual y cálculos deterministas.")
+        else:
+            self._record("agent_decision", action="interpret_contract",
+                         decision_summary="Seleccionar cláusulas comerciales relevantes en una única llamada.")
+            event = self.recorder.start_stage("llm_interpretation") if self.recorder else None
+            try:
+                remaining = None if timeout_seconds is None else timeout_seconds - (perf_counter() - started)
+                if remaining is not None and remaining <= 0:
+                    raise LLMTimeoutError("Tiempo comercial agotado durante la recuperación.")
+                interpretation = self.model.interpret(request, evidence,
+                    [c.model_dump() for c in result.calculations], remaining)
+                interpretation = CommercialInterpretation.model_validate(interpretation)
+                for finding in interpretation.findings:
+                    index = finding.source_number - 1
+                    if index >= len(matches) or finding.quote not in matches[index].chunk.text:
+                        result.warnings.append("Se descartó una cita no verificable propuesta por el modelo.")
+                        continue
+                    # Return the full source excerpt to retain conditions omitted by the selection.
+                    text = matches[index].chunk.text
+                    if not any(f.evidence == text for f in result.commercial_findings):
+                        result.commercial_findings.append(CommercialFinding(evidence=text, source=sources[index]))
+                if not result.commercial_findings:
+                    result.warnings.append("El modelo no seleccionó evidencia verificable; consulta los hechos y fuentes disponibles.")
+                if event:
+                    self.recorder.complete_stage(event, finding_count=len(result.commercial_findings))
+            except (GenerationCancelledError, LLMTimeoutError):
+                if event:
+                    self.recorder.fail_stage(event)
+                raise
+            except Exception:
+                if event:
+                    self.recorder.fail_stage(event)
+                result.warnings.append("No se pudo validar la selección comercial del modelo; se conservan los hechos y cálculos.")
         if any(c.result.get("contractual_excess_gwh", 0) > 0 for c in result.calculations):
             for fact in result.contract_facts:
                 if fact.name in {"flexibility_percent", "excess_surcharge_eur_mwh"} and not any(

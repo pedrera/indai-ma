@@ -137,6 +137,9 @@ def build_diagnostics_clipboard_text(
     _append_optional(lines, "Max output tokens", _latest(events, "max_output_tokens"))
     _append_optional(lines, "Timeout", _latest(events, "timeout_seconds"), lambda x: f"{x} s")
     metrics = build_operation_metrics(snapshot)
+    if snapshot.mode == "supervisor":
+        from supervisor_ui import supervisor_diagnostics
+        lines.extend(["", supervisor_diagnostics(snapshot)])
     if snapshot.mode == "risk_agent":
         risk_event = _latest_event(events, "risk_result")
         data = risk_event.metadata.get("structured_result", {}) if risk_event else {}
