@@ -1,6 +1,15 @@
 # indAI MA
 
-Versión 0.7.0 fase 1 de un asistente web B2B multigás para los sectores
+## v0.8: CommercialAgent
+
+Disponible como segundo agente especializado para análisis comercial y
+contractual, reutilizando el RAG local, las herramientas deterministas y
+Pipeline Inspector. Presenta hechos con evidencia, exceso contractual, margen
+cuando procede y resultados estructurados. Véase
+[CommercialAgent](docs/commercial-agent.md) para arquitectura, prueba Costa Sur
+y límites de esta entrega.
+
+La base v0.7.0 fase 1 es un asistente web B2B multigás para los sectores
 sanitario e industrial. Mantiene el análisis determinista, Chat y RAG de
 v0.6.0, y añade las bases explícitas para comparar orquestación determinista,
 Planner y ReAct sin incorporar todavía un framework de agentes.

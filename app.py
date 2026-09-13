@@ -3,6 +3,9 @@ from time import perf_counter
 from uuid import uuid4
 
 from diagnostics import PerformanceRecorder
+from commercial_agent import CommercialAgent, ProviderCommercialModel
+from commercial_models import CommercialAgentResult
+from commercial_ui import render_commercial_result
 from benchmark_ui import render_benchmark_history
 from clipboard_text import build_all_clipboard_text, build_response_clipboard_text
 from clipboard_ui import render_clipboard_button
@@ -81,6 +84,9 @@ if "gas_response_contract" not in st.session_state:
     st.session_state.gas_response_contract = None
 if "procurement_agent_result" not in st.session_state:
     st.session_state.procurement_agent_result = None
+if "commercial_result" not in st.session_state:
+    st.session_state.commercial_result = None
+    st.session_state.commercial_operation_id = None
 if "procurement_agent_metadata" not in st.session_state:
     st.session_state.procurement_agent_metadata = None
 if "generation_job" not in st.session_state:
@@ -132,7 +138,7 @@ with st.sidebar:
     st.header("Configuración")
     selected_mode = st.radio(
         "Modo",
-        ("Chat", "Gas B2B Portfolio Analysis", "ProcurementAgent"),
+        ("Chat", "Gas B2B Portfolio Analysis", "ProcurementAgent", "CommercialAgent"),
         key="selected_mode",
         disabled=generation_active,
     )
@@ -848,6 +854,45 @@ def render_procurement_agent() -> None:
             )
 
 
+def render_commercial_agent() -> None:
+    st.subheader("CommercialAgent")
+    st.write("Analiza contratos, flexibilidad, excesos y condiciones comerciales con evidencia documental.")
+    request = st.text_area("Consulta comercial", key="commercial_request", height=150,
+        placeholder="El Hospital Costa Sur prevé consumir 4,8 GWh el próximo mes. Analiza las implicaciones comerciales según su contrato.")
+    store = st.session_state.rag_store
+    if store is None or store.chunk_count == 0:
+        st.info("Indexa el contrato en Documentación RAG para realizar el análisis comercial.")
+    if st.button("Analizar contrato", key="commercial_start", type="primary",
+                 disabled=generation_active or not request.strip() or selected_model is None
+                 or store is None or store.chunk_count == 0):
+        operation_id = uuid4().hex[:8]
+        recorder = create_pipeline_recorder(operation_id, "commercial_agent")
+        try:
+            provider = get_llm_provider(selected_provider, selected_model, recorder=recorder,
+                                       runtime_config=st.session_state.llm_runtime_config)
+            service = RAGService(LMStudioEmbeddingProvider(), store, recorder)
+            runner = CommercialAgent(ProviderCommercialModel(provider), service, recorder)
+            job = AgentJob(runner, request, st.session_state.llm_runtime_config.timeout_seconds, provider)
+            st.session_state.commercial_result = None
+            st.session_state.commercial_operation_id = operation_id
+            st.session_state.generation_job = job
+            st.session_state.generation_kind = "commercial_agent"
+            st.session_state.generation_notice = None
+            st.session_state.operation_started_at = perf_counter()
+            st.session_state.operation_id = operation_id
+            job.start()
+        except Exception as error:
+            recorder.finish("failed")
+            st.error(str(error))
+        else:
+            st.rerun()
+    if st.session_state.commercial_result is not None:
+        commercial = CommercialAgentResult.model_validate(st.session_state.commercial_result)
+        render_commercial_result(commercial)
+        render_response_copy_actions(commercial.content, commercial.tool_executions,
+            key="commercial", operation_id=st.session_state.commercial_operation_id)
+
+
 def finish_generation(result: GenerationResult) -> None:
     generation_kind = st.session_state.generation_kind
     operation_id = st.session_state.operation_id
@@ -877,7 +922,9 @@ def finish_generation(result: GenerationResult) -> None:
         st.session_state.gas_response_contract = None
 
     if result.status == GenerationStatus.COMPLETED:
-        if generation_kind in {
+        if generation_kind == "commercial_agent":
+            st.session_state.commercial_result = result.structured_result
+        elif generation_kind in {
             "procurement_agent",
             "procurement_planner",
             "procurement_deterministic",
@@ -1030,6 +1077,8 @@ with main_column:
         render_chat()
     elif selected_mode == "Gas B2B Portfolio Analysis":
         render_gas_analysis()
+    elif selected_mode == "CommercialAgent":
+        render_commercial_agent()
     else:
         render_procurement_agent()
 

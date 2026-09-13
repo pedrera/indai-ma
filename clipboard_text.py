@@ -473,6 +473,7 @@ def _mode_label(mode: str) -> str:
         "rag_chat": "RAG Chat",
         "gas_analysis": "Gas B2B Analysis",
         "procurement_agent": "ProcurementAgent",
+        "commercial_agent": "CommercialAgent",
         "procurement_planner": "Planner Agent",
         "procurement_deterministic": "Deterministic",
         "rag_index": "RAG Indexing",

@@ -8,6 +8,7 @@ from clipboard_ui import render_clipboard_button
 from execution_metrics import build_operation_metrics
 
 from diagnostics import (
+    COMMERCIAL_AGENT_PIPELINE_STAGES,
     GAS_PIPELINE_STAGES,
     GAS_DOCUMENTARY_PIPELINE_STAGES,
     GAS_POSITION_PIPELINE_STAGES,
@@ -47,6 +48,8 @@ STAGE_PRESENTATION = {
     "agent_decision": ("D", "Agent Decision"),
     "agent_observation": ("O", "Observation"),
     "agent_final": ("F", "Agent Final"),
+    "llm_interpretation": ("L", "Commercial Interpretation"),
+    "structured_result": ("R", "Structured Commercial Result"),
     "agent_plan_created": ("P", "Plan Created"),
     "plan_validation": ("V", "Plan Validation"),
     "final_response_validation": ("V", "Final Response Validation"),
@@ -516,6 +519,7 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
         )
 
         pipeline_stages = {
+            "commercial_agent": COMMERCIAL_AGENT_PIPELINE_STAGES,
             "gas_analysis": GAS_PIPELINE_STAGES,
             "rag_chat": RAG_CHAT_PIPELINE_STAGES,
             "rag_index": RAG_INDEX_PIPELINE_STAGES,
@@ -561,6 +565,8 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
             pipeline_stages = ()
         for stage in pipeline_stages:
             icon, label = STAGE_PRESENTATION[stage]
+            if snapshot.mode == "commercial_agent" and stage == "agent_start":
+                label = "CommercialAgent"
             if snapshot.mode == "rag_chat" and stage == "tool_execution":
                 label = "Business Tools"
             events = event_groups[stage]
@@ -631,8 +637,23 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
                 timeline_parts.append(_render_contractual_result(events))
             elif stage == "retrieved_context" and events:
                 timeline_parts.append(_render_retrieved_sources(events))
+            elif stage in {"structured_result", "agent_final"} and events and snapshot.mode == "commercial_agent":
+                metadata = events[-1].metadata
+                structured = metadata.get("structured_result", {})
+                detail = escape(str({
+                    "estado": structured.get("status", metadata.get("agent_status")),
+                    "hechos": len(structured.get("contract_facts", [])),
+                    "cálculos": len(structured.get("calculations", [])),
+                    "avisos": structured.get("warnings", []),
+                }))
+                timeline_parts.append(f'<div class="pi-tools"><small>{detail}</small></div>')
         timeline_parts.append("</div>")
         st.markdown("".join(timeline_parts), unsafe_allow_html=True)
+        if snapshot.mode == "commercial_agent":
+            structured = _latest_metadata(snapshot.events, "structured_result")
+            if structured is not None:
+                with st.expander("Resultado comercial estructurado"):
+                    st.json(structured)
 
         with st.expander("Métricas avanzadas"):
             operation_metrics = build_operation_metrics(snapshot)

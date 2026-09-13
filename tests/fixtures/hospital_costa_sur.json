@@ -1,0 +1,142 @@
+[
+  {
+    "chunk_id": "3cd65c406a8a3ef5:3aca1b08d165",
+    "document_id": "3cd65c406a8a3ef5",
+    "document_name": "contrato_hospital_costa_sur.txt",
+    "section": "CONTRATO MARCO DE SUMINISTRO DE GAS NATURAL",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 0,
+    "text": "CONTRATO MARCO DE SUMINISTRO DE GAS NATURAL\n\nContrato: HCS-GN-2026-001\nCliente: Hospital Costa Sur\nProveedor: Global Industrial Gas Supply S.A.\nFecha de entrada en vigor: 1 de enero de 2026\nFecha de vencimiento: 31 de diciembre de 2026"
+  },
+  {
+    "chunk_id": "3cd65c406a8a3ef5:ce017e96dc44",
+    "document_id": "3cd65c406a8a3ef5",
+    "document_name": "contrato_hospital_costa_sur.txt",
+    "section": "1. OBJETO DEL CONTRATO",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 1,
+    "text": "1. OBJETO DEL CONTRATO\n\nEl presente contrato regula el suministro de gas natural por parte de\nGlobal Industrial Gas Supply S.A. al Hospital Costa Sur para cubrir las\nnecesidades energéticas de sus instalaciones hospitalarias.\n\nEl suministro se realizará de forma continuada durante el periodo de\nvigencia del contrato."
+  },
+  {
+    "chunk_id": "3cd65c406a8a3ef5:770d4a5d62a2",
+    "document_id": "3cd65c406a8a3ef5",
+    "document_name": "contrato_hospital_costa_sur.txt",
+    "section": "2. VOLUMEN CONTRATADO",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 2,
+    "text": "2. VOLUMEN CONTRATADO\n\nEl volumen anual contratado de gas natural es de 48 GWh.\n\nA efectos de planificación, el consumo mensual de referencia será de\n4 GWh, aunque podrá variar en función de las necesidades del hospital\ny de las condiciones establecidas en la cláusula de flexibilidad."
+  },
+  {
+    "chunk_id": "3cd65c406a8a3ef5:639f7978f4a2",
+    "document_id": "3cd65c406a8a3ef5",
+    "document_name": "contrato_hospital_costa_sur.txt",
+    "section": "3. PRECIO",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 3,
+    "text": "3. PRECIO\n\nEl precio base de suministro será de 46 €/MWh.\n\nEl precio incluye el coste de aprovisionamiento y el margen comercial,\npero no incluye impuestos ni otros cargos regulados que puedan resultar\naplicables.\n\nEl precio podrá revisarse trimestralmente según las condiciones\nestablecidas en la cláusula de revisión de precios."
+  },
+  {
+    "chunk_id": "3cd65c406a8a3ef5:8d92e0a5168b",
+    "document_id": "3cd65c406a8a3ef5",
+    "document_name": "contrato_hospital_costa_sur.txt",
+    "section": "4. FLEXIBILIDAD DE VOLUMEN",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 4,
+    "text": "4. FLEXIBILIDAD DE VOLUMEN\n\nEl Hospital Costa Sur dispone de una flexibilidad de consumo de ±15%\nrespecto al volumen mensual de referencia.\n\nPor tanto, tomando como referencia un consumo mensual de 4 GWh,\nel cliente podrá consumir entre 3,4 GWh y 4,6 GWh al mes sin incurrir\nen penalizaciones por desviación de volumen.\n\nLos consumos superiores al límite máximo de flexibilidad podrán ser\natendidos por el proveedor, sujetos a disponibilidad y a las condiciones\ndel mercado spot."
+  },
+  {
+    "chunk_id": "3cd65c406a8a3ef5:00f244466747",
+    "document_id": "3cd65c406a8a3ef5",
+    "document_name": "contrato_hospital_costa_sur.txt",
+    "section": "5. TAKE-OR-PAY",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 5,
+    "text": "5. TAKE-OR-PAY\n\nEl contrato establece una obligación anual de take-or-pay equivalente\nal 85% del volumen anual contratado.\n\nDado un volumen anual contratado de 48 GWh, el Hospital Costa Sur deberá\nabonar como mínimo el equivalente a 40,8 GWh durante el periodo contractual,\naunque su consumo real sea inferior.\n\nLas cantidades no consumidas por debajo de este umbral no generarán\nobligación de entrega posterior por parte del proveedor."
+  },
+  {
+    "chunk_id": "3cd65c406a8a3ef5:c43f60ae5f4a",
+    "document_id": "3cd65c406a8a3ef5",
+    "document_name": "contrato_hospital_costa_sur.txt",
+    "section": "6. EXCESOS DE CONSUMO",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 6,
+    "text": "6. EXCESOS DE CONSUMO\n\nCuando el consumo mensual supere el límite superior de flexibilidad\nestablecido en este contrato, el volumen excedentario será considerado\nconsumo adicional.\n\nEl proveedor podrá adquirir dicho volumen en el mercado spot."
+  },
+  {
+    "chunk_id": "3cd65c406a8a3ef5:476af20f717e",
+    "document_id": "3cd65c406a8a3ef5",
+    "document_name": "contrato_hospital_costa_sur.txt",
+    "section": "El precio aplicable al volumen excedentario será:",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 7,
+    "text": "El precio aplicable al volumen excedentario será:\n\nPrecio Spot + 4 €/MWh.\n\nEl recargo de 4 €/MWh corresponde a costes de gestión, balance y riesgo\nasumidos por el proveedor."
+  },
+  {
+    "chunk_id": "3cd65c406a8a3ef5:29f3972cc42e",
+    "document_id": "3cd65c406a8a3ef5",
+    "document_name": "contrato_hospital_costa_sur.txt",
+    "section": "7. REVISIÓN DE PRECIOS",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 8,
+    "text": "7. REVISIÓN DE PRECIOS\n\nEl precio base será revisado trimestralmente.\n\nLa revisión tendrá como referencia la evolución del índice europeo TTF.\n\nSi la media mensual del índice TTF varía más de un 10% respecto al valor\nde referencia del trimestre anterior, cualquiera de las partes podrá\nsolicitar una revisión extraordinaria del precio."
+  },
+  {
+    "chunk_id": "3cd65c406a8a3ef5:88e652246e6b",
+    "document_id": "3cd65c406a8a3ef5",
+    "document_name": "contrato_hospital_costa_sur.txt",
+    "section": "8. CONTINUIDAD DE SUMINISTRO",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 9,
+    "text": "8. CONTINUIDAD DE SUMINISTRO\n\nDado que el Hospital Costa Sur presta servicios sanitarios esenciales,\nel suministro tendrá consideración de suministro prioritario.\n\nEl proveedor deberá realizar esfuerzos razonables para garantizar la\ncontinuidad del suministro incluso en situaciones de tensión del mercado.\n\nEn caso de restricciones de disponibilidad, el Hospital Costa Sur tendrá\nprioridad frente a clientes industriales no esenciales sujetos a contratos\nequivalentes."
+  },
+  {
+    "chunk_id": "3cd65c406a8a3ef5:19ba59bd736a",
+    "document_id": "3cd65c406a8a3ef5",
+    "document_name": "contrato_hospital_costa_sur.txt",
+    "section": "9. PREVISIÓN DE DEMANDA",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 10,
+    "text": "9. PREVISIÓN DE DEMANDA\n\nEl Hospital Costa Sur deberá proporcionar al proveedor una previsión\nmensual de consumo con una antelación mínima de 15 días.\n\nCuando se espere una desviación superior al 10% respecto a la previsión\ncomunicada, el hospital deberá informar al proveedor tan pronto como sea\nrazonablemente posible."
+  },
+  {
+    "chunk_id": "3cd65c406a8a3ef5:e10f0a2fc28b",
+    "document_id": "3cd65c406a8a3ef5",
+    "document_name": "contrato_hospital_costa_sur.txt",
+    "section": "10. PENALIZACIONES",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 11,
+    "text": "10. PENALIZACIONES\n\nNo se aplicarán penalizaciones cuando el consumo permanezca dentro del\nrango de flexibilidad contractual de ±15%.\n\nLos consumos superiores al límite máximo podrán generar el recargo\nestablecido para consumos adicionales.\n\nLos consumos anuales inferiores al nivel de take-or-pay estarán sujetos\na las obligaciones económicas descritas en la cláusula 5."
+  },
+  {
+    "chunk_id": "3cd65c406a8a3ef5:b92b7ceedf1a",
+    "document_id": "3cd65c406a8a3ef5",
+    "document_name": "contrato_hospital_costa_sur.txt",
+    "section": "11. DURACIÓN",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 12,
+    "text": "11. DURACIÓN\n\nEl contrato tendrá vigencia hasta el 31 de diciembre de 2026.\n\nLas partes podrán negociar su renovación con una antelación mínima\nde tres meses respecto a la fecha de vencimiento."
+  },
+  {
+    "chunk_id": "3cd65c406a8a3ef5:2a3f525d105b",
+    "document_id": "3cd65c406a8a3ef5",
+    "document_name": "contrato_hospital_costa_sur.txt",
+    "section": "FIN DEL CONTRATO",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 13,
+    "text": "FIN DEL CONTRATO"
+  }
+]

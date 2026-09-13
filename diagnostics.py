@@ -87,6 +87,10 @@ PROCUREMENT_AGENT_PIPELINE_STAGES = (
     "final_response_validation",
     "agent_final",
 )
+COMMERCIAL_AGENT_PIPELINE_STAGES = (
+    "agent_start", "query_embedding", "vector_search", "retrieved_context",
+    "agent_decision", "tool_execution", "llm_interpretation", "structured_result", "agent_final",
+)
 PROCUREMENT_PLANNER_PIPELINE_STAGES = (
     "agent_start",
     "llm_call",
