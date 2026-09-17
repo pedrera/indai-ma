@@ -1,5 +1,13 @@
 # indAI MA
 
+## v0.8.4: Frontend y experiencia de ejecución
+
+Resultados, configuración y diagnósticos quedan asociados a la misma operación.
+Commercial ofrece interpretación determinista por defecto; Supervisor reutiliza
+las vistas de negocio y el portapapeles separa respuesta y diagnóstico.
+Consulta [Frontend y ejecución](docs/frontend-execution-ux.md) para alcance,
+límites y comprobación manual. El benchmark de Procurement conserva su alcance.
+
 ## v0.8.3: Multi-Agent Supervisor
 
 Orquestación secuencial de CommercialAgent, ProcurementAgent y RiskAgent con

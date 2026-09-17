@@ -1,0 +1,122 @@
+[
+  {
+    "chunk_id": "3cd65c406a8a3ef5:8d92e0a5168b",
+    "document_id": "3cd65c406a8a3ef5",
+    "document_name": "contrato_hospital_costa_sur.txt",
+    "section": "4. FLEXIBILIDAD DE VOLUMEN",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 4,
+    "text": "4. FLEXIBILIDAD DE VOLUMEN\n\nEl Hospital Costa Sur dispone de una flexibilidad de consumo de ±15%\nrespecto al volumen mensual de referencia.\n\nPor tanto, tomando como referencia un consumo mensual de 4 GWh,\nel cliente podrá consumir entre 3,4 GWh y 4,6 GWh al mes sin incurrir\nen penalizaciones por desviación de volumen.\n\nLos consumos superiores al límite máximo de flexibilidad podrán ser\natendidos por el proveedor, sujetos a disponibilidad y a las condiciones\ndel mercado spot."
+  },
+  {
+    "chunk_id": "8154fcf83a207fee:5ab883913b8c",
+    "document_id": "8154fcf83a207fee",
+    "document_name": "contrato_industrias_mediterraneo_2026.txt",
+    "section": "6. CONSUMO POR ENCIMA DE LA FLEXIBILIDAD",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 6,
+    "text": "6. CONSUMO POR ENCIMA DE LA FLEXIBILIDAD\n\nCuando el consumo mensual supere el límite superior de flexibilidad de\n7,2 GWh, el proveedor podrá suministrar el volumen adicional sujeto a\ndisponibilidad.\n\nEl volumen consumido por encima de dicho límite será considerado volumen\nexcedentario contractual."
+  },
+  {
+    "chunk_id": "3cd65c406a8a3ef5:c43f60ae5f4a",
+    "document_id": "3cd65c406a8a3ef5",
+    "document_name": "contrato_hospital_costa_sur.txt",
+    "section": "6. EXCESOS DE CONSUMO",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 6,
+    "text": "6. EXCESOS DE CONSUMO\n\nCuando el consumo mensual supere el límite superior de flexibilidad\nestablecido en este contrato, el volumen excedentario será considerado\nconsumo adicional.\n\nEl proveedor podrá adquirir dicho volumen en el mercado spot."
+  },
+  {
+    "chunk_id": "3cd65c406a8a3ef5:00f244466747",
+    "document_id": "3cd65c406a8a3ef5",
+    "document_name": "contrato_hospital_costa_sur.txt",
+    "section": "5. TAKE-OR-PAY",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 5,
+    "text": "5. TAKE-OR-PAY\n\nEl contrato establece una obligación anual de take-or-pay equivalente\nal 85% del volumen anual contratado.\n\nDado un volumen anual contratado de 48 GWh, el Hospital Costa Sur deberá\nabonar como mínimo el equivalente a 40,8 GWh durante el periodo contractual,\naunque su consumo real sea inferior.\n\nLas cantidades no consumidas por debajo de este umbral no generarán\nobligación de entrega posterior por parte del proveedor."
+  },
+  {
+    "chunk_id": "8154fcf83a207fee:a3865eac3198",
+    "document_id": "8154fcf83a207fee",
+    "document_name": "contrato_industrias_mediterraneo_2026.txt",
+    "section": "7. CONSUMO POR DEBAJO DE LA FLEXIBILIDAD",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 8,
+    "text": "7. CONSUMO POR DEBAJO DE LA FLEXIBILIDAD\n\nCuando el consumo mensual sea inferior a 4,8 GWh, el volumen quedará fuera\ndel rango de flexibilidad ordinaria.\n\nLas desviaciones inferiores podrán estar sujetas a una penalización de\n2 EUR/MWh aplicada sobre el volumen situado por debajo del límite inferior.\n\nLa aplicación de esta penalización no sustituye las obligaciones anuales\nderivadas de la cláusula take-or-pay."
+  },
+  {
+    "chunk_id": "3cd65c406a8a3ef5:88e652246e6b",
+    "document_id": "3cd65c406a8a3ef5",
+    "document_name": "contrato_hospital_costa_sur.txt",
+    "section": "8. CONTINUIDAD DE SUMINISTRO",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 9,
+    "text": "8. CONTINUIDAD DE SUMINISTRO\n\nDado que el Hospital Costa Sur presta servicios sanitarios esenciales,\nel suministro tendrá consideración de suministro prioritario.\n\nEl proveedor deberá realizar esfuerzos razonables para garantizar la\ncontinuidad del suministro incluso en situaciones de tensión del mercado.\n\nEn caso de restricciones de disponibilidad, el Hospital Costa Sur tendrá\nprioridad frente a clientes industriales no esenciales sujetos a contratos\nequivalentes."
+  },
+  {
+    "chunk_id": "8154fcf83a207fee:9d1847b24db7",
+    "document_id": "8154fcf83a207fee",
+    "document_name": "contrato_industrias_mediterraneo_2026.txt",
+    "section": "5. TAKE-OR-PAY",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 5,
+    "text": "5. TAKE-OR-PAY\n\nEl cliente deberá consumir o abonar como mínimo el 80 % del volumen anual\ncontratado.\n\nConsiderando un volumen anual de referencia de 72 GWh, la obligación mínima\nanual de take-or-pay será de:\n\n57,6 GWh.\n\nEl incumplimiento de este volumen mínimo podrá generar una compensación\neconómica por el volumen comprometido y no consumido."
+  },
+  {
+    "chunk_id": "3cd65c406a8a3ef5:e10f0a2fc28b",
+    "document_id": "3cd65c406a8a3ef5",
+    "document_name": "contrato_hospital_costa_sur.txt",
+    "section": "10. PENALIZACIONES",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 11,
+    "text": "10. PENALIZACIONES\n\nNo se aplicarán penalizaciones cuando el consumo permanezca dentro del\nrango de flexibilidad contractual de ±15%.\n\nLos consumos superiores al límite máximo podrán generar el recargo\nestablecido para consumos adicionales.\n\nLos consumos anuales inferiores al nivel de take-or-pay estarán sujetos\na las obligaciones económicas descritas en la cláusula 5."
+  },
+  {
+    "chunk_id": "8154fcf83a207fee:66fc4d254ec5",
+    "document_id": "8154fcf83a207fee",
+    "document_name": "contrato_industrias_mediterraneo_2026.txt",
+    "section": "4. FLEXIBILIDAD DE VOLUMEN",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 4,
+    "text": "4. FLEXIBILIDAD DE VOLUMEN\n\nEl cliente dispone de una flexibilidad mensual de ±20 % respecto al volumen\nmensual de referencia.\n\nPor tanto, considerando un volumen mensual de referencia de 6 GWh, el cliente\npodrá consumir entre:\n\n4,8 GWh y 7,2 GWh mensuales\n\nsin aplicar penalizaciones por desviación de volumen.\n\nLos consumos fuera de este intervalo estarán sujetos a las condiciones\nestablecidas en las cláusulas correspondientes."
+  },
+  {
+    "chunk_id": "8154fcf83a207fee:2fd01896ae6b",
+    "document_id": "8154fcf83a207fee",
+    "document_name": "contrato_industrias_mediterraneo_2026.txt",
+    "section": "10. INTERRUPTIBILIDAD",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 11,
+    "text": "10. INTERRUPTIBILIDAD\n\nEl suministro de Industrias Mediterráneo S.A. no tiene consideración de\nsuministro prioritario.\n\nEn situaciones excepcionales de restricción del sistema gasista, el proveedor\npodrá solicitar al cliente una reducción temporal del consumo.\n\nLa reducción deberá ser comunicada con una antelación mínima de 6 horas,\nsalvo situaciones de emergencia del sistema."
+  },
+  {
+    "chunk_id": "3cd65c406a8a3ef5:19ba59bd736a",
+    "document_id": "3cd65c406a8a3ef5",
+    "document_name": "contrato_hospital_costa_sur.txt",
+    "section": "9. PREVISIÓN DE DEMANDA",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 10,
+    "text": "9. PREVISIÓN DE DEMANDA\n\nEl Hospital Costa Sur deberá proporcionar al proveedor una previsión\nmensual de consumo con una antelación mínima de 15 días.\n\nCuando se espere una desviación superior al 10% respecto a la previsión\ncomunicada, el hospital deberá informar al proveedor tan pronto como sea\nrazonablemente posible."
+  },
+  {
+    "chunk_id": "8154fcf83a207fee:f5b7e4222694",
+    "document_id": "8154fcf83a207fee",
+    "document_name": "contrato_industrias_mediterraneo_2026.txt",
+    "section": "8. REVISIÓN DE PRECIOS",
+    "page_start": 1,
+    "page_end": 1,
+    "ordinal": 9,
+    "text": "8. REVISIÓN DE PRECIOS\n\nEl precio base se revisará mensualmente utilizando como referencia el índice\nTTF.\n\nCuando la variación mensual del índice TTF sea superior al 15 % respecto al\nmes anterior, cualquiera de las partes podrá solicitar una revisión\nextraordinaria de las condiciones económicas."
+  }
+]

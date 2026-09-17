@@ -512,11 +512,12 @@ def _render_risk_timeline(snapshot):
 
 
 def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
-    with st.expander("Pipeline Inspector", expanded=True):
+    with st.expander("Pipeline Inspector", expanded=False):
         if snapshot is None:
             st.caption("El flujo de la próxima petición aparecerá aquí.")
             return
 
+        st.caption("Operación: " + snapshot.operation_id)
         status_class = (
             snapshot.status
             if snapshot.status in {"running", "completed", "failed"}
@@ -551,13 +552,14 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
 
         render_clipboard_button(
             build_diagnostics_clipboard_text(snapshot),
-            "Copy diagnostics",
+            "Copiar diagnóstico",
             key=f"diagnostics-{snapshot.operation_id}",
         )
 
         if snapshot.mode == "supervisor":
             from supervisor_ui import render_supervisor_inspector
             render_supervisor_inspector(snapshot)
+            render_advanced_metrics(snapshot)
             return
 
         pipeline_stages = {
@@ -706,69 +708,73 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
                 with st.expander("Resultado comercial estructurado"):
                     st.json(structured)
 
-        with st.expander("Métricas avanzadas"):
-            operation_metrics = build_operation_metrics(snapshot)
-            message_count = _latest_metric(snapshot.events, "message_count")
-            prompt_chars = _latest_metric(
-                snapshot.events, "approximate_prompt_chars"
-            )
-            rounds = max(
-                (event.round or 0 for event in snapshot.events), default=0
-            )
-            tool_calls = int(_metric_sum(snapshot.events, "tool_call_count"))
-            first_row = st.columns(3)
-            first_row[0].metric("Mensajes", message_count)
-            first_row[1].metric("Caracteres prompt", f"{prompt_chars:,}")
-            first_row[2].metric("Round", rounds or "—")
-            second_row = st.columns(3)
-            second_row[0].metric("Tool calls", tool_calls)
-            second_row[1].metric(
-                "LLM request wall",
-                _format_duration(operation_metrics.llm_request_wall_time_total),
-            )
-            second_row[2].metric(
-                "Server inference",
-                (
-                    _format_duration(operation_metrics.llm_inference_time_total)
-                    if operation_metrics.llm_inference_time_total is not None
-                    else "No disponible"
-                ),
-            )
-            max_tokens = _latest_metadata(snapshot.events, "max_tokens")
-            max_output_tokens = _latest_metadata(
-                snapshot.events, "max_output_tokens"
-            )
-            timeout_seconds = _latest_metadata(
-                snapshot.events, "timeout_seconds"
-            )
-            thinking_enabled = _latest_metadata(
-                snapshot.events, "thinking_enabled"
-            )
-            config_first_row = st.columns(2)
-            config_first_row[0].metric(
-                "Max tokens", max_tokens if max_tokens is not None else "—"
-            )
-            config_first_row[1].metric(
-                "Max output tokens",
-                max_output_tokens
-                if max_output_tokens is not None
-                else "—",
-            )
-            config_second_row = st.columns(2)
-            config_second_row[0].metric(
-                "Timeout",
-                f"{timeout_seconds} s"
-                if timeout_seconds is not None
-                else "—",
-            )
-            config_second_row[1].metric(
-                "Thinking",
-                (
-                    "Sí" if bool(thinking_enabled) else "No"
-                    if thinking_enabled is not None
-                    else "—"
-                ),
-            )
+        render_advanced_metrics(snapshot)
+
+
+def render_advanced_metrics(snapshot):
+    with st.expander("Métricas avanzadas"):
+        operation_metrics = build_operation_metrics(snapshot)
+        message_count = _latest_metric(snapshot.events, "message_count")
+        prompt_chars = _latest_metric(
+            snapshot.events, "approximate_prompt_chars"
+        )
+        rounds = max(
+            (event.round or 0 for event in snapshot.events), default=0
+        )
+        tool_calls = int(_metric_sum(snapshot.events, "tool_call_count"))
+        first_row = st.columns(3)
+        first_row[0].metric("Mensajes", message_count)
+        first_row[1].metric("Caracteres prompt", f"{prompt_chars:,}")
+        first_row[2].metric("Round", rounds or "—")
+        second_row = st.columns(3)
+        second_row[0].metric("Tool calls", tool_calls)
+        second_row[1].metric(
+            "LLM request wall",
+            _format_duration(operation_metrics.llm_request_wall_time_total),
+        )
+        second_row[2].metric(
+            "Server inference",
+            (
+                _format_duration(operation_metrics.llm_inference_time_total)
+                if operation_metrics.llm_inference_time_total is not None
+                else "No disponible"
+            ),
+        )
+        max_tokens = _latest_metadata(snapshot.events, "max_tokens")
+        max_output_tokens = _latest_metadata(
+            snapshot.events, "max_output_tokens"
+        )
+        timeout_seconds = _latest_metadata(
+            snapshot.events, "timeout_seconds"
+        )
+        thinking_enabled = _latest_metadata(
+            snapshot.events, "thinking_enabled"
+        )
+        config_first_row = st.columns(2)
+        config_first_row[0].metric(
+            "Max tokens", max_tokens if max_tokens is not None else "—"
+        )
+        config_first_row[1].metric(
+            "Max output tokens",
+            max_output_tokens
+            if max_output_tokens is not None
+            else "—",
+        )
+        config_second_row = st.columns(2)
+        config_second_row[0].metric(
+            "Timeout",
+            f"{timeout_seconds} s"
+            if timeout_seconds is not None
+            else "—",
+        )
+        config_second_row[1].metric(
+            "Thinking",
+            (
+                "Sí" if bool(thinking_enabled) else "No"
+                if thinking_enabled is not None
+                else "—"
+            ),
+        )
 
 
 def inject_pipeline_styles() -> None:

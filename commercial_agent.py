@@ -5,6 +5,7 @@ import re
 import unicodedata
 from time import perf_counter
 
+from commercial_comparison import COMPARISON, named_groups, build_comparison
 from diagnostics import PerformanceStatus
 from commercial_models import (
     CommercialAgentResult, CommercialCalculation, CommercialFinding,
@@ -82,6 +83,7 @@ class CommercialAgent:
 
     def run(self, request, timeout_seconds=None):
         started = perf_counter()
+        informational_warnings = []
         self._record("agent_start", agent_name=self.name)
         result = CommercialAgentResult(status=CommercialStatus.PARTIAL, interpretation_mode=self.interpretation_mode,
                                        summary="Análisis comercial basado en el contrato recuperado.")
@@ -95,6 +97,23 @@ class CommercialAgent:
             result.status = CommercialStatus.FAILED
             result.summary = "No se pudo recuperar el contrato del índice local."
             result.warnings.append("Comprueba el índice y la disponibilidad del modelo de embeddings.")
+            return self._finish(result)
+        groups = named_groups(request, retrieval.matches)
+        if COMPARISON.search(request) and len(groups) >= 2:
+            result = build_comparison(request, groups, result, self._additional_facts)
+            result.interpretation_mode = "deterministic"
+            self._record("retrieved_context", retrieved_chunk_count=len(result.sources),
+                         sources=[s.model_dump() for s in result.sources])
+            self._record("commercial_comparison", document_ids=[g[0].chunk.document_id for g in groups],
+                         compared_topics=result.comparison.compared_topics)
+            self._record("commercial_interpretation", status=PerformanceStatus.SKIPPED,
+                         interpretation_mode="deterministic", skip_kind="expected_optional",
+                         reason="Comparación documental determinista.")
+            return self._finish(result)
+        if COMPARISON.search(request) and len(groups) < 2:
+            result.status = CommercialStatus.NEEDS_INPUT
+            result.summary = "No se han identificado al menos dos contratos para la comparación."
+            result.warnings.append("Indica los clientes o contratos que deseas comparar y comprueba su evidencia en el índice.")
             return self._finish(result)
         matches = self._select_contract(request, retrieval.matches)
         if not matches:
@@ -148,7 +167,10 @@ class CommercialAgent:
                 if impact.contractual_excess_gwh > 0 and terms.excess_surcharge_eur_mwh is not None:
                     result.summary += f" Condición de precio del exceso: Spot + {terms.excess_surcharge_eur_mwh:g} EUR/MWh (véase la evidencia contractual)."
                     if spot is None:
-                        result.warnings.append("Sin precio spot vigente no se calcula el precio absoluto del exceso.")
+                        warning = "Sin precio spot vigente no se calcula el precio absoluto del exceso."
+                        result.warnings.append(warning)
+                        if not re.search(r"precio absoluto|importe|coste.*exceso", request, re.I):
+                            informational_warnings.append(warning)
             else:
                 result.warnings.append("Falta volumen mensual de referencia o flexibilidad inequívoca; no se calcula el exceso.")
         elif re.search(r"consum|previ|prevé|exceso|margen", request, re.I):
@@ -164,7 +186,7 @@ class CommercialAgent:
             result.commercial_findings = [CommercialFinding(evidence=m.chunk.text, source=source)
                                           for m, source in zip(matches, sources)]
             self._record("commercial_interpretation", status=PerformanceStatus.SKIPPED,
-                         interpretation_mode="deterministic", reason="Evidencia contractual y cálculos deterministas.")
+                         interpretation_mode="deterministic", skip_kind="expected_optional", reason="Evidencia contractual y cálculos deterministas.")
         else:
             self._record("agent_decision", action="interpret_contract",
                          decision_summary="Seleccionar cláusulas comerciales relevantes en una única llamada.")
@@ -205,30 +227,23 @@ class CommercialAgent:
                     result.commercial_findings.append(CommercialFinding(evidence=fact.evidence, source=fact.source))
             self._record("agent_decision", action="include_calculation_evidence",
                          decision_summary="Conservar las cláusulas de flexibilidad y precio que respaldan el exceso calculado.")
-        result.status = CommercialStatus.PARTIAL if result.warnings else CommercialStatus.COMPLETED
+        degrading_warnings = (result.warnings if self.interpretation_mode == "llm" else
+                              [w for w in result.warnings if w not in informational_warnings])
+        result.status = CommercialStatus.PARTIAL if degrading_warnings else CommercialStatus.COMPLETED
         return self._finish(result)
 
     def _select_contract(self, request, matches):
-        documents = {m.chunk.document_id: m.chunk.document_name for m in matches}
-        query = _normalized(request)
-        selected = []
-        for doc_id, name in documents.items():
-            tokens = [t for t in _normalized(name.rsplit('.', 1)[0]).split()
-                      if t not in {"contrato", "contract", "de", "del", "suministro", "gas", "natural"}]
-            named = bool(tokens) and all(re.search(rf"\b{re.escape(t)}\b", query) for t in tokens)
-            customers = [match[1].strip() for m in matches if m.chunk.document_id == doc_id
-                         for match in re.finditer(r"(?im)^Cliente:\s*(.+)$", m.chunk.text)]
-            if named or any(_normalized(c) in query for c in customers):
-                selected.append(doc_id)
-        if not selected and len(documents) == 1 and not re.search(r"hospital|clínica|cliente|empresa", request, re.I):
-            selected = list(documents)
-        if len(selected) != 1:
+        groups = named_groups(request, matches)
+        documents = {m.chunk.document_id for m in matches}
+        if not groups and len(documents) == 1 and not re.search(r"hospital|clínica|cliente|empresa", request, re.I):
+            return matches
+        if len(groups) != 1:
             return []
-        return [m for m in matches if m.chunk.document_id == selected[0]]
+        return groups[0]
 
     def _additional_facts(self, matches, sources, result):
         patterns = {
-            "annual_volume_gwh": (r"volumen anual contratado(?: de gas natural)?(?: es)? de\s*(\d+(?:[.,]\d+)?)\s*GWh", "GWh"),
+            "annual_volume_gwh": (r"volumen anual(?: de referencia)?(?: contratado)?(?: de gas natural)?(?: es)? de\s*(\d+(?:[.,]\d+)?)\s*GWh", "GWh"),
             "take_or_pay_percent": (r"take-or-pay[^%]{0,80}?(\d+(?:[.,]\d+)?)\s*%", "%"),
             "sales_price_eur_mwh": (r"precio base de suministro[^\d]{0,20}(\d+(?:[.,]\d+)?)\s*(?:€|EUR)/MWh", "EUR/MWh"),
             "supply_cost_eur_mwh": (r"coste de (?:suministro|aprovisionamiento)[^\d.;]{0,20}(\d+(?:[.,]\d+)?)\s*(?:€|EUR)/MWh", "EUR/MWh"),

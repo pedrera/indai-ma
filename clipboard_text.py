@@ -408,15 +408,16 @@ def build_diagnostics_clipboard_text(
 
     problems = [
         event for event in events
-        if event.status in {PerformanceStatus.FAILED, PerformanceStatus.SKIPPED}
-        or any(key in event.metadata for key in ("error", "warning", "fallback"))
+        if (event.status == PerformanceStatus.FAILED or
+            (event.status == PerformanceStatus.SKIPPED and event.metadata.get("skip_kind") != "expected_optional"))
+        or any(key in event.metadata for key in ("error", "warning", "fallback")) or event.metadata.get("warnings")
     ]
     if snapshot.status not in {"running", "completed"} or problems:
         lines.extend(["", "Errors / warnings", "-----------------"])
         if snapshot.status not in {"running", "completed"}:
             lines.append(f"Operation status: {snapshot.status}")
         for event in problems:
-            detail = event.metadata.get("error") or event.metadata.get("warning") or event.metadata.get("fallback")
+            detail = event.metadata.get("error") or event.metadata.get("warning") or event.metadata.get("warnings") or event.metadata.get("fallback")
             reason = event.metadata.get("skip_reason")
             text = detail or reason or event.status.value
             lines.append(f"- {event.stage}: {_redact_text(str(text))}")

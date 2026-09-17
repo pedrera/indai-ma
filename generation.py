@@ -37,6 +37,7 @@ class GenerationResult:
     tool_executions: list[dict] = field(default_factory=list)
     execution_status: str | None = None
     structured_result: dict | None = None
+    domain_result: Any = None
 
 
 class GenerationJob:
@@ -243,6 +244,7 @@ class AgentJob:
                     content=agent_result.content,
                     tool_executions=list(agent_result.tool_executions),
                     execution_status=agent_result.status.value,
+                    domain_result=agent_result,
                     structured_result=(agent_result.model_dump(mode="json")
                                        if hasattr(agent_result, "model_dump") else None),
                 )

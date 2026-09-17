@@ -4,7 +4,7 @@ import re
 from rag_models import DocumentChunk, SourceDocument
 
 
-CHUNKER_VERSION = 1
+CHUNKER_VERSION = 2
 DEFAULT_CHUNK_SIZE = 1600
 DEFAULT_CHUNK_OVERLAP = 240
 
@@ -74,7 +74,8 @@ def _looks_like_heading(text: str) -> bool:
         and "\n" not in text
         and (
             bool(re.match(r"^\d+(?:\.\d+)*[.)]?\s+", text))
-            or text.endswith(":")
+            # A prose introduction ending in ':' belongs to its current section.
+            # Unnumbered headings still require the existing uppercase signal.
             or (len(text.split()) <= 10 and text.upper() == text)
         )
     )

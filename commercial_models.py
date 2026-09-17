@@ -25,6 +25,9 @@ class CommercialSource(BaseModel):
 
 
 class ContractFact(BaseModel):
+    origin: Literal["extracted", "deterministic_calculation"] = "extracted"
+    input_facts: list[str] = Field(default_factory=list)
+    input_sources: list[CommercialSource] = Field(default_factory=list)
     name: str
     value: float | str
     unit: str | None = None
@@ -45,7 +48,20 @@ class CommercialCalculation(BaseModel):
     input_evidence: dict[str, str] = Field(default_factory=dict)
 
 
+class ContractComparisonFacts(BaseModel):
+    document_id: str
+    document_name: str
+    customer: str | None = None
+    facts: list[ContractFact] = Field(default_factory=list)
+
+
+class CommercialComparison(BaseModel):
+    compared_topics: list[str]
+    contracts: list[ContractComparisonFacts]
+
+
 class CommercialAgentResult(BaseModel):
+    comparison: CommercialComparison | None = None
     interpretation_mode: Literal["deterministic", "llm"] = "llm"
     status: CommercialStatus
     customer: str | None = None
@@ -60,6 +76,9 @@ class CommercialAgentResult(BaseModel):
 
     @property
     def content(self) -> str:
+        if self.comparison is not None:
+            from commercial_comparison import comparison_text
+            return comparison_text(self)
         lines = [self.summary]
         for fact in self.contract_facts:
             lines.append(f"{fact.name}: {fact.value} {fact.unit or ''} [{fact.source.label}]")

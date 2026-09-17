@@ -3,9 +3,8 @@ import streamlit as st
 from risk_models import RiskAgentResult
 
 
-def render_risk_result(result: RiskAgentResult):
+def render_risk_result(result: RiskAgentResult, *, embedded=False):
     st.subheader("Resultado de riesgo")
-    st.caption(f"Estado: {result.status.value} · Interpretación: {result.interpretation_mode}")
     st.write(result.summary)
     for warning in result.warnings:
         st.warning(warning)
@@ -28,5 +27,8 @@ def render_risk_result(result: RiskAgentResult):
         } for d in result.deltas], hide_index=True)
     for finding in result.risk_findings:
         st.write(finding.text)
-    st.download_button("Descargar análisis de riesgo", result.model_dump_json(indent=2),
-                       "risk-analysis.json", "application/json", key="risk_download")
+    if not embedded:
+        with st.expander("Detalles técnicos del riesgo"):
+            st.json(result.model_dump(mode="json"))
+            st.download_button("Descargar análisis de riesgo", result.model_dump_json(indent=2),
+                               "risk-analysis.json", "application/json", key="risk_download")
