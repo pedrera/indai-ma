@@ -6,3 +6,4 @@ __pycache__/
 *.iml
 streamlit.*.log
 .indai_ma/
+evals/results/

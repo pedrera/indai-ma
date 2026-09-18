@@ -161,7 +161,7 @@ with st.sidebar:
     st.header("Configuración")
     selected_mode = st.radio(
         "Modo",
-        ("Chat", "Gas B2B Portfolio Analysis", "ProcurementAgent", "CommercialAgent", "RiskAgent", "Multi-Agent Supervisor"),
+        ("Chat", "Gas B2B Portfolio Analysis", "ProcurementAgent", "CommercialAgent", "RiskAgent", "Multi-Agent Supervisor", "Evaluation"),
         key="selected_mode",
         disabled=generation_active,
     )
@@ -1270,7 +1270,10 @@ render_rag_configuration()
 inject_pipeline_styles()
 main_column, inspector_column = st.columns([2.15, 1], gap="large", wrap=True)
 with main_column:
-    if selected_mode == "Chat":
+    if selected_mode == "Evaluation":
+        from evals.ui import render_evaluation
+        render_evaluation()
+    elif selected_mode == "Chat":
         render_chat()
     elif selected_mode == "Gas B2B Portfolio Analysis":
         render_gas_analysis()

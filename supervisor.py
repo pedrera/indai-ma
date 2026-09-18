@@ -16,6 +16,8 @@ from risk_agent import RiskAgent
 from tool_registry import LocalToolRegistry, PROCUREMENT_TOOL_NAMES, action_fingerprint
 from supervisor_models import SpecialistExecutionResult, SupervisorResult, SupervisorStatus
 from supervisor_routing import ProviderRouter, route_deterministically, resolve_routing
+from guardrails import validate_input, validate_output
+from supervisor_models import SupervisorRoutingDecision
 
 
 def event_counts(events):
@@ -157,6 +159,15 @@ class Supervisor:
         first_event = len(self.recorder.snapshot().events)
         self.recorder.record_stage("supervisor_start", agent_name=self.name)
         self._remaining(started, timeout_seconds)
+        input_check = validate_input(request)
+        self.recorder.record_stage('input_guardrails', **input_check.model_dump())
+        if not input_check.passed:
+            output = SupervisorResult(status=SupervisorStatus.REJECTED_INPUT,
+                routing=SupervisorRoutingDecision(selected_agents=[]), input_guardrails=input_check,
+                summary='Consulta rechazada por validación de entrada.', total_operation_wall_time=perf_counter() - started)
+            self.recorder.record_stage('supervisor_result', structured_result=output.model_dump(mode='json'))
+            self.recorder.record_stage('supervisor_final', result_status=output.status.value)
+            return output
         with_parsing = self.recorder.start_stage("input_parsing")
         decision = route_deterministically(request)
         self.recorder.complete_stage(with_parsing, ambiguity_detected=decision.ambiguity_detected)
@@ -246,6 +257,13 @@ class Supervisor:
         self.recorder.record_stage("supervisor_synthesis", synthesis_status=output.synthesis_status,
                                    llm_calls=output.synthesis_llm_calls)
         output.total_operation_wall_time = perf_counter() - started
+        output.input_guardrails = input_check
+        output.output_guardrails = validate_output(output, self.recorder.snapshot().events[first_event:])
+        self.recorder.record_stage('output_guardrails', **output.output_guardrails.model_dump())
+        if not output.output_guardrails.passed:
+            output.status = SupervisorStatus.VALIDATION_FAILED
+            output.summary = 'Respuesta retenida por incoherencia de resultados.'
+        output.warnings.extend(v.message for v in output.output_guardrails.warnings)
         counts = event_counts(self.recorder.snapshot().events[first_event:])
         output.total_llm_calls, output.total_rag_calls, output.total_tool_calls = counts["llm_calls"], counts["rag_calls"], counts["tool_calls"]
         self.recorder.record_stage("supervisor_result", structured_result=output.model_dump(mode="json"))

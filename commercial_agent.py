@@ -125,6 +125,15 @@ class CommercialAgent:
         self._record("retrieved_context", retrieved_chunk_count=len(matches),
                      sources=[s.model_dump() for s in sources])
         result.sources = sources
+        self._record('commercial_evidence', excerpts=[{'text': m.chunk.text, 'source': s.model_dump()}
+                     for m, s in zip(matches, sources)])
+        if re.search(r'restaur\w*|restablec\w*', request, re.I) and not any(
+                re.search(r'restaur\w*|restablec\w*', m.chunk.text, re.I) for m in matches):
+            result.status = CommercialStatus.NEEDS_INPUT
+            result.summary = 'El contrato recuperado no aporta evidencia sobre el plazo de restauración solicitado.'
+            result.warning_codes.append('unsupported_contract_question')
+            result.warnings.append('No se puede determinar ese plazo con las fuentes disponibles.')
+            return self._finish(result)
         customer = next((re.search(r"(?im)^Cliente:\s*(.+)$", m.chunk.text) for m in matches
                          if re.search(r"(?im)^Cliente:\s*(.+)$", m.chunk.text)), None)
         result.customer = customer[1].strip() if customer else matches[0].chunk.document_name
@@ -244,6 +253,7 @@ class CommercialAgent:
     def _additional_facts(self, matches, sources, result):
         patterns = {
             "annual_volume_gwh": (r"volumen anual(?: de referencia)?(?: contratado)?(?: de gas natural)?(?: es)? de\s*(\d+(?:[.,]\d+)?)\s*GWh", "GWh"),
+            "take_or_pay_minimum_gwh": (r"m[ií]nimo el equivalente a\s*(\d+(?:[.,]\d+)?)\s*GWh", "GWh"),
             "take_or_pay_percent": (r"take-or-pay[^%]{0,80}?(\d+(?:[.,]\d+)?)\s*%", "%"),
             "sales_price_eur_mwh": (r"precio base de suministro[^\d]{0,20}(\d+(?:[.,]\d+)?)\s*(?:€|EUR)/MWh", "EUR/MWh"),
             "supply_cost_eur_mwh": (r"coste de (?:suministro|aprovisionamiento)[^\d.;]{0,20}(\d+(?:[.,]\d+)?)\s*(?:€|EUR)/MWh", "EUR/MWh"),

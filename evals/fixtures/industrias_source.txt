@@ -1,0 +1,143 @@
+CONTRATO DE SUMINISTRO DE GAS NATURAL
+Contrato: IM-GN-2026-014
+
+Cliente: Industrias Mediterráneo S.A.
+Proveedor: Global Industrial Gas Supply S.A.
+
+Periodo contractual:
+1 de enero de 2026 a 31 de diciembre de 2026.
+
+1. OBJETO DEL CONTRATO
+
+El presente contrato regula el suministro de gas natural a las instalaciones
+industriales de Industrias Mediterráneo S.A.
+
+El gas será destinado principalmente a procesos térmicos industriales y a la
+generación de vapor utilizada en las líneas de producción del cliente.
+
+
+2. VOLUMEN CONTRATADO
+
+El volumen anual de referencia contratado es de 72 GWh.
+
+El volumen mensual de referencia es de 6 GWh.
+
+Los volúmenes mensuales podrán variar de acuerdo con las condiciones de
+flexibilidad establecidas en este contrato.
+
+
+3. PRECIO BASE
+
+El precio base del suministro será de 43 EUR/MWh.
+
+El precio será revisado mensualmente de acuerdo con la evolución del índice
+TTF según las condiciones establecidas en la cláusula de revisión de precios.
+
+
+4. FLEXIBILIDAD DE VOLUMEN
+
+El cliente dispone de una flexibilidad mensual de ±20 % respecto al volumen
+mensual de referencia.
+
+Por tanto, considerando un volumen mensual de referencia de 6 GWh, el cliente
+podrá consumir entre:
+
+4,8 GWh y 7,2 GWh mensuales
+
+sin aplicar penalizaciones por desviación de volumen.
+
+Los consumos fuera de este intervalo estarán sujetos a las condiciones
+establecidas en las cláusulas correspondientes.
+
+
+5. TAKE-OR-PAY
+
+El cliente deberá consumir o abonar como mínimo el 80 % del volumen anual
+contratado.
+
+Considerando un volumen anual de referencia de 72 GWh, la obligación mínima
+anual de take-or-pay será de:
+
+57,6 GWh.
+
+El incumplimiento de este volumen mínimo podrá generar una compensación
+económica por el volumen comprometido y no consumido.
+
+
+6. CONSUMO POR ENCIMA DE LA FLEXIBILIDAD
+
+Cuando el consumo mensual supere el límite superior de flexibilidad de
+7,2 GWh, el proveedor podrá suministrar el volumen adicional sujeto a
+disponibilidad.
+
+El volumen consumido por encima de dicho límite será considerado volumen
+excedentario contractual.
+
+El precio aplicable a este volumen será:
+
+Precio Spot + 6 EUR/MWh.
+
+El precio Spot utilizado será el precio de referencia del mercado definido
+para el día de suministro.
+
+
+7. CONSUMO POR DEBAJO DE LA FLEXIBILIDAD
+
+Cuando el consumo mensual sea inferior a 4,8 GWh, el volumen quedará fuera
+del rango de flexibilidad ordinaria.
+
+Las desviaciones inferiores podrán estar sujetas a una penalización de
+2 EUR/MWh aplicada sobre el volumen situado por debajo del límite inferior.
+
+La aplicación de esta penalización no sustituye las obligaciones anuales
+derivadas de la cláusula take-or-pay.
+
+
+8. REVISIÓN DE PRECIOS
+
+El precio base se revisará mensualmente utilizando como referencia el índice
+TTF.
+
+Cuando la variación mensual del índice TTF sea superior al 15 % respecto al
+mes anterior, cualquiera de las partes podrá solicitar una revisión
+extraordinaria de las condiciones económicas.
+
+
+9. PREVISIÓN DE DEMANDA
+
+Industrias Mediterráneo S.A. deberá comunicar al proveedor su previsión de
+consumo para el mes siguiente con una antelación mínima de 10 días naturales.
+
+Si durante el mes el cliente prevé una desviación superior al 15 % respecto
+a la previsión comunicada, deberá informar al proveedor tan pronto como sea
+razonablemente posible.
+
+
+10. INTERRUPTIBILIDAD
+
+El suministro de Industrias Mediterráneo S.A. no tiene consideración de
+suministro prioritario.
+
+En situaciones excepcionales de restricción del sistema gasista, el proveedor
+podrá solicitar al cliente una reducción temporal del consumo.
+
+La reducción deberá ser comunicada con una antelación mínima de 6 horas,
+salvo situaciones de emergencia del sistema.
+
+
+11. PENALIZACIONES
+
+Las penalizaciones por desviaciones de volumen se calcularán exclusivamente
+sobre el volumen situado fuera de los límites de flexibilidad establecidos
+en este contrato.
+
+Las penalizaciones no se aplicarán sobre el volumen que permanezca dentro del
+rango mensual de 4,8 GWh a 7,2 GWh.
+
+
+12. DURACIÓN
+
+El contrato permanecerá vigente hasta el 31 de diciembre de 2026.
+
+Cualquier renovación deberá acordarse expresamente entre las partes antes de
+la fecha de vencimiento.

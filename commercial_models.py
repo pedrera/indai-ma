@@ -62,6 +62,7 @@ class CommercialComparison(BaseModel):
 
 class CommercialAgentResult(BaseModel):
     comparison: CommercialComparison | None = None
+    warning_codes: list[str] = Field(default_factory=list)
     interpretation_mode: Literal["deterministic", "llm"] = "llm"
     status: CommercialStatus
     customer: str | None = None

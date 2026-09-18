@@ -6,12 +6,15 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from agent_models import AgentRunResult
 from commercial_models import CommercialAgentResult
 from risk_models import RiskAgentResult
+from guardrails import GuardrailResult
 
 AgentName = Literal["CommercialAgent", "ProcurementAgent", "RiskAgent"]
 AGENT_ORDER = ("CommercialAgent", "ProcurementAgent", "RiskAgent")
 
 
 class SupervisorStatus(str, Enum):
+    REJECTED_INPUT = "rejected_input"
+    VALIDATION_FAILED = "validation_failed"
     COMPLETED = "completed"
     PARTIAL = "partial"
     NEEDS_INPUT = "needs_input"
@@ -55,6 +58,8 @@ class SpecialistExecutionResult(BaseModel):
 
 
 class SupervisorResult(BaseModel):
+    input_guardrails: GuardrailResult = Field(default_factory=GuardrailResult)
+    output_guardrails: GuardrailResult = Field(default_factory=GuardrailResult)
     status: SupervisorStatus
     routing: SupervisorRoutingDecision
     specialist_results: list[SpecialistExecutionResult] = Field(default_factory=list)
@@ -77,6 +82,8 @@ class SupervisorResult(BaseModel):
 
     @property
     def content(self):
+        if self.status in {SupervisorStatus.REJECTED_INPUT, SupervisorStatus.VALIDATION_FAILED}:
+            return "\n".join([self.summary, *[v.message for g in (self.input_guardrails, self.output_guardrails) for v in g.violations]])
         labels = {"CommercialAgent": "Posición contractual", "ProcurementAgent": "Posición de aprovisionamiento",
                   "RiskAgent": "Escenarios de estrés"}
         lines = [self.summary]

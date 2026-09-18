@@ -84,7 +84,7 @@ class ExecutionUXTests(unittest.TestCase):
         with patch('llm_client.get_available_models', return_value=[]):
             app = AppTest.from_file(APP, default_timeout=20).run()
             modes = app.radio(key='selected_mode').options
-            self.assertEqual(len(modes), 6)
+            self.assertEqual(len(modes), 7)
             for mode in modes:
                 app.radio(key='selected_mode').set_value(mode).run()
                 self.assertFalse(app.exception, mode)
