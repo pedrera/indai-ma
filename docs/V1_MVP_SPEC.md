@@ -1,7 +1,7 @@
 # indAI MA v1.0 Commercial MVP specification
 
-**Status:** proposed product specification. It defines the target for v1.0; it does
-not claim that every requirement exists in v0.9.0.
+**Status:** implemented and validated release specification for the v1.0 Commercial
+MVP. The final v1.0.0 release tag has not yet been created.
 
 ## Objective and positioning
 
@@ -231,11 +231,19 @@ see [ROADMAP.md](ROADMAP.md).
 - Preserve operation/result/Pipeline Inspector association.
 - Changes should be independently testable and leave the application runnable.
 
-## Current implementation versus target
+## Release state
 
-v0.9 already provides the agents, Supervisor, deterministic calculations, RAG,
-guardrails, structured business results, technical tracing, demo fixtures and FAST
-evaluation. The primary product shell, one-question entry point, example launcher,
-unified executive presentation and polished installation/demo flow remain target
-work. This distinction is intentional: the specification defines the desired v1.0
-product without presenting current partial UX as complete.
+v0.9 established the agents, Supervisor, deterministic calculations, RAG,
+guardrails, structured business results, technical tracing and FAST evaluation.
+The v1.0 Commercial MVP implementation is complete, including the Business shell,
+one-question entry point, example launcher, Executive Result and installation/demo
+documentation. Automated validation is green, and all four canonical Business
+scenarios were manually validated during release-candidate review:
+
+- Hospital Costa Sur integrated analysis;
+- Hospital Costa Sur versus Industrias Mediterráneo contract comparison;
+- Procurement 120/95/42;
+- Risk +10% stress scenario.
+
+The final v1.0.0 release tag has not yet been created. Capabilities listed as out
+of scope remain intentionally unimplemented.
