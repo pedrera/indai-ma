@@ -18,9 +18,9 @@ from risk_models import RiskAgentResult
 from risk_ui import render_risk_result
 from supervisor import Supervisor
 from supervisor_models import SupervisorResult
-from supervisor_ui import render_supervisor_result
+from supervisor_ui import render_supervisor_result, render_business_api_result
 from benchmark_ui import render_benchmark_history
-from clipboard_text import build_all_clipboard_text, build_response_clipboard_text, _redact_text
+from clipboard_text import build_all_clipboard_text, build_response_clipboard_text, build_business_copy_payload, _redact_text
 from clipboard_ui import render_clipboard_button
 from execution_metrics import build_operation_metrics
 from gas_analysis import (
@@ -58,6 +58,8 @@ from rag_service import RAGService, build_rag_messages, sanitize_rag_citations
 from runtime_config import LLMRuntimeConfig
 from vector_store import LocalVectorStore, VectorStoreError
 from demo_scenarios import DEMO_SCENARIOS, get_demo
+from api_client import AnalysisApiClient, AnalysisApiClientError
+from api_client_models import ApiAnalysisResult
 from application_models import AnalysisRequest
 from application_service import AnalysisService
 
@@ -113,6 +115,8 @@ if "risk_result" not in st.session_state:
 if "supervisor_result" not in st.session_state:
     st.session_state.supervisor_result = None
     st.session_state.supervisor_operation_id = None
+if "business_api_result" not in st.session_state:
+    st.session_state.business_api_result = None
 if "procurement_agent_metadata" not in st.session_state:
     st.session_state.procurement_agent_metadata = None
 if "generation_job" not in st.session_state:
@@ -639,6 +643,15 @@ def render_response_copy_actions(
     if view is None or view.result is None:
         render_clipboard_button(_redact_text(build_response_clipboard_text(response)), "Copiar respuesta", key=f"{key}-response")
         return
+    if hasattr(view.result, "diagnostics") and hasattr(view.result, "routing"):
+        payload = build_business_copy_payload(
+            view.result,
+            operation_id=view.operation_id,
+            status=view.status,
+            duration_seconds=view.snapshot.elapsed_seconds if view.snapshot else None,
+        )
+        render_clipboard_button(payload, "Copiar todo", key=f"{key}-all-{view.operation_id}")
+        return
     payloads = clipboard_payloads(view)
     for action, label in (("response", "Copiar respuesta"), ("diagnostics", "Copiar diagnóstico"), ("all", "Copiar todo")):
         render_clipboard_button(payloads[action], label, key=f"{key}-{action}-{view.operation_id}")
@@ -1054,6 +1067,27 @@ def start_supervisor_analysis(request: str, use_synthesis: bool = False) -> None
     job.start()
 
 
+def start_business_api_analysis(request: str) -> None:
+    operation_id = uuid4().hex[:8]
+    recorder = PerformanceRecorder(operation_id, "api", "remote", "business_api")
+    st.session_state.pipeline_recorder = recorder
+    client = AnalysisApiClient()
+
+    class ApiJobAdapter:
+        def run(self, text, timeout_seconds):
+            return client.analyze(text)
+
+    job = AgentJob(ApiJobAdapter(), request, client.config.analysis_timeout, None)
+    st.session_state.business_api_result = None
+    st.session_state.generation_job = job
+    st.session_state.generation_kind = "business_api"
+    st.session_state.generation_notice = None
+    st.session_state.operation_started_at = perf_counter()
+    st.session_state.operation_id = operation_id
+    remember_execution_start(recorder)
+    job.start()
+
+
 def render_business() -> None:
     st.header("indAI MA")
     st.caption("B2B Energy Decision Assistant")
@@ -1077,11 +1111,23 @@ def render_business() -> None:
         type="primary",
         disabled=generation_active or not request.strip(),
     ):
-        start_supervisor_analysis(request)
+        start_business_api_analysis(request)
         st.rerun()
     st.subheader("Advanced / Technical")
     st.caption("Los modos especialistas, la configuración técnica y el inspector están disponibles en la barra lateral.")
-    if st.session_state.supervisor_result is not None:
+    if st.session_state.business_api_result is not None:
+        view = visible_execution()
+        if view:
+            render_execution_header(view)
+        api_result = ApiAnalysisResult.model_validate(st.session_state.business_api_result)
+        render_business_api_result(api_result)
+        render_response_copy_actions(
+            api_result,
+            [],
+            key="business-api",
+            operation_id=view.operation_id if view else None,
+        )
+    elif st.session_state.supervisor_result is not None:
         view = visible_execution()
         if view:
             render_execution_header(view)
@@ -1172,6 +1218,8 @@ def finish_generation(result: GenerationResult) -> None:
                 text = risk_text(domain)
             elif generation_kind == "supervisor" and domain is not None:
                 text = supervisor_text(domain)
+            elif generation_kind == "business_api" and domain is not None:
+                text = domain.summary
             elif generation_kind in {"gas_analysis", "gas_documentary"}:
                 domain = st.session_state.gas_analysis_result or st.session_state.gas_documentary_result
                 text = build_response_clipboard_text(domain) if domain is not None else text
@@ -1192,6 +1240,8 @@ def finish_generation(result: GenerationResult) -> None:
     if result.status == GenerationStatus.COMPLETED:
         if generation_kind == "supervisor":
             st.session_state.supervisor_result = result.structured_result
+        elif generation_kind == "business_api":
+            st.session_state.business_api_result = result.structured_result
         elif generation_kind == "risk_agent":
             st.session_state.risk_result = result.structured_result
         elif generation_kind == "commercial_agent":

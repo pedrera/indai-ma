@@ -67,3 +67,12 @@ their Spot formulas; the current structural rule avoids that failure.
 ## Application and HTTP boundaries
 
 `application_service.py` exposes the main analysis use case through `AnalysisService`, `AnalysisRequest` and `AnalysisResult`, independently of Streamlit. The Business adapter retains jobs, cancellation, reruns and session state, while the service composes Supervisor and the existing deterministic projection. The optional `api/` package is a FastAPI HTTP adapter over that same service; it does not call agents, tools or RAG directly. Increment B is synchronous and does not add operation persistence or polling.
+
+## Streamlit HTTP client boundary
+
+The Business path now uses `api_client.AnalysisApiClient` and the public HTTP
+contract. It sends only business text to `POST /api/v1/analysis`; the backend
+owns runtime policy and application orchestration. `AgentJob` remains a frontend
+lifecycle adapter. Business receives a reduced safe Inspector from the response,
+while technical direct modes may retain local event-level inspection. Frontend
+cancellation only cancels its wait and does not provide distributed cancellation.

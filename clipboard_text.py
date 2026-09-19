@@ -110,6 +110,48 @@ def build_all_clipboard_text(
     return _redact_text("\n".join(sections).strip())
 
 
+def build_business_copy_payload(result: Any, *, operation_id: str | None = None,
+                                status: str | None = None, duration_seconds: float | None = None) -> str:
+    """Build complete readable text from the public frontend/API result only."""
+    lines = ["indAI MA — Business analysis", "============================="]
+    _append_optional(lines, "Status", status or getattr(result, "status", None))
+    _append_optional(lines, "Duration", f"{duration_seconds:.2f} s" if duration_seconds is not None else None)
+    _append_optional(lines, "Operation ID", operation_id or getattr(result, "operation_id", None))
+    routing = getattr(result, "routing", None)
+    if routing:
+        lines.extend(["", "Routing", "-------", f"Method: {routing.method}"])
+        if routing.selected_agents:
+            lines.append("Selected agents: " + ", ".join(routing.selected_agents))
+        if routing.skipped_agents:
+            lines.append("Skipped agents: " + ", ".join(routing.skipped_agents))
+    _copy_section(lines, "Executive summary", [getattr(result, "summary", "")])
+    metrics = [f"- {item.label}: {item.value} ({item.origin})" for item in getattr(result, "metrics", ())]
+    _copy_section(lines, "Key metrics", metrics)
+    explanations = [f"- {item.title}: {item.text}" for item in getattr(result, "explanations", ())]
+    _copy_section(lines, "Business explanations", explanations)
+    evidence = [f"- {item.document} · {item.section} · pág. {item.page}" for item in getattr(result, "evidence", ())]
+    _copy_section(lines, "Evidence", evidence)
+    provenance = [f"- {item.category}: {item.label} = {item.value} ({item.origin})" for item in getattr(result, "provenance", ())]
+    _copy_section(lines, "Provenance", provenance)
+    warnings = [f"- {item}" for item in getattr(result, "warnings", ())]
+    _copy_section(lines, "Warnings", warnings)
+    specialists = [f"- {item.agent_name}: {item.status} (LLM {item.llm_calls}, RAG {item.rag_calls}, tools {item.tool_calls})"
+                   for item in getattr(result, "specialists", ())]
+    _copy_section(lines, "Specialists", specialists)
+    diagnostics = getattr(result, "diagnostics", None)
+    if diagnostics:
+        lines.extend(["", "Remote diagnostics", "------------------",
+                      f"LLM calls: {diagnostics.llm_calls}", f"RAG calls: {diagnostics.rag_calls}",
+                      f"Tool calls: {diagnostics.tool_calls}"])
+    return _redact_text("\n".join(lines).strip())
+
+
+def _copy_section(lines: list[str], title: str, items: list[str]) -> None:
+    items = [str(item) for item in items if str(item).strip()]
+    if items:
+        lines.extend(["", title, "-" * len(title), *items])
+
+
 def build_diagnostics_clipboard_text(
     snapshot: PerformanceSnapshot | None,
 ) -> str:

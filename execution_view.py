@@ -37,6 +37,13 @@ def clipboard_payloads(execution):
 
 def render_execution_header(execution):
     import streamlit as st
+    parts = execution_header_parts(execution)
+    st.caption(' · '.join(parts))
+    st.caption('Operación: ' + execution.operation_id)
+
+
+def execution_header_parts(execution):
+    """Build header text for both direct Supervisor and public API results."""
     labels = {'completed':'Completado', 'partial':'Parcial', 'needs_input':'Faltan datos',
               'failed':'Error', 'cancelled':'Cancelado', 'timed_out':'Tiempo agotado', 'running':'En curso'}
     parts = [f"Estado: {labels.get(execution.status, execution.status)}",
@@ -50,9 +57,11 @@ def render_execution_header(execution):
         parts.append('Interpretación: ' + {'deterministic':'Determinista', 'llm':'LLM',
             'llm_prioritized':'Priorización LLM', 'deterministic_fallback':'Determinista (fallback)'}.get(interpretation, interpretation))
     if hasattr(result, 'routing'):
-        parts += ['Routing: ' + result.routing.routing_method,
-                  'Agentes: ' + ', '.join(result.routing.selected_agents),
-                  'Síntesis: ' + {'deterministic':'Determinista', 'llm_prioritized':'Priorización LLM',
-                                 'deterministic_fallback':'Determinista (fallback)'}.get(result.synthesis_status, result.synthesis_status)]
-    st.caption(' · '.join(parts))
-    st.caption('Operación: ' + execution.operation_id)
+        method = getattr(result.routing, 'method', None) or getattr(result.routing, 'routing_method', 'pending')
+        parts += ['Routing: ' + method,
+                  'Agentes: ' + ', '.join(result.routing.selected_agents)]
+        synthesis = getattr(result, 'synthesis_status', None)
+        if synthesis:
+            parts.append('Síntesis: ' + {'deterministic':'Determinista', 'llm_prioritized':'Priorización LLM',
+                                         'deterministic_fallback':'Determinista (fallback)'}.get(synthesis, synthesis))
+    return parts

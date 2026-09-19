@@ -1,6 +1,36 @@
 import streamlit as st
 
 
+def render_business_api_result(result):
+    """Render the reduced safe inspector and public Business API contract."""
+    st.subheader("Resumen ejecutivo")
+    st.write(result.summary)
+    if result.metrics:
+        st.subheader("Métricas clave")
+        st.dataframe([metric.model_dump() for metric in result.metrics], hide_index=True)
+    if result.explanations:
+        st.subheader("Explicación de negocio")
+        for item in result.explanations:
+            st.markdown(f"**{item.title}**")
+            st.write(item.text)
+    if result.evidence:
+        st.subheader("Evidencia")
+        for item in result.evidence:
+            st.caption(f"{item.document} · {item.section} · pág. {item.page}")
+    if result.provenance:
+        st.subheader("Provenance")
+        st.dataframe([item.model_dump() for item in result.provenance], hide_index=True)
+    if result.warnings:
+        st.subheader("Avisos")
+        for warning in result.warnings:
+            st.warning(warning)
+    with st.expander("Diagnóstico remoto"):
+        st.json({"operation_id": result.operation_id, "status": result.status,
+                 "routing": result.routing.model_dump(),
+                 "specialists": [item.model_dump() for item in result.specialists],
+                 "diagnostics": result.diagnostics.model_dump()})
+
+
 def render_supervisor_result(result):
     from business_output import build_supervisor_executive_sections
     projection = build_supervisor_executive_sections(result)

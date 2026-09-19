@@ -243,7 +243,7 @@ class AgentJob:
                     status=GenerationStatus.COMPLETED,
                     content=agent_result.content,
                     tool_executions=list(agent_result.tool_executions),
-                    execution_status=agent_result.status.value,
+                    execution_status=getattr(agent_result.status, "value", agent_result.status),
                     domain_result=agent_result,
                     structured_result=(agent_result.model_dump(mode="json")
                                        if hasattr(agent_result, "model_dump") else None),

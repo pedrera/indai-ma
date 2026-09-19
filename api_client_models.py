@@ -1,0 +1,75 @@
+"""Frontend models for the public analysis HTTP contract."""
+from pydantic import BaseModel
+
+
+class ApiMetric(BaseModel):
+    label: str
+    value: str
+    origin: str
+
+
+class ApiExplanation(BaseModel):
+    title: str
+    text: str
+
+
+class ApiEvidence(BaseModel):
+    document: str
+    section: str
+    page: str
+    excerpt: str = ""
+
+
+class ApiProvenance(BaseModel):
+    category: str
+    label: str
+    value: str
+    origin: str
+
+
+class ApiRouting(BaseModel):
+    selected_agents: list[str]
+    skipped_agents: list[str]
+    method: str
+    reasons: list[str]
+
+
+class ApiSpecialist(BaseModel):
+    agent_name: str
+    status: str
+    llm_calls: int
+    rag_calls: int
+    tool_calls: int
+    warnings: list[str] = []
+
+
+class ApiDiagnostics(BaseModel):
+    llm_calls: int
+    rag_calls: int
+    tool_calls: int
+
+
+class ApiAnalysisResult(BaseModel):
+    operation_id: str
+    status: str
+    summary: str
+    metrics: list[ApiMetric] = []
+    explanations: list[ApiExplanation] = []
+    evidence: list[ApiEvidence] = []
+    provenance: list[ApiProvenance] = []
+    warnings: list[str] = []
+    routing: ApiRouting
+    specialists: list[ApiSpecialist] = []
+    diagnostics: ApiDiagnostics
+
+    @property
+    def content(self) -> str:
+        return self.summary
+
+    @property
+    def tool_executions(self) -> list[dict]:
+        return []
+
+    def model_dump(self, mode: str = "python") -> dict:
+        return super().model_dump(mode=mode)
+

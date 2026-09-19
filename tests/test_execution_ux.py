@@ -9,6 +9,7 @@ from diagnostics import PerformanceRecorder
 from execution_view import ExecutionView, find_execution, clipboard_payloads
 from business_output import commercial_text, supervisor_text
 from business_output import build_supervisor_executive_sections
+from api_client_models import ApiAnalysisResult
 from demo_scenarios import DEMO_SCENARIOS
 from commercial_agent import CommercialAgent
 from rag_models import RetrievalResult
@@ -152,6 +153,28 @@ class ExecutionUXTests(unittest.TestCase):
                 self.assertFalse(app.exception)
                 self.assertEqual(app.text_area(key='business_request').value, demo.request)
                 self.assertIsNone(app.session_state['supervisor_operation_id'])
+
+    def test_business_api_render_path_wires_copy_all(self):
+        copied = []
+        with patch('llm_client.get_available_models', return_value=[]), patch(
+            'clipboard_ui.render_clipboard_button', side_effect=lambda text, label, **kw: copied.append((label, text))):
+            app = AppTest.from_file(APP, default_timeout=20).run()
+            payload = {
+                'operation_id': 'api-op', 'status': 'completed', 'summary': 'SHORT 25 GWh',
+                'metrics': [], 'explanations': [], 'evidence': [], 'provenance': [], 'warnings': [],
+                'routing': {'selected_agents': ['ProcurementAgent'], 'skipped_agents': ['CommercialAgent', 'RiskAgent'],
+                            'method': 'deterministic', 'reasons': []}, 'specialists': [],
+                'diagnostics': {'llm_calls': 0, 'rag_calls': 0, 'tool_calls': 2},
+            }
+            result = ApiAnalysisResult.model_validate(payload)
+            recorder = PerformanceRecorder('api-op', 'api', 'remote', 'business_api')
+            recorder.finish('completed')
+            view = ExecutionView.capture('Business', result, {}, recorder.snapshot(), result.summary)
+            app.session_state['business_api_result'] = payload
+            app.session_state['execution_views'] = {'api-op': view}
+            app.session_state['execution_mode_ids']['Multi-Agent Supervisor'] = 'api-op'
+            app.run()
+            self.assertTrue(any(label == 'Copiar todo' for label, _ in copied))
 
     def test_mode_switch_indexing_and_clipboard_keep_visible_operation(self):
         copied = []

@@ -85,3 +85,17 @@ rendering. FastAPI is intentionally not introduced in this increment.
 **Status:** implemented in v1.1 Increment B. FastAPI exposes only health, readiness and the synchronous analysis endpoint. HTTP DTOs are representations of `AnalysisResult`, `SupervisorResult` and `ExecutiveResultProjection`; they are not sources of business truth and do not recalculate values.
 
 The API owns transport validation and server-controlled runtime configuration, then constructs `AnalysisRequest` and invokes `AnalysisService`. It does not call Supervisor, specialists, RAG or tools directly. No operation persistence, polling, authentication or enterprise infrastructure is introduced in this increment.
+
+## ADR-018 — Streamlit Business UI consumes the backend through the HTTP API
+
+**Status:** implemented in v1.1 Increment C. Business execution crosses the
+`AnalysisApiClient` boundary and reaches `AnalysisService` only through FastAPI.
+The client sends the public `{text}` contract, and server configuration controls
+providers, models, limits, LLM policy and RAG paths. There is no automatic direct
+fallback when the API is unavailable. AgentJob remains responsible for frontend
+threading, reruns, timeout display and local wait cancellation; backend execution
+is not distributed-cancellable in this increment.
+
+Technical modes may remain direct during the migration. The remote Business
+Inspector exposes only safe aggregate diagnostics and never raw event streams,
+prompts or credentials.

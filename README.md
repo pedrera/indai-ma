@@ -131,3 +131,18 @@ request body contains only business intent, for example:
 
 Runtime policy remains server-controlled. Analysis is synchronous;
 `operation_id` is a trace identifier, not a polling handle.
+
+## Business UI through the API
+
+The Business mode uses the HTTP client and therefore requires two local processes:
+
+```powershell
+python -m uvicorn api.app:app --reload
+streamlit run app.py
+```
+
+Business execution sends only `{"text":"..."}` to the backend. Provider, model,
+LLM policy and RAG configuration remain server-controlled. The remote Inspector
+shows safe aggregate diagnostics; technical direct modes retain the full local
+Inspector. Stopping the frontend cancels its wait, but does not guarantee
+cancellation of work already running in the backend.
