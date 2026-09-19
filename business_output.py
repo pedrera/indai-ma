@@ -1,6 +1,7 @@
 """Deterministic business projections shared by result views and clipboard."""
 from dataclasses import dataclass, field
 from clipboard_text import _redact_text
+from business_recommendation import BusinessRecommendation
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,7 @@ class ExecutiveResultProjection:
     evidence: tuple[ExecutiveEvidence, ...] = ()
     provenance: tuple[ExecutiveProvenance, ...] = ()
     warnings: tuple[str, ...] = ()
+    recommendation: BusinessRecommendation | None = None
 
 
 def _fmt(value, unit=""):
@@ -175,7 +177,9 @@ def build_supervisor_executive_sections(result) -> ExecutiveResultProjection:
         conclusions.append(f"Riesgo base: {risk_result.base_scenario.interpretation} de {_fmt(risk_result.base_scenario.short_position_gwh, 'GWh')}.")
     provenance.extend(operating_inputs.values())
     summary = " ".join(conclusions) if conclusions else (result.summary or "Se han completado los análisis disponibles.")
-    return ExecutiveResultProjection(summary, tuple(metrics), tuple(explanations), tuple(dict.fromkeys(evidence)), tuple(provenance), tuple(dict.fromkeys(warnings)))
+    return ExecutiveResultProjection(summary, tuple(metrics), tuple(explanations),
+                                     tuple(dict.fromkeys(evidence)), tuple(provenance),
+                                     tuple(dict.fromkeys(warnings)), result.recommendation)
 
 FACT_LABELS = {
     'reference_volume_gwh':'Referencia mensual (GWh)', 'flexibility_percent':'Flexibilidad (%)',
