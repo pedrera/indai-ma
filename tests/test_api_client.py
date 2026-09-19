@@ -91,6 +91,22 @@ class ApiClientTests(unittest.TestCase):
         result = self.client(lambda request: httpx.Response(200, json=PAYLOAD)).analyze('x')
         self.assertIsNone(result.recommendation)
 
+    def test_business_copy_includes_recommendation_without_rebuilding_metrics(self):
+        payload = dict(PAYLOAD)
+        payload['recommendation'] = {
+            'action': 'Cubrir el SHORT operativo.', 'is_complete': True,
+            'contractual_implication': 'Exceso contractual independiente: 0.2 GWh.',
+            'operational_implication': 'SHORT operativo: 0.5 GWh; exposición spot: 21000 EUR.',
+            'risk_implication': 'Riesgo base SHORT.',
+            'rationale': ['Son magnitudes diferentes.'], 'warnings': [],
+            'supporting_metrics': [['Exceso', '0.2 GWh'], ['SHORT', '0.5 GWh']],
+        }
+        result = self.client(lambda request: httpx.Response(200, json=payload)).analyze('x')
+        text = build_business_copy_payload(result, operation_id='abc123')
+        for expected in ('RECOMENDACIÓN', 'Cubrir el SHORT operativo', '0.2 GWh', '0.5 GWh',
+                         '21000 EUR', 'Riesgo base SHORT'):
+            self.assertIn(expected, text)
+
 
 if __name__ == '__main__':
     unittest.main()

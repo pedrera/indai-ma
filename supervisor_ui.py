@@ -5,6 +5,25 @@ def render_business_api_result(result):
     """Render the reduced safe inspector and public Business API contract."""
     st.subheader("Resumen ejecutivo")
     st.write(result.summary)
+    recommendation = result.recommendation
+    if recommendation is not None:
+        st.subheader("Recomendación")
+        if recommendation.is_complete:
+            st.markdown(f"**{recommendation.action}**")
+        else:
+            st.info("Recomendación incompleta: faltan datos para completarla.")
+            st.markdown(f"**{recommendation.action}**")
+        for label, value in (("Implicación contractual", recommendation.contractual_implication),
+                             ("Implicación operativa", recommendation.operational_implication),
+                             ("Implicación de riesgo", recommendation.risk_implication)):
+            if value:
+                st.write(f"**{label}:** {value}")
+        if recommendation.rationale:
+            st.write("**Fundamento:**")
+            for item in recommendation.rationale:
+                st.write(f"- {item}")
+        for warning in recommendation.warnings:
+            st.warning(warning)
     if result.metrics:
         st.subheader("Métricas clave")
         st.dataframe([metric.model_dump() for metric in result.metrics], hide_index=True)

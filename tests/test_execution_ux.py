@@ -176,6 +176,33 @@ class ExecutionUXTests(unittest.TestCase):
             app.run()
             self.assertTrue(any(label == 'Copiar todo' for label, _ in copied))
 
+    def test_business_api_renders_recommendation(self):
+        with patch('llm_client.get_available_models', return_value=[]):
+            app = AppTest.from_file(APP, default_timeout=20).run()
+            payload = {
+                'operation_id': 'api-recommendation', 'status': 'completed', 'summary': 'Resumen',
+                'metrics': [], 'explanations': [], 'evidence': [], 'provenance': [], 'warnings': [],
+                'routing': {'selected_agents': ['CommercialAgent', 'ProcurementAgent'], 'skipped_agents': ['RiskAgent'],
+                            'method': 'deterministic', 'reasons': []}, 'specialists': [],
+                'diagnostics': {'llm_calls': 0, 'rag_calls': 1, 'tool_calls': 3},
+                'recommendation': {
+                    'action': 'Cubrir el SHORT operativo.', 'is_complete': True,
+                    'rationale': ['Son magnitudes diferentes.'],
+                    'contractual_implication': 'Exceso contractual: 0.2 GWh.',
+                    'operational_implication': 'SHORT: 0.5 GWh; exposición: 21000 EUR.',
+                    'risk_implication': None, 'supporting_metrics': [], 'warnings': [],
+                },
+            }
+            recorder = PerformanceRecorder('api-recommendation', 'api', 'remote', 'business_api')
+            recorder.finish('completed')
+            view = ExecutionView.capture('Business', ApiAnalysisResult.model_validate(payload), {}, recorder.snapshot(), 'Resumen')
+            app.session_state['business_api_result'] = payload
+            app.session_state['execution_views'] = {'api-recommendation': view}
+            app.session_state['execution_mode_ids']['Multi-Agent Supervisor'] = 'api-recommendation'
+            app.run()
+            self.assertFalse(app.exception)
+            self.assertTrue(any('Cubrir el SHORT operativo' in item.value for item in app.markdown))
+
     def test_mode_switch_indexing_and_clipboard_keep_visible_operation(self):
         copied = []
         with patch('llm_client.get_available_models', return_value=[]), patch(

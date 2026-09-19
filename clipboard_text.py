@@ -125,6 +125,20 @@ def build_business_copy_payload(result: Any, *, operation_id: str | None = None,
         if routing.skipped_agents:
             lines.append("Skipped agents: " + ", ".join(routing.skipped_agents))
     _copy_section(lines, "Executive summary", [getattr(result, "summary", "")])
+    recommendation = getattr(result, "recommendation", None)
+    if recommendation is not None:
+        recommendation_lines = [
+            f"Action: {recommendation.action}",
+            f"Status: {'complete' if recommendation.is_complete else 'incomplete'}",
+        ]
+        for label, value in (("Contractual implication", recommendation.contractual_implication),
+                             ("Operational implication", recommendation.operational_implication),
+                             ("Risk implication", recommendation.risk_implication)):
+            if value:
+                recommendation_lines.append(f"{label}: {value}")
+        recommendation_lines.extend(f"- {item}" for item in recommendation.rationale)
+        recommendation_lines.extend(f"Warning: {item}" for item in recommendation.warnings)
+        _copy_section(lines, "RECOMENDACIÓN", recommendation_lines)
     metrics = [f"- {item.label}: {item.value} ({item.origin})" for item in getattr(result, "metrics", ())]
     _copy_section(lines, "Key metrics", metrics)
     explanations = [f"- {item.title}: {item.text}" for item in getattr(result, "explanations", ())]
