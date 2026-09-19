@@ -57,6 +57,7 @@ from pipeline_inspector import inject_pipeline_styles, render_pipeline_inspector
 from rag_service import RAGService, build_rag_messages, sanitize_rag_citations
 from runtime_config import LLMRuntimeConfig
 from vector_store import LocalVectorStore, VectorStoreError
+from demo_scenarios import DEMO_SCENARIOS, get_demo
 
 
 GAS_TYPE_LABELS = {
@@ -1046,6 +1047,13 @@ def render_business() -> None:
     st.header("indAI MA")
     st.caption("B2B Energy Decision Assistant")
     st.write("Obtén respuestas trazables sobre contratos, aprovisionamiento y riesgo energético.")
+    st.subheader("Ejemplos")
+    demo_columns = st.columns(len(DEMO_SCENARIOS))
+    for column, demo in zip(demo_columns, DEMO_SCENARIOS):
+        if column.button(demo.title, key=f"demo_{demo.key}", width="stretch"):
+            st.session_state.business_request = demo.request
+            st.rerun()
+        column.caption(demo.description)
     request = st.text_area(
         "¿Qué quieres analizar?",
         key="business_request",

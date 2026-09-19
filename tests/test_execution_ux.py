@@ -8,6 +8,7 @@ from streamlit.testing.v1 import AppTest
 from diagnostics import PerformanceRecorder
 from execution_view import ExecutionView, find_execution, clipboard_payloads
 from business_output import commercial_text, supervisor_text
+from demo_scenarios import DEMO_SCENARIOS
 from commercial_agent import CommercialAgent
 from rag_models import RetrievalResult
 from risk_agent import RiskAgent
@@ -98,6 +99,18 @@ class ExecutionUXTests(unittest.TestCase):
                     self.assertEqual(app.radio(key='commercial_interpretation').value, 'deterministic')
                 if mode == 'RiskAgent':
                     self.assertFalse(app.checkbox(key='risk_use_llm').value)
+
+    def test_business_demos_populate_editable_request_without_execution(self):
+        with patch('llm_client.get_available_models', return_value=[]):
+            app = AppTest.from_file(APP, default_timeout=20).run()
+            self.assertEqual(len(DEMO_SCENARIOS), 4)
+            self.assertEqual(len({demo.key for demo in DEMO_SCENARIOS}), 4)
+            for demo in DEMO_SCENARIOS:
+                self.assertTrue(demo.title and demo.description and demo.request)
+                app.button(key=f'demo_{demo.key}').click().run()
+                self.assertFalse(app.exception)
+                self.assertEqual(app.text_area(key='business_request').value, demo.request)
+                self.assertIsNone(app.session_state['supervisor_operation_id'])
 
     def test_mode_switch_indexing_and_clipboard_keep_visible_operation(self):
         copied = []
