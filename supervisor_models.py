@@ -7,6 +7,7 @@ from agent_models import AgentRunResult
 from commercial_models import CommercialAgentResult
 from risk_models import RiskAgentResult
 from guardrails import GuardrailResult
+from business_recommendation import BusinessRecommendation
 
 AgentName = Literal["CommercialAgent", "ProcurementAgent", "RiskAgent"]
 AGENT_ORDER = ("CommercialAgent", "ProcurementAgent", "RiskAgent")
@@ -73,6 +74,7 @@ class SupervisorResult(BaseModel):
     total_tool_calls: int = 0
     router_llm_calls: int = 0
     synthesis_llm_calls: int = 0
+    recommendation: BusinessRecommendation | None = None
 
     @property
     def tool_executions(self):

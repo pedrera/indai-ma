@@ -18,6 +18,7 @@ from supervisor_models import SpecialistExecutionResult, SupervisorResult, Super
 from supervisor_routing import ProviderRouter, route_deterministically, resolve_routing
 from guardrails import validate_input, validate_output
 from supervisor_models import SupervisorRoutingDecision
+from business_recommendation import compose_business_recommendation
 
 
 def event_counts(events):
@@ -254,6 +255,7 @@ class Supervisor:
                 output.warnings.append("La síntesis LLM no está disponible o no es válida; se conserva la composición determinista.")
                 output.status = SupervisorStatus.PARTIAL
         output.synthesis_llm_calls = event_counts(self.recorder.snapshot().events[synthesis_start:])["llm_calls"]
+        output.recommendation = compose_business_recommendation(output)
         self.recorder.record_stage("supervisor_synthesis", synthesis_status=output.synthesis_status,
                                    llm_calls=output.synthesis_llm_calls)
         output.total_operation_wall_time = perf_counter() - started
