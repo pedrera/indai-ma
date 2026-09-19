@@ -58,6 +58,8 @@ from rag_service import RAGService, build_rag_messages, sanitize_rag_citations
 from runtime_config import LLMRuntimeConfig
 from vector_store import LocalVectorStore, VectorStoreError
 from demo_scenarios import DEMO_SCENARIOS, get_demo
+from application_models import AnalysisRequest
+from application_service import AnalysisService
 
 
 GAS_TYPE_LABELS = {
@@ -1025,13 +1027,22 @@ def start_supervisor_analysis(request: str, use_synthesis: bool = False) -> None
             raise ValueError("Indexa el contrato en Documentación RAG.")
         return RAGService(LMStudioEmbeddingProvider(), store, child_recorder)
 
-    runner = Supervisor(
-        recorder,
-        provider_factory if model_name is not None else None,
-        rag_factory,
-        use_llm_synthesis=use_synthesis,
+    service = AnalysisService(
+        provider_factory=(lambda child, config: provider_factory(child)) if model_name is not None else None,
+        rag_factory=lambda child, config: rag_factory(child),
+        recorder_factory=lambda operation: recorder,
     )
-    job = AgentJob(runner, request, runtime.timeout_seconds, runner)
+
+    class ServiceJobAdapter:
+        def run(self, text, timeout_seconds):
+            return service.analyze(AnalysisRequest(
+                text=text,
+                runtime=runtime,
+                use_llm_synthesis=use_synthesis,
+                operation_id=operation_id,
+            ))
+
+    job = AgentJob(ServiceJobAdapter(), request, runtime.timeout_seconds, None)
     st.session_state.supervisor_result = None
     st.session_state.supervisor_operation_id = operation_id
     st.session_state.generation_job = job

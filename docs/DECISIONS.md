@@ -65,3 +65,17 @@ structured specialist results; domain results remain the source of truth and
 technical diagnostics remain separate. The projection must preserve provenance,
 specialist boundaries and zero-LLM completeness without recalculating business
 values.
+
+## ADR-016 — Application Service as the transport-independent analysis boundary
+
+**Status:** implemented in v1.1 Increment A. The main analysis use case is
+exposed through `AnalysisService`, independent of Streamlit. UI and future
+transport adapters construct an `AnalysisRequest`, invoke the service and
+present or store its `AnalysisResult`.
+
+The service composes the existing Supervisor, specialists, RAG/tools,
+guardrails, deterministic Executive Result projection and observability. This
+keeps application orchestration reusable from tests and future transports while
+preserving the current specialist boundaries and behavior. Streamlit remains
+responsible for jobs, threading, cancellation, reruns, session state and
+rendering. FastAPI is intentionally not introduced in this increment.
