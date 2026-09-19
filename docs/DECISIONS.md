@@ -57,3 +57,11 @@ tests check coded behavior; evaluations check business outcomes and grounding.
 
 **Status:** implemented. An expected skipped interpretation stage is diagnostic
 information, not a failure of an otherwise complete result.
+
+## ADR-015 — Deterministic Executive Result projection
+
+**Status:** implemented. Business presentation is derived deterministically from
+structured specialist results; domain results remain the source of truth and
+technical diagnostics remain separate. The projection must preserve provenance,
+specialist boundaries and zero-LLM completeness without recalculating business
+values.

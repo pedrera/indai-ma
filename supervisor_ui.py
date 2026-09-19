@@ -2,26 +2,32 @@ import streamlit as st
 
 
 def render_supervisor_result(result):
-    from commercial_ui import render_commercial_result
-    from risk_ui import render_risk_result
-    from business_output import procurement_text
-    st.write(result.summary)
-    for item in result.specialist_results:
-        if item.result is None:
-            st.warning(item.error or "Sin resultado disponible.")
-        elif item.agent_name == "CommercialAgent":
-            render_commercial_result(item.result, embedded=True)
-        elif item.agent_name == "RiskAgent":
-            render_risk_result(item.result, embedded=True)
-        else:
-            st.subheader("Aprovisionamiento")
-            st.markdown(procurement_text(item.result))
-    if result.combined_findings:
-        st.subheader("Implicaciones conjuntas")
-        for finding in result.combined_findings:
-            st.write(finding)
-    for warning in result.warnings:
-        st.warning(warning)
+    from business_output import build_supervisor_executive_sections
+    projection = build_supervisor_executive_sections(result)
+    st.subheader("Resumen ejecutivo")
+    st.write(projection.summary)
+    if projection.metrics:
+        st.subheader("Métricas clave")
+        st.dataframe([{"Métrica": metric.label, "Valor": metric.value, "Origen": metric.origin}
+                      for metric in projection.metrics], hide_index=True)
+    if projection.explanations:
+        st.subheader("Explicación de negocio")
+        for title, explanation in projection.explanations:
+            st.markdown(f"**{title}**")
+            st.write(explanation)
+    if projection.evidence:
+        st.subheader("Evidencia")
+        for item in projection.evidence:
+            st.caption(f"{item.document} · {item.section} · pág. {item.page}")
+    if projection.provenance:
+        st.subheader("Provenance")
+        st.dataframe([{"Categoría": item.category, "Concepto": item.label,
+                        "Valor": item.value, "Origen": item.origin}
+                       for item in projection.provenance], hide_index=True)
+    if projection.warnings:
+        st.subheader("Avisos")
+        for warning in projection.warnings:
+            st.warning(warning)
     with st.expander("Detalles técnicos del Supervisor"):
         st.json(result.model_dump(mode="json"))
         st.download_button("Descargar resultado JSON", result.model_dump_json(indent=2),

@@ -1,5 +1,150 @@
-"""Business text shared by result views and clipboard; no calculations or LLM."""
+"""Deterministic business projections shared by result views and clipboard."""
+from dataclasses import dataclass, field
 from clipboard_text import _redact_text
+
+
+@dataclass(frozen=True)
+class ExecutiveMetric:
+    label: str
+    value: str
+    origin: str
+
+
+@dataclass(frozen=True)
+class ExecutiveEvidence:
+    document: str
+    section: str
+    page: str
+    excerpt: str = ""
+
+
+@dataclass(frozen=True)
+class ExecutiveProvenance:
+    category: str
+    label: str
+    value: str
+    origin: str
+
+
+@dataclass(frozen=True)
+class ExecutiveResultProjection:
+    summary: str
+    metrics: tuple[ExecutiveMetric, ...] = ()
+    explanations: tuple[tuple[str, str], ...] = ()
+    evidence: tuple[ExecutiveEvidence, ...] = ()
+    provenance: tuple[ExecutiveProvenance, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+
+def _fmt(value, unit=""):
+    if value is None:
+        return "No disponible"
+    if isinstance(value, (int, float)):
+        rendered = f"{value:,.0f}" if unit == "EUR" else f"{value:g}"
+    else:
+        rendered = str(value)
+    return f"{rendered}{(' ' + unit) if unit else ''}"
+
+
+def build_supervisor_executive_sections(result) -> ExecutiveResultProjection:
+    """Project structured specialist results into deterministic business sections."""
+    metrics, explanations, evidence, provenance, warnings = [], [], [], [], list(result.warnings)
+    operating_inputs: dict[tuple[str, str], ExecutiveProvenance] = {}
+    present = {item.agent_name: item for item in result.specialist_results}
+    commercial = present.get("CommercialAgent")
+    if commercial and commercial.result:
+        value = commercial.result
+        calculations = value.calculations
+        if calculations:
+            calc = calculations[0].result
+            if calc.get("contractual_excess_gwh") is not None:
+                metrics.append(ExecutiveMetric("Exceso contractual", _fmt(calc["contractual_excess_gwh"], "GWh"), "Calculado"))
+            if calc.get("contractual_excess_price_eur_mwh") is not None:
+                metrics.append(ExecutiveMetric("Precio del exceso", _fmt(calc["contractual_excess_price_eur_mwh"], "EUR/MWh"), "Calculado"))
+            for label, key, unit in (("Previsión mensual", "forecast_demand_gwh", "GWh"), ("Máximo flexible", "contractual_max_gwh", "GWh")):
+                if calc.get(key) is not None:
+                    category = "ENTRADA OPERATIVA" if key == "forecast_demand_gwh" else "VALOR CALCULADO"
+                    item = ExecutiveProvenance(category, label, _fmt(calc[key], unit), "Consulta del usuario" if category == "ENTRADA OPERATIVA" else "Herramienta determinista")
+                    if category == "ENTRADA OPERATIVA":
+                        operating_inputs[(label, item.value)] = item
+                    else:
+                        provenance.append(item)
+            for key, label, unit in (("forecast_demand_gwh", "Previsión mensual", "GWh"), ("spot_price_eur_mwh", "Precio spot", "EUR/MWh")):
+                if key in calculations[0].inputs:
+                    item = ExecutiveProvenance("ENTRADA OPERATIVA", label, _fmt(calculations[0].inputs[key], unit), "Consulta del usuario")
+                    operating_inputs[(label, item.value)] = item
+        for fact in value.contract_facts:
+            provenance.append(ExecutiveProvenance("HECHO DOCUMENTAL", FACT_LABELS.get(fact.name, fact.name), _fmt(fact.value, fact.unit or ""), fact.source.label))
+            source = fact.source
+            evidence.append(ExecutiveEvidence(source.document_name, source.section or "Sin sección", str(source.page_start), fact.evidence))
+        explanations.append(("Contrato", value.summary))
+        warnings.extend(value.warnings)
+    procurement = present.get("ProcurementAgent")
+    if procurement and procurement.result:
+        executions = procurement.result.tool_executions
+        position = next((item for item in executions if item.get("name") == "calculate_supply_position"), None)
+        exposure = next((item for item in executions if item.get("name") == "calculate_spot_exposure"), None)
+        if position:
+            value = position["result"]
+            metrics.append(ExecutiveMetric("Posición de aprovisionamiento", f"{value.get('interpretation')} {_fmt(abs(value.get('position_gwh', 0)), 'GWh')}", "Calculado"))
+            provenance.append(ExecutiveProvenance("VALOR CALCULADO", "Posición de aprovisionamiento", _fmt(value.get("position_gwh"), "GWh"), "calculate_supply_position"))
+            args = position.get("arguments", {})
+            if args.get("expected_demand_gwh") is not None:
+                item = ExecutiveProvenance("ENTRADA OPERATIVA", "Demanda esperada", _fmt(args["expected_demand_gwh"], "GWh"), "Consulta del usuario")
+                operating_inputs[(item.label, item.value)] = item
+            if args.get("contracted_supply_gwh") is not None:
+                item = ExecutiveProvenance("ENTRADA OPERATIVA", "Suministro aprovisionado", _fmt(args["contracted_supply_gwh"], "GWh"), "Consulta del usuario")
+                operating_inputs[(item.label, item.value)] = item
+        if exposure:
+            value = exposure["result"]
+            metrics.append(ExecutiveMetric("Exposición spot", _fmt(value.get("exposure_eur"), "EUR"), "Calculado"))
+            provenance.append(ExecutiveProvenance("VALOR CALCULADO", "Exposición spot", _fmt(value.get("exposure_eur"), "EUR"), "calculate_spot_exposure"))
+            args = exposure.get("arguments", {})
+            if args.get("spot_price_eur_mwh") is not None:
+                item = ExecutiveProvenance("ENTRADA OPERATIVA", "Precio spot", _fmt(args["spot_price_eur_mwh"], "EUR/MWh"), "Consulta del usuario")
+                operating_inputs[(item.label, item.value)] = item
+        explanations.append(("Aprovisionamiento", procurement.result.content))
+        warnings.extend(getattr(procurement.result, "warnings", []))
+    risk = present.get("RiskAgent")
+    if risk and risk.result:
+        value = risk.result
+        if value.base_scenario:
+            metrics.append(ExecutiveMetric("Riesgo base", f"{value.base_scenario.interpretation} {_fmt(value.base_scenario.short_position_gwh, 'GWh')}", "Calculado"))
+            explanations.append(("Riesgo", value.summary))
+        for scenario in value.stress_scenarios:
+            if scenario.spot_exposure_eur is not None:
+                metrics.append(ExecutiveMetric(f"Exposición · {scenario.name}", _fmt(scenario.spot_exposure_eur, "EUR"), "Calculado"))
+        for delta in value.deltas:
+            if delta.exposure_change_eur is not None:
+                metrics.append(ExecutiveMetric(f"Cambio de exposición · {delta.scenario_name}", _fmt(delta.exposure_change_eur, "EUR"), "Calculado"))
+        warnings.extend(value.warnings)
+    for item in result.specialist_results:
+        if item.result is None and item.error:
+            warnings.append(f"{item.agent_name}: {item.error}")
+    if commercial and procurement:
+        explanations.append(("Implicación integrada", "El exceso contractual y el SHORT de aprovisionamiento son magnitudes distintas y no deben sumarse ni sustituirse."))
+    conclusions = []
+    commercial_calc = next((item.result.calculations[0].result for item in result.specialist_results
+                            if item.agent_name == "CommercialAgent" and item.result and item.result.calculations), None)
+    procurement_result = next((item.result for item in result.specialist_results
+                               if item.agent_name == "ProcurementAgent" and item.result), None)
+    if commercial_calc and commercial_calc.get("contractual_excess_gwh") is not None:
+        conclusions.append(f"Exceso contractual de {_fmt(commercial_calc['contractual_excess_gwh'], 'GWh')}.")
+    if procurement_result:
+        position = next((item for item in procurement_result.tool_executions if item.get("name") == "calculate_supply_position"), None)
+        exposure = next((item for item in procurement_result.tool_executions if item.get("name") == "calculate_spot_exposure"), None)
+        if position:
+            conclusions.append(f"Posición de aprovisionamiento {position['result'].get('interpretation')} de {_fmt(abs(position['result'].get('position_gwh', 0)), 'GWh')}.")
+        if exposure and exposure["result"].get("exposure_eur") is not None:
+            conclusions.append(f"Exposición spot calculada de {_fmt(exposure['result']['exposure_eur'], 'EUR')}.")
+    if commercial_calc and procurement_result:
+        conclusions.append("El exceso contractual y el SHORT de aprovisionamiento son magnitudes distintas.")
+    risk_result = next((item.result for item in result.specialist_results if item.agent_name == "RiskAgent" and item.result), None)
+    if risk_result and risk_result.base_scenario:
+        conclusions.append(f"Riesgo base: {risk_result.base_scenario.interpretation} de {_fmt(risk_result.base_scenario.short_position_gwh, 'GWh')}.")
+    provenance.extend(operating_inputs.values())
+    summary = " ".join(conclusions) if conclusions else (result.summary or "Se han completado los análisis disponibles.")
+    return ExecutiveResultProjection(summary, tuple(metrics), tuple(explanations), tuple(dict.fromkeys(evidence)), tuple(provenance), tuple(dict.fromkeys(warnings)))
 
 FACT_LABELS = {
     'reference_volume_gwh':'Referencia mensual (GWh)', 'flexibility_percent':'Flexibilidad (%)',
@@ -62,13 +207,15 @@ def procurement_text(result):
 
 
 def supervisor_text(result):
-    formatters = {'CommercialAgent':commercial_text, 'ProcurementAgent':procurement_text, 'RiskAgent':risk_text}
-    labels = {'CommercialAgent':'Contrato', 'ProcurementAgent':'Aprovisionamiento', 'RiskAgent':'Escenarios de riesgo'}
-    lines = [result.summary]
-    for item in result.specialist_results:
-        lines += [labels[item.agent_name], formatters[item.agent_name](item.result) if item.result is not None
-                  else item.error or 'Sin resultado disponible.']
-    if result.combined_findings:
-        lines += ['Implicaciones conjuntas', *result.combined_findings]
-    lines += ['Aviso: '+w for w in result.warnings]
+    projection = build_supervisor_executive_sections(result)
+    lines = ["Resumen ejecutivo", projection.summary]
+    if projection.metrics:
+        lines += ["Métricas clave", *[f"{metric.label}: {metric.value}" for metric in projection.metrics]]
+    if projection.explanations:
+        lines += ["Explicación de negocio", *[f"{title}: {text}" for title, text in projection.explanations]]
+    if projection.evidence:
+        lines += ["Evidencia", *[f"{item.document} · {item.section} · pág. {item.page}" for item in projection.evidence]]
+    if projection.provenance:
+        lines += ["Provenance", *[f"{item.category}: {item.label} = {item.value} ({item.origin})" for item in projection.provenance]]
+    lines += ["Aviso: " + warning for warning in projection.warnings]
     return _redact_text('\n\n'.join(lines))

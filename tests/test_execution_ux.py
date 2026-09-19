@@ -8,6 +8,7 @@ from streamlit.testing.v1 import AppTest
 from diagnostics import PerformanceRecorder
 from execution_view import ExecutionView, find_execution, clipboard_payloads
 from business_output import commercial_text, supervisor_text
+from business_output import build_supervisor_executive_sections
 from demo_scenarios import DEMO_SCENARIOS
 from commercial_agent import CommercialAgent
 from rag_models import RetrievalResult
@@ -72,13 +73,32 @@ class ExecutionUXTests(unittest.TestCase):
         rag.retrieve.return_value = RetrievalResult(contract_matches(), 'fixture')
         result = Supervisor(rag_factory=lambda r: rag).run(REFERENCE)
         text = supervisor_text(result)
-        self.assertIn(commercial_text(result.specialist_results[0].result), text)
+        self.assertIn('Resumen ejecutivo', text)
+        self.assertIn('Métricas clave', text)
+        self.assertIn('Implicación integrada', text)
         self.assertIn('0.2', text)
         self.assertIn('0.5', text)
         self.assertIn('21,000', text)
         self.assertIn('41,160', text)
         self.assertNotIn('contractual_excess_gwh', text)
         self.assertNotIn('{', text)
+
+    def test_executive_projection_summary_and_provenance_are_business_meaningful(self):
+        rag = Mock()
+        rag.retrieve.return_value = RetrievalResult(contract_matches(), 'fixture')
+        result = Supervisor(rag_factory=lambda r: rag).run(REFERENCE)
+        projection = build_supervisor_executive_sections(result)
+        self.assertIn('Exceso contractual de 0.2 GWh', projection.summary)
+        self.assertIn('SHORT de 0.5 GWh', projection.summary)
+        self.assertIn('21,000 EUR', projection.summary)
+        self.assertIn('magnitudes distintas', projection.summary)
+        categories = {(item.category, item.label, item.value) for item in projection.provenance}
+        self.assertIn(('ENTRADA OPERATIVA', 'Previsión mensual', '4.8 GWh'), categories)
+        self.assertIn(('ENTRADA OPERATIVA', 'Suministro aprovisionado', '4.3 GWh'), categories)
+        self.assertIn(('ENTRADA OPERATIVA', 'Precio spot', '42 EUR/MWh'), categories)
+        self.assertIn(('VALOR CALCULADO', 'Exposición spot', '21,000 EUR'), categories)
+        self.assertNotIn(('VALOR CALCULADO', 'Previsión mensual', '4.8 GWh'), categories)
+        self.assertEqual(sum(1 for item in projection.provenance if item.category == 'ENTRADA OPERATIVA' and item.value == '42 EUR/MWh'), 1)
         self.assertEqual(result.total_llm_calls, 0)
 
     def test_business_entry_and_advanced_modes_load(self):
