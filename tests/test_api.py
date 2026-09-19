@@ -1,11 +1,14 @@
 import unittest
 from unittest.mock import Mock
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
 from api.app import create_app
 from application_service import AnalysisService, AnalysisServiceError
 from runtime_config import LLMRuntimeConfig
+from business_recommendation import BusinessRecommendation
+from business_output import ExecutiveResultProjection
 
 
 RUNTIME = LLMRuntimeConfig(384, 384, 30, False)
@@ -60,6 +63,35 @@ class ApiTests(unittest.TestCase):
     def test_openapi_contains_only_intended_application_endpoints(self):
         paths = set(self.client().get('/openapi.json').json()['paths'])
         self.assertEqual(paths, {'/health', '/ready', '/api/v1/analysis'})
+
+    def test_recommendation_crosses_http_from_executive_projection(self):
+        recommendation = BusinessRecommendation(
+            action='Cubrir el SHORT operativo.', is_complete=True,
+            rationale=('Exceso y SHORT son magnitudes distintas.',),
+            contractual_implication='Exceso contractual: 0.2 GWh.',
+            operational_implication='SHORT: 0.5 GWh; exposición: 21000 EUR.',
+            risk_implication='Riesgo base SHORT.',
+            supporting_metrics=(('Exceso contractual', '0.2 GWh'), ('SHORT', '0.5 GWh'),
+                                ('Exposición spot', '21000 EUR')),
+        )
+        service = Mock()
+        service.analyze.return_value = SimpleNamespace(
+            operation_id='op-hospital',
+            executive=ExecutiveResultProjection('Resumen', recommendation=recommendation),
+            supervisor_result=SimpleNamespace(
+                status=SimpleNamespace(value='completed'),
+                routing=SimpleNamespace(selected_agents=['CommercialAgent', 'ProcurementAgent', 'RiskAgent'],
+                                        skipped_agents=[], routing_method='deterministic', routing_reasons=[]),
+                specialist_results=[], total_llm_calls=0, total_rag_calls=1, total_tool_calls=6,
+            ),
+        )
+        response = self.client(service).post('/api/v1/analysis', json={'text': 'hospital'})
+        self.assertEqual(response.status_code, 200)
+        recommendation_json = response.json()['recommendation']
+        self.assertEqual(recommendation_json['contractual_implication'], 'Exceso contractual: 0.2 GWh.')
+        self.assertEqual(recommendation_json['operational_implication'], 'SHORT: 0.5 GWh; exposición: 21000 EUR.')
+        self.assertEqual(recommendation_json['supporting_metrics'][0][1], '0.2 GWh')
+        self.assertEqual(recommendation_json['supporting_metrics'][1][1], '0.5 GWh')
 
 
 if __name__ == '__main__':

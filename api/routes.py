@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, Request
 
 from api.models import (AnalysisRequestDTO, AnalysisResponseDTO, DiagnosticsDTO,
                         EvidenceDTO, ExplanationDTO, HealthDTO, MetricDTO,
-                        ProvenanceDTO, RoutingDTO, SpecialistStatusDTO)
+                        ProvenanceDTO, RoutingDTO, SpecialistStatusDTO,
+                        BusinessRecommendationDTO)
 from application_models import AnalysisRequest
 from application_service import AnalysisService
 
@@ -52,4 +53,14 @@ def analyze(payload: AnalysisRequestDTO, request: Request, service: AnalysisServ
         diagnostics=DiagnosticsDTO(llm_calls=result.supervisor_result.total_llm_calls,
                                   rag_calls=result.supervisor_result.total_rag_calls,
                                   tool_calls=result.supervisor_result.total_tool_calls),
+        recommendation=(BusinessRecommendationDTO(
+            action=projection.recommendation.action,
+            is_complete=projection.recommendation.is_complete,
+            rationale=list(projection.recommendation.rationale),
+            contractual_implication=projection.recommendation.contractual_implication,
+            operational_implication=projection.recommendation.operational_implication,
+            risk_implication=projection.recommendation.risk_implication,
+            supporting_metrics=list(projection.recommendation.supporting_metrics),
+            warnings=list(projection.recommendation.warnings),
+        ) if projection.recommendation is not None else None),
     )

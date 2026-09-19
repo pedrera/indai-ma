@@ -52,6 +52,17 @@ class DiagnosticsDTO(BaseModel):
     tool_calls: int
 
 
+class BusinessRecommendationDTO(BaseModel):
+    action: str
+    is_complete: bool
+    rationale: list[str] = []
+    contractual_implication: str | None = None
+    operational_implication: str | None = None
+    risk_implication: str | None = None
+    supporting_metrics: list[tuple[str, str]] = []
+    warnings: list[str] = []
+
+
 class AnalysisResponseDTO(BaseModel):
     operation_id: str
     status: str
@@ -64,6 +75,7 @@ class AnalysisResponseDTO(BaseModel):
     routing: RoutingDTO
     specialists: list[SpecialistStatusDTO]
     diagnostics: DiagnosticsDTO
+    recommendation: BusinessRecommendationDTO | None = None
 
 
 class HealthDTO(BaseModel):

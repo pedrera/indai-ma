@@ -49,6 +49,17 @@ class ApiDiagnostics(BaseModel):
     tool_calls: int
 
 
+class ApiBusinessRecommendation(BaseModel):
+    action: str
+    is_complete: bool
+    rationale: list[str] = []
+    contractual_implication: str | None = None
+    operational_implication: str | None = None
+    risk_implication: str | None = None
+    supporting_metrics: list[tuple[str, str]] = []
+    warnings: list[str] = []
+
+
 class ApiAnalysisResult(BaseModel):
     operation_id: str
     status: str
@@ -61,6 +72,7 @@ class ApiAnalysisResult(BaseModel):
     routing: ApiRouting
     specialists: list[ApiSpecialist] = []
     diagnostics: ApiDiagnostics
+    recommendation: ApiBusinessRecommendation | None = None
 
     @property
     def content(self) -> str:
@@ -72,4 +84,3 @@ class ApiAnalysisResult(BaseModel):
 
     def model_dump(self, mode: str = "python") -> dict:
         return super().model_dump(mode=mode)
-

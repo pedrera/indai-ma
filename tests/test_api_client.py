@@ -69,6 +69,28 @@ class ApiClientTests(unittest.TestCase):
         self.assertNotIn('SupervisorResult', text)
         self.assertNotIn('secret', text)
 
+    def test_recommendation_is_optional_and_preserves_structured_fields(self):
+        payload = dict(PAYLOAD)
+        payload['recommendation'] = {
+            'action': 'Cubrir el SHORT operativo.', 'is_complete': True,
+            'rationale': ['Exceso y SHORT son magnitudes distintas.'],
+            'contractual_implication': 'Exceso contractual: 0.2 GWh.',
+            'operational_implication': 'SHORT: 0.5 GWh; exposición: 21000 EUR.',
+            'risk_implication': 'Riesgo base SHORT.',
+            'supporting_metrics': [['Exceso contractual', '0.2 GWh'], ['SHORT', '0.5 GWh'],
+                                   ['Exposición spot', '21000 EUR']],
+            'warnings': [],
+        }
+        result = self.client(lambda request: httpx.Response(200, json=payload)).analyze('x')
+        self.assertTrue(result.recommendation.is_complete)
+        self.assertEqual(result.recommendation.supporting_metrics[0][1], '0.2 GWh')
+        self.assertEqual(result.recommendation.supporting_metrics[1][1], '0.5 GWh')
+        self.assertEqual(result.recommendation.operational_implication, payload['recommendation']['operational_implication'])
+
+    def test_old_payload_without_recommendation_remains_valid(self):
+        result = self.client(lambda request: httpx.Response(200, json=PAYLOAD)).analyze('x')
+        self.assertIsNone(result.recommendation)
+
 
 if __name__ == '__main__':
     unittest.main()
