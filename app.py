@@ -61,6 +61,7 @@ from demo_scenarios import DEMO_SCENARIOS, get_demo
 from api_client import AnalysisApiClient
 from api_client_models import ApiAnalysisResult
 from business_api_adapter import create_business_api_job
+from presentation_normalization import normalize_supervisor_result
 from application_models import AnalysisRequest
 from application_service import AnalysisService
 
@@ -1212,7 +1213,7 @@ def finish_generation(result: GenerationResult) -> None:
             elif generation_kind == "risk_agent" and domain is not None:
                 text = risk_text(domain)
             elif generation_kind == "supervisor" and domain is not None:
-                text = supervisor_text(getattr(domain, "supervisor_result", domain))
+                text = supervisor_text(normalize_supervisor_result(domain))
             elif generation_kind == "business_api" and domain is not None:
                 text = domain.summary
             elif generation_kind in {"gas_analysis", "gas_documentary"}:
