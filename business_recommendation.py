@@ -28,6 +28,19 @@ def _commercial_calculation(item):
     return result[0].result if result else {}
 
 
+def _commercial_surcharge(item):
+    """Read the contractual surcharge from existing structured inputs/facts."""
+    if not item or not item.result:
+        return None
+    calculations = getattr(item.result, "calculations", ())
+    if calculations:
+        surcharge = getattr(calculations[0], "inputs", {}).get("excess_surcharge_eur_mwh")
+        if surcharge is not None:
+            return surcharge
+    return next((fact.value for fact in getattr(item.result, "contract_facts", ())
+                 if fact.name == "excess_surcharge_eur_mwh"), None)
+
+
 def compose_business_recommendation(supervisor_result: "SupervisorResult") -> BusinessRecommendation:
     """Compose conclusions from specialist outputs without recalculating them."""
     specialists = {item.agent_name: item for item in supervisor_result.specialist_results}
@@ -45,10 +58,13 @@ def compose_business_recommendation(supervisor_result: "SupervisorResult") -> Bu
     calculation = _commercial_calculation(commercial)
     excess = calculation.get("contractual_excess_gwh")
     if excess is not None and float(excess) > 0:
+        surcharge = _commercial_surcharge(commercial)
         price = calculation.get("contractual_excess_price_eur_mwh")
         contractual = f"Existe un exceso contractual independiente de {excess:g} GWh."
+        if surcharge is not None:
+            contractual += f" Recargo contractual: +{surcharge:g} EUR/MWh."
         if price is not None:
-            contractual += f" Condición: Spot + {price:g} EUR/MWh."
+            contractual += f" Precio del exceso calculado: {price:g} EUR/MWh."
         metrics.append(("Exceso contractual", f"{excess:g} GWh"))
         rationale.append(contractual)
 

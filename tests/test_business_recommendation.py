@@ -22,8 +22,8 @@ class BusinessRecommendationTests(unittest.TestCase):
     def test_hospital_composes_structured_results_without_recalculation(self):
         commercial = SimpleNamespace(calculations=[SimpleNamespace(result={
             "contractual_excess_gwh": 0.2,
-            "contractual_excess_price_eur_mwh": 4,
-        })])
+            "contractual_excess_price_eur_mwh": 46,
+        }, inputs={"spot_price_eur_mwh": 42, "excess_surcharge_eur_mwh": 4})])
         risk = SimpleNamespace(base_scenario=SimpleNamespace(
             interpretation="SHORT", short_position_gwh=0.5), stress_scenarios=[])
         result = SimpleNamespace(specialist_results=[
@@ -35,6 +35,9 @@ class BusinessRecommendationTests(unittest.TestCase):
         self.assertTrue(recommendation.is_complete)
         self.assertIn("cubrir", recommendation.action.lower())
         self.assertIn("0.2", recommendation.contractual_implication)
+        self.assertIn("+4 EUR/MWh", recommendation.contractual_implication)
+        self.assertIn("46 EUR/MWh", recommendation.contractual_implication)
+        self.assertNotIn("Spot + 46", recommendation.contractual_implication)
         self.assertIn("0.5", recommendation.operational_implication)
         self.assertIn("21000", dict(recommendation.supporting_metrics)["Exposición spot"])
         self.assertTrue(any("diferentes" in item for item in recommendation.rationale))
