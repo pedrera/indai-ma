@@ -15,6 +15,7 @@ from rag_models import RetrievalResult
 from risk_agent import RiskAgent
 from supervisor import Supervisor
 from tests.test_commercial_agent import contract_matches, EvidenceModel
+from tests.test_commercial_comparison import both_contracts, COMPARISON
 from tests.test_supervisor import REFERENCE
 
 APP = str(Path(__file__).resolve().parents[1] / 'app.py')
@@ -100,6 +101,26 @@ class ExecutionUXTests(unittest.TestCase):
         self.assertNotIn(('VALOR CALCULADO', 'Previsión mensual', '4.8 GWh'), categories)
         self.assertEqual(sum(1 for item in projection.provenance if item.category == 'ENTRADA OPERATIVA' and item.value == '42 EUR/MWh'), 1)
         self.assertEqual(result.total_llm_calls, 0)
+
+    def test_comparison_projection_exposes_document_scoped_facts(self):
+        rag = Mock()
+        rag.retrieve.return_value = RetrievalResult(both_contracts(), 'fixture')
+        result = Supervisor(rag_factory=lambda r: rag).run(COMPARISON)
+        projection = build_supervisor_executive_sections(result)
+        self.assertNotEqual(projection.summary, 'Resultados de los especialistas seleccionados.')
+        text = supervisor_text(result)
+        for expected in ('Hospital Costa Sur', 'Industrias Mediterráneo', 'Spot + 4 EUR/MWh', 'Spot + 6 EUR/MWh'):
+            self.assertIn(expected, text)
+        hospital = next(c for c in result.specialist_results[0].result.comparison.contracts if c.customer == 'Hospital Costa Sur')
+        industrias = next(c for c in result.specialist_results[0].result.comparison.contracts if c.customer == 'Industrias Mediterráneo')
+        h = {fact.name: fact.value for fact in hospital.facts}
+        i = {fact.name: fact.value for fact in industrias.facts}
+        self.assertEqual(h['flexibility_percent'], 15)
+        self.assertEqual(i['flexibility_percent'], 20)
+        self.assertEqual(h['excess_surcharge_eur_mwh'], 4)
+        self.assertEqual(i['excess_surcharge_eur_mwh'], 6)
+        self.assertEqual(result.total_llm_calls, 0)
+        self.assertEqual(rag.retrieve.call_count, 1)
 
     def test_business_entry_and_advanced_modes_load(self):
         with patch('llm_client.get_available_models', return_value=[]):

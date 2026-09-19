@@ -54,6 +54,33 @@ def build_supervisor_executive_sections(result) -> ExecutiveResultProjection:
     commercial = present.get("CommercialAgent")
     if commercial and commercial.result:
         value = commercial.result
+        if value.comparison is not None:
+            comparison = value.comparison
+            comparison_names = []
+            for contract in comparison.contracts:
+                name = contract.customer or contract.document_name
+                comparison_names.append(name)
+                facts = {fact.name: fact for fact in contract.facts}
+                for key in ("reference_volume_gwh", "flexibility_percent", "monthly_min_gwh",
+                            "monthly_max_gwh", "take_or_pay_percent", "minimum_annual_gwh",
+                            "excess_surcharge_eur_mwh"):
+                    fact = facts.get(key)
+                    if fact is None:
+                        continue
+                    label = FACT_LABELS.get(key, key)
+                    value_text = _fmt(fact.value, fact.unit or "")
+                    if key == "flexibility_percent":
+                        value_text = f"±{_fmt(fact.value, fact.unit or '%')}"
+                    elif key == "excess_surcharge_eur_mwh":
+                        value_text = f"Spot + {_fmt(fact.value, 'EUR/MWh')}"
+                    metrics.append(ExecutiveMetric(f"{name} · {label}", value_text,
+                                                    "Calculado" if fact.origin == "deterministic_calculation" else "Documental"))
+                    category = "VALOR CALCULADO" if fact.origin == "deterministic_calculation" else "HECHO DOCUMENTAL"
+                    provenance.append(ExecutiveProvenance(category, f"{name} · {label}", value_text, fact.source.label))
+                    evidence.append(ExecutiveEvidence(fact.source.document_name, fact.source.section or "Sin sección",
+                                                       str(fact.source.page_start), fact.evidence))
+            if comparison_names:
+                explanations.append(("Comparación contractual", "Se compararon: " + "; ".join(comparison_names) + "."))
         calculations = value.calculations
         if calculations:
             calc = calculations[0].result
@@ -124,6 +151,10 @@ def build_supervisor_executive_sections(result) -> ExecutiveResultProjection:
     if commercial and procurement:
         explanations.append(("Implicación integrada", "El exceso contractual y el SHORT de aprovisionamiento son magnitudes distintas y no deben sumarse ni sustituirse."))
     conclusions = []
+    if commercial and commercial.result and commercial.result.comparison is not None:
+        names = [contract.customer or contract.document_name for contract in commercial.result.comparison.contracts]
+        if names:
+            conclusions.append("Comparación contractual completada para " + " y ".join(names) + ".")
     commercial_calc = next((item.result.calculations[0].result for item in result.specialist_results
                             if item.agent_name == "CommercialAgent" and item.result and item.result.calculations), None)
     procurement_result = next((item.result for item in result.specialist_results
