@@ -158,10 +158,10 @@ default_provider_index = (
 )
 
 with st.sidebar:
-    st.header("Configuración")
+    st.header("Advanced / Technical")
     selected_mode = st.radio(
         "Modo",
-        ("Chat", "Gas B2B Portfolio Analysis", "ProcurementAgent", "CommercialAgent", "RiskAgent", "Multi-Agent Supervisor", "Evaluation"),
+        ("Business", "Chat", "Gas B2B Portfolio Analysis", "ProcurementAgent", "CommercialAgent", "RiskAgent", "Multi-Agent Supervisor", "Evaluation"),
         key="selected_mode",
         disabled=generation_active,
     )
@@ -272,17 +272,19 @@ def remember_execution_start(recorder):
         config["interpretation"] = st.session_state.commercial_interpretation
     if selected_mode == "RiskAgent":
         config["interpretation"] = "llm_prioritized" if st.session_state.risk_use_llm else "deterministic"
-    if selected_mode == "Multi-Agent Supervisor":
+    if selected_mode in ("Multi-Agent Supervisor", "Business"):
         config["routing"] = "deterministic_first"
-        config["synthesis"] = "llm_prioritized" if st.session_state.supervisor_synthesis else "deterministic"
+        config["synthesis"] = "llm_prioritized" if st.session_state.get("supervisor_synthesis", False) else "deterministic"
     recorder.record_stage("execution_configuration", effective_configuration=config)
     view = ExecutionView.capture(selected_mode, None, config, recorder.snapshot())
     st.session_state.execution_views[view.operation_id] = view
-    st.session_state.execution_mode_ids[selected_mode] = view.operation_id
+    execution_mode = "Multi-Agent Supervisor" if selected_mode == "Business" else selected_mode
+    st.session_state.execution_mode_ids[execution_mode] = view.operation_id
 
 
 def visible_execution():
-    operation_id = st.session_state.execution_mode_ids.get(selected_mode)
+    execution_mode = "Multi-Agent Supervisor" if selected_mode == "Business" else selected_mode
+    operation_id = st.session_state.execution_mode_ids.get(execution_mode)
     if selected_mode == "Chat":
         last = next((m for m in reversed(st.session_state.messages) if m["role"] == "assistant"), None)
         if last:
@@ -984,31 +986,7 @@ def render_supervisor() -> None:
                                 disabled=generation_active)
     if st.button("Ejecutar Supervisor", key="supervisor_start", type="primary",
                  disabled=generation_active or not request.strip() or (use_synthesis and selected_model is None)):
-        operation_id = uuid4().hex[:8]
-        recorder = PerformanceRecorder(operation_id, selected_provider if selected_model else "deterministic",
-                                       selected_model or "none", "supervisor")
-        st.session_state.pipeline_recorder = recorder
-        runtime = st.session_state.llm_runtime_config
-        store = st.session_state.rag_store
-        provider_name, model_name = selected_provider, selected_model
-        def provider_factory(child_recorder):
-            return get_llm_provider(provider_name, model_name, recorder=child_recorder, runtime_config=runtime)
-        def rag_factory(child_recorder):
-            if store is None or not store.chunk_count:
-                raise ValueError("Indexa el contrato en Documentación RAG.")
-            return RAGService(LMStudioEmbeddingProvider(), store, child_recorder)
-        runner = Supervisor(recorder, provider_factory if model_name is not None else None,
-                            rag_factory, use_llm_synthesis=use_synthesis)
-        job = AgentJob(runner, request, runtime.timeout_seconds, runner)
-        st.session_state.supervisor_result = None
-        st.session_state.supervisor_operation_id = operation_id
-        st.session_state.generation_job = job
-        st.session_state.generation_kind = "supervisor"
-        st.session_state.generation_notice = None
-        st.session_state.operation_started_at = perf_counter()
-        st.session_state.operation_id = operation_id
-        remember_execution_start(recorder)
-        job.start()
+        start_supervisor_analysis(request, use_synthesis)
         st.rerun()
     if st.session_state.supervisor_result is not None:
         view = visible_execution()
@@ -1018,6 +996,84 @@ def render_supervisor() -> None:
         render_supervisor_result(result)
         render_response_copy_actions(supervisor_text(result), result.tool_executions, key="supervisor",
                                      operation_id=st.session_state.supervisor_operation_id)
+
+
+def start_supervisor_analysis(request: str, use_synthesis: bool = False) -> None:
+    operation_id = uuid4().hex[:8]
+    recorder = PerformanceRecorder(
+        operation_id,
+        selected_provider if selected_model else "deterministic",
+        selected_model or "none",
+        "supervisor",
+    )
+    st.session_state.pipeline_recorder = recorder
+    runtime = st.session_state.llm_runtime_config
+    store = st.session_state.rag_store
+    provider_name, model_name = selected_provider, selected_model
+
+    def provider_factory(child_recorder):
+        return get_llm_provider(
+            provider_name,
+            model_name,
+            recorder=child_recorder,
+            runtime_config=runtime,
+        )
+
+    def rag_factory(child_recorder):
+        if store is None or not store.chunk_count:
+            raise ValueError("Indexa el contrato en Documentación RAG.")
+        return RAGService(LMStudioEmbeddingProvider(), store, child_recorder)
+
+    runner = Supervisor(
+        recorder,
+        provider_factory if model_name is not None else None,
+        rag_factory,
+        use_llm_synthesis=use_synthesis,
+    )
+    job = AgentJob(runner, request, runtime.timeout_seconds, runner)
+    st.session_state.supervisor_result = None
+    st.session_state.supervisor_operation_id = operation_id
+    st.session_state.generation_job = job
+    st.session_state.generation_kind = "supervisor"
+    st.session_state.generation_notice = None
+    st.session_state.operation_started_at = perf_counter()
+    st.session_state.operation_id = operation_id
+    remember_execution_start(recorder)
+    job.start()
+
+
+def render_business() -> None:
+    st.header("indAI MA")
+    st.caption("B2B Energy Decision Assistant")
+    st.write("Obtén respuestas trazables sobre contratos, aprovisionamiento y riesgo energético.")
+    request = st.text_area(
+        "¿Qué quieres analizar?",
+        key="business_request",
+        height=180,
+        placeholder="Ejemplo: analiza el contrato del Hospital Costa Sur y su posición de aprovisionamiento.",
+    )
+    if st.button(
+        "Analizar",
+        key="business_start",
+        type="primary",
+        disabled=generation_active or not request.strip(),
+    ):
+        start_supervisor_analysis(request)
+        st.rerun()
+    st.subheader("Advanced / Technical")
+    st.caption("Los modos especialistas, la configuración técnica y el inspector están disponibles en la barra lateral.")
+    if st.session_state.supervisor_result is not None:
+        view = visible_execution()
+        if view:
+            render_execution_header(view)
+        result = SupervisorResult.model_validate(st.session_state.supervisor_result)
+        render_supervisor_result(result)
+        render_response_copy_actions(
+            supervisor_text(result),
+            result.tool_executions,
+            key="business-supervisor",
+            operation_id=st.session_state.supervisor_operation_id,
+        )
 
 
 def render_risk_agent() -> None:
@@ -1270,7 +1326,9 @@ render_rag_configuration()
 inject_pipeline_styles()
 main_column, inspector_column = st.columns([2.15, 1], gap="large", wrap=True)
 with main_column:
-    if selected_mode == "Evaluation":
+    if selected_mode == "Business":
+        render_business()
+    elif selected_mode == "Evaluation":
         from evals.ui import render_evaluation
         render_evaluation()
     elif selected_mode == "Chat":

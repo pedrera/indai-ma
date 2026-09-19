@@ -80,11 +80,13 @@ class ExecutionUXTests(unittest.TestCase):
         self.assertNotIn('{', text)
         self.assertEqual(result.total_llm_calls, 0)
 
-    def test_all_six_modes_load_and_procurement_options_remain(self):
+    def test_business_entry_and_advanced_modes_load(self):
         with patch('llm_client.get_available_models', return_value=[]):
             app = AppTest.from_file(APP, default_timeout=20).run()
             modes = app.radio(key='selected_mode').options
-            self.assertEqual(len(modes), 7)
+            self.assertEqual(len(modes), 8)
+            self.assertEqual(app.radio(key='selected_mode').value, 'Business')
+            self.assertTrue(any('¿Qué quieres analizar?' in item.label for item in app.text_area))
             for mode in modes:
                 app.radio(key='selected_mode').set_value(mode).run()
                 self.assertFalse(app.exception, mode)

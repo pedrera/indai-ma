@@ -26,6 +26,9 @@ Analiza:
 - el coste de cubrir cualquier déficit;
 - y qué ocurriría si la demanda aumentase un 10 %."""
 FACTS = "Tenemos 4,8 GWh de demanda, 4,3 GWh aprovisionados y precio spot 42 EUR/MWh. "
+CANONICAL_BUSINESS_QUERY = """Hospital Costa Sur prevé consumir 4,8 GWh el próximo mes.
+Tenemos 4,3 GWh aprovisionados y el precio spot es 42 EUR/MWh.
+Analiza la situación contractual, de aprovisionamiento y de riesgo."""
 
 
 class Embeddings:
@@ -120,6 +123,11 @@ class SupervisorTests(unittest.TestCase):
                 decision = route_deterministically(query)
                 self.assertEqual(decision.selected_agents, expected)
                 self.assertFalse(decision.ambiguity_detected)
+
+    def test_canonical_business_query_routes_all_relevant_specialists(self):
+        decision = route_deterministically(CANONICAL_BUSINESS_QUERY)
+        self.assertEqual(decision.selected_agents, list(AGENT_ORDER))
+        self.assertFalse(decision.ambiguity_detected)
 
     def test_ambiguous_router_only_once(self):
         router = Mock()
