@@ -58,8 +58,9 @@ from rag_service import RAGService, build_rag_messages, sanitize_rag_citations
 from runtime_config import LLMRuntimeConfig
 from vector_store import LocalVectorStore, VectorStoreError
 from demo_scenarios import DEMO_SCENARIOS, get_demo
-from api_client import AnalysisApiClient, AnalysisApiClientError
+from api_client import AnalysisApiClient
 from api_client_models import ApiAnalysisResult
+from business_api_adapter import create_business_api_job
 from application_models import AnalysisRequest
 from application_service import AnalysisService
 
@@ -1071,13 +1072,7 @@ def start_business_api_analysis(request: str) -> None:
     operation_id = uuid4().hex[:8]
     recorder = PerformanceRecorder(operation_id, "api", "remote", "business_api")
     st.session_state.pipeline_recorder = recorder
-    client = AnalysisApiClient()
-
-    class ApiJobAdapter:
-        def run(self, text, timeout_seconds):
-            return client.analyze(text)
-
-    job = AgentJob(ApiJobAdapter(), request, client.config.analysis_timeout, None)
+    job = create_business_api_job(request)
     st.session_state.business_api_result = None
     st.session_state.generation_job = job
     st.session_state.generation_kind = "business_api"
@@ -1217,7 +1212,7 @@ def finish_generation(result: GenerationResult) -> None:
             elif generation_kind == "risk_agent" and domain is not None:
                 text = risk_text(domain)
             elif generation_kind == "supervisor" and domain is not None:
-                text = supervisor_text(domain)
+                text = supervisor_text(getattr(domain, "supervisor_result", domain))
             elif generation_kind == "business_api" and domain is not None:
                 text = domain.summary
             elif generation_kind in {"gas_analysis", "gas_documentary"}:
