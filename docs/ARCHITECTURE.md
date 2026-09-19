@@ -63,3 +63,7 @@ The important RAG lesson is that quality begins before embeddings: structure
 detection and chunking must preserve semantic relationships. A prior rule treated
 prose ending in `:` as a heading and separated contractual price introductions from
 their Spot formulas; the current structural rule avoids that failure.
+
+## Application and HTTP boundaries
+
+`application_service.py` exposes the main analysis use case through `AnalysisService`, `AnalysisRequest` and `AnalysisResult`, independently of Streamlit. The Business adapter retains jobs, cancellation, reruns and session state, while the service composes Supervisor and the existing deterministic projection. The optional `api/` package is a FastAPI HTTP adapter over that same service; it does not call agents, tools or RAG directly. Increment B is synchronous and does not add operation persistence or polling.

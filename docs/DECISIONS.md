@@ -79,3 +79,9 @@ keeps application orchestration reusable from tests and future transports while
 preserving the current specialist boundaries and behavior. Streamlit remains
 responsible for jobs, threading, cancellation, reruns, session state and
 rendering. FastAPI is intentionally not introduced in this increment.
+
+## ADR-017 — FastAPI as an HTTP adapter over AnalysisService
+
+**Status:** implemented in v1.1 Increment B. FastAPI exposes only health, readiness and the synchronous analysis endpoint. HTTP DTOs are representations of `AnalysisResult`, `SupervisorResult` and `ExecutiveResultProjection`; they are not sources of business truth and do not recalculate values.
+
+The API owns transport validation and server-controlled runtime configuration, then constructs `AnalysisRequest` and invokes `AnalysisService`. It does not call Supervisor, specialists, RAG or tools directly. No operation persistence, polling, authentication or enterprise infrastructure is introduced in this increment.

@@ -1,0 +1,55 @@
+from fastapi import APIRouter, Depends, Request
+
+from api.models import (AnalysisRequestDTO, AnalysisResponseDTO, DiagnosticsDTO,
+                        EvidenceDTO, ExplanationDTO, HealthDTO, MetricDTO,
+                        ProvenanceDTO, RoutingDTO, SpecialistStatusDTO)
+from application_models import AnalysisRequest
+from application_service import AnalysisService
+
+router = APIRouter()
+
+
+def service_dependency(request: Request) -> AnalysisService:
+    return request.app.state.analysis_service
+
+
+@router.get("/health", response_model=HealthDTO)
+def health():
+    return HealthDTO(status="ok")
+
+
+@router.get("/ready", response_model=HealthDTO)
+def ready(request: Request):
+    if getattr(request.app.state, "analysis_service", None) is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=503, detail="La aplicación no está preparada.")
+    return HealthDTO(status="ready")
+
+
+@router.post("/api/v1/analysis", response_model=AnalysisResponseDTO)
+def analyze(payload: AnalysisRequestDTO, request: Request, service: AnalysisService = Depends(service_dependency)):
+    result = service.analyze(AnalysisRequest(
+        text=payload.text,
+        runtime=request.app.state.runtime_config,
+        use_llm_synthesis=request.app.state.use_llm_synthesis,
+    ))
+    projection = result.executive
+    routing = result.supervisor_result.routing
+    return AnalysisResponseDTO(
+        operation_id=result.operation_id,
+        status=result.supervisor_result.status.value,
+        summary=projection.summary,
+        metrics=[MetricDTO(**metric.__dict__) for metric in projection.metrics],
+        explanations=[ExplanationDTO(title=title, text=text) for title, text in projection.explanations],
+        evidence=[EvidenceDTO(**item.__dict__) for item in projection.evidence],
+        provenance=[ProvenanceDTO(**item.__dict__) for item in projection.provenance],
+        warnings=list(projection.warnings),
+        routing=RoutingDTO(selected_agents=routing.selected_agents, skipped_agents=routing.skipped_agents,
+                           method=routing.routing_method, reasons=routing.routing_reasons),
+        specialists=[SpecialistStatusDTO(agent_name=item.agent_name, status=item.status, llm_calls=item.llm_calls,
+                                         rag_calls=item.rag_calls, tool_calls=item.tool_calls, warnings=item.warnings)
+                     for item in result.supervisor_result.specialist_results],
+        diagnostics=DiagnosticsDTO(llm_calls=result.supervisor_result.total_llm_calls,
+                                  rag_calls=result.supervisor_result.total_rag_calls,
+                                  tool_calls=result.supervisor_result.total_tool_calls),
+    )

@@ -116,3 +116,18 @@ See [ARCHITECTURE.md](docs/ARCHITECTURE.md), [DECISIONS.md](docs/DECISIONS.md), 
 ## Roadmap
 
 The repository currently contains the v0.9 evaluation/guardrails baseline and the v1.0 Commercial MVP increments. Enterprise API, persistence, integrations, SSO/RBAC and cloud packaging remain future roadmap work.
+
+## HTTP API (v1.1 Increment B)
+
+The optional FastAPI adapter exposes the same application use case through
+`AnalysisService`. Start it with `uvicorn api.app:app --reload`.
+
+Endpoints are `GET /health`, `GET /ready` and `POST /api/v1/analysis`. The
+request body contains only business intent, for example:
+
+```json
+{"text":"La demanda prevista es de 120 GWh, tenemos 95 GWh aprovisionados y el precio spot es de 42 EUR/MWh. Analiza nuestra posición de aprovisionamiento."}
+```
+
+Runtime policy remains server-controlled. Analysis is synchronous;
+`operation_id` is a trace identifier, not a polling handle.
