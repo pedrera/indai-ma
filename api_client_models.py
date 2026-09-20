@@ -49,6 +49,13 @@ class ApiDiagnostics(BaseModel):
     tool_calls: int
 
 
+class ApiBusinessAction(BaseModel):
+    category: str
+    action: str
+    rationale: str | None = None
+    supporting_metrics: list[tuple[str, str]] = []
+
+
 class ApiBusinessRecommendation(BaseModel):
     action: str
     is_complete: bool
@@ -58,6 +65,7 @@ class ApiBusinessRecommendation(BaseModel):
     risk_implication: str | None = None
     supporting_metrics: list[tuple[str, str]] = []
     warnings: list[str] = []
+    actions: list[ApiBusinessAction] = []
 
 
 class ApiAnalysisResult(BaseModel):

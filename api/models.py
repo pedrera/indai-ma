@@ -52,6 +52,13 @@ class DiagnosticsDTO(BaseModel):
     tool_calls: int
 
 
+class BusinessActionDTO(BaseModel):
+    category: str
+    action: str
+    rationale: str | None = None
+    supporting_metrics: list[tuple[str, str]] = []
+
+
 class BusinessRecommendationDTO(BaseModel):
     action: str
     is_complete: bool
@@ -61,6 +68,7 @@ class BusinessRecommendationDTO(BaseModel):
     risk_implication: str | None = None
     supporting_metrics: list[tuple[str, str]] = []
     warnings: list[str] = []
+    actions: list[BusinessActionDTO] = []
 
 
 class AnalysisResponseDTO(BaseModel):

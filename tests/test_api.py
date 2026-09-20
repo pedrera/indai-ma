@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from api.app import create_app
 from application_service import AnalysisService, AnalysisServiceError
 from runtime_config import LLMRuntimeConfig
-from business_recommendation import BusinessRecommendation
+from business_recommendation import BusinessAction, BusinessRecommendation
 from business_output import ExecutiveResultProjection
 
 
@@ -73,6 +73,16 @@ class ApiTests(unittest.TestCase):
             risk_implication='Con un aumento del spot del 20%, la exposición pasa de 21000 a 25200 EUR (+4200 EUR).',
             supporting_metrics=(('Exceso contractual', '0.2 GWh'), ('SHORT', '0.5 GWh'),
                                 ('Exposición spot', '21000 EUR')),
+            actions=(
+                BusinessAction('operational', 'Revisar la cobertura del SHORT operativo.',
+                               supporting_metrics=(('SHORT operativo', '0.5 GWh'),)),
+                BusinessAction('contractual', 'Revisar la implicación contractual del exceso mensual.',
+                               supporting_metrics=(('Exceso contractual', '0.2 GWh'),)),
+                BusinessAction('contractual', 'Revisar la previsión TOP.',
+                               supporting_metrics=(('Déficit TOP', '2.8 GWh'),)),
+                BusinessAction('risk', 'Considerar la sensibilidad del precio spot.',
+                               supporting_metrics=(('Delta de exposición', '+4,200 EUR'),)),
+            ),
         )
         service = Mock()
         service.analyze.return_value = SimpleNamespace(
@@ -93,6 +103,9 @@ class ApiTests(unittest.TestCase):
         self.assertIn('25200', recommendation_json['risk_implication'])
         self.assertEqual(recommendation_json['supporting_metrics'][0][1], '0.2 GWh')
         self.assertEqual(recommendation_json['supporting_metrics'][1][1], '0.5 GWh')
+        self.assertEqual([item['category'] for item in recommendation_json['actions']],
+                         ['operational', 'contractual', 'contractual', 'risk'])
+        self.assertEqual(recommendation_json['actions'][3]['supporting_metrics'][0][1], '+4,200 EUR')
 
 
 if __name__ == '__main__':
