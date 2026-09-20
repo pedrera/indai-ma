@@ -1,7 +1,8 @@
 import unittest
+import math
 from types import SimpleNamespace
 
-from alternative_evaluation import compose_alternative_evaluations
+from alternative_evaluation import AlternativeEvaluationInputs, compose_alternative_evaluations
 from business_recommendation import compose_business_recommendation
 from decision_plan import DecisionAlternative, DecisionPlan, DecisionStep
 
@@ -75,6 +76,37 @@ class AlternativeEvaluationTests(unittest.TestCase):
         self.assertEqual([item.evaluation.status for item in steps[0].alternatives], [
             "EVALUATED", "NOT_EVALUATED", "EVALUATED"])
         self.assertTrue(all(item.evaluation is None for step in steps[1:] for item in step.alternatives))
+
+    def test_partial_uses_only_explicit_validated_coverage_input(self):
+        result = SimpleNamespace(specialist_results=[_specialist("ProcurementAgent", _procurement())])
+        plan = DecisionPlan((DecisionStep("operational-short", "operational", "Cubrir", alternatives=(
+            DecisionAlternative("operational-short-partial", "Partial", "", "operational-short"),)),), True)
+        evaluation = compose_alternative_evaluations(
+            result, plan, AlternativeEvaluationInputs(coverage_volume_gwh=0.3)
+        ).steps[0].alternatives[0].evaluation
+        self.assertEqual(evaluation.status, "EVALUATED")
+        self.assertEqual([(o.metric, o.value, o.origin) for o in evaluation.outcomes], [
+            ("covered_volume_gwh", 0.3, "scenario_input"),
+            ("remaining_short_gwh", 0.2, "derived"),
+        ])
+        self.assertEqual(evaluation.missing_inputs, ())
+        self.assertNotIn("coverage_cost_eur", [o.metric for o in evaluation.outcomes])
+
+    def test_partial_coverage_boundaries_and_invalid_values(self):
+        result = SimpleNamespace(specialist_results=[_specialist("ProcurementAgent", _procurement())])
+        plan = DecisionPlan((DecisionStep("operational-short", "operational", "Cubrir", alternatives=(
+            DecisionAlternative("operational-short-partial", "Partial", "", "operational-short"),)),), True)
+        for coverage, remaining in ((0, 0.5), (0.5, 0)):
+            evaluation = compose_alternative_evaluations(result, plan, AlternativeEvaluationInputs(coverage)).steps[0].alternatives[0].evaluation
+            self.assertEqual([o.value for o in evaluation.outcomes], [coverage, remaining])
+        for invalid in (-0.1, 0.7, float("nan"), float("inf")):
+            with self.subTest(invalid=invalid):
+                if invalid < 0 or not math.isfinite(invalid):
+                    with self.assertRaises(ValueError):
+                        AlternativeEvaluationInputs(invalid)
+                else:
+                    with self.assertRaises(ValueError):
+                        compose_alternative_evaluations(result, plan, AlternativeEvaluationInputs(invalid))
 
 
 if __name__ == "__main__":
