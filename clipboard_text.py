@@ -9,6 +9,12 @@ from execution_metrics import build_operation_metrics
 _PLAN_CATEGORY_LABELS = {"operational": "OPERATIVA", "contractual": "CONTRACTUAL", "risk": "RIESGO"}
 _PLAN_HORIZON_LABELS = {"current_period": "PERIODO ACTUAL", "before_period_close": "ANTES DEL CIERRE", "monitoring": "SEGUIMIENTO"}
 _PLAN_STATE_LABELS = {"review_required": "Requiere revisión", "monitor": "Monitorizar", "no_action": "Sin acción", "blocked": "Bloqueado"}
+_DECISION_DEPENDENCY_LABELS = {"operational-short": "Cobertura del SHORT operativo"}
+
+
+def decision_dependency_label(value: str) -> str:
+    """Map a technical decision dependency ID to presentation text only."""
+    return _DECISION_DEPENDENCY_LABELS.get(value, value)
 
 
 SENSITIVE_KEY_PARTS = (
@@ -156,7 +162,8 @@ def build_business_copy_payload(result: Any, *, operation_id: str | None = None,
                 plan_lines.extend([f"{index}. [{prefix}] {step.action}",
                                    f"   Estado: {_PLAN_STATE_LABELS.get(step.decision_state, step.decision_state)}"])
                 if step.depends_on:
-                    plan_lines.append("   Relacionado con: " + ", ".join(step.depends_on))
+                    plan_lines.append("   Relacionado con: " + ", ".join(
+                        decision_dependency_label(value) for value in step.depends_on))
                 if step.missing_information:
                     plan_lines.append("   Información necesaria: " + ", ".join(step.missing_information))
             plan_lines.extend(f"Aviso del plan: {warning}" for warning in plan.warnings)

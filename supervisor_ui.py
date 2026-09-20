@@ -1,4 +1,5 @@
 import streamlit as st
+from clipboard_text import decision_dependency_label
 
 
 _PLAN_CATEGORY_LABELS = {"operational": "Operativa", "contractual": "Contractual", "risk": "Riesgo"}
@@ -21,7 +22,8 @@ def _render_decision_plan(plan):
         state = _PLAN_STATE_LABELS.get(step.decision_state, step.decision_state)
         st.write(f"Estado: {state}")
         if step.depends_on:
-            st.caption("Relacionado con: " + ", ".join(step.depends_on))
+            st.caption("Relacionado con: " + ", ".join(
+                decision_dependency_label(value) for value in step.depends_on))
         if step.missing_information:
             st.write("Información necesaria:")
             for item in step.missing_information:

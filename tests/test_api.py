@@ -163,7 +163,7 @@ class ApiTests(unittest.TestCase):
         client_result = ApiAnalysisResult.model_validate(response.json())
         copied = build_business_copy_payload(client_result)
         self.assertLess(copied.index('PLAN DE DECISIÓN'), copied.index('ACCIONES RECOMENDADAS'))
-        self.assertIn('Relacionado con: operational-short', copied)
+        self.assertIn('Relacionado con: Cobertura del SHORT operativo', copied)
 
 
 if __name__ == '__main__':

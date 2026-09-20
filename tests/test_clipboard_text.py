@@ -82,6 +82,11 @@ class ClipboardResponseTests(unittest.TestCase):
         self.assertIn("[PERIODO ACTUAL · OPERATIVA]", text)
         self.assertLess(text.index("PLAN DE DECISIÓN"), text.index("ACCIONES RECOMENDADAS"))
         self.assertEqual(text.count("Rationale visible una vez."), 1)
+
+    def test_decision_dependency_mapping_preserves_unknown_ids(self):
+        from clipboard_text import decision_dependency_label
+        self.assertEqual(decision_dependency_label("operational-short"), "Cobertura del SHORT operativo")
+        self.assertEqual(decision_dependency_label("synthetic-source"), "synthetic-source")
     def test_plain_response_preserves_markdown_and_line_breaks(self):
         content = "## Resultado\n\nLínea uno\nLínea dos"
         self.assertEqual(build_response_clipboard_text(content), content)
