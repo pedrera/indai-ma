@@ -160,10 +160,13 @@ class CommercialAgent:
         top_minimum = next((f.value for f in result.contract_facts if f.name == "take_or_pay_minimum_gwh"), None)
         if top_evaluation:
             if top_inputs.cumulative_consumption_gwh is None:
+                result.missing_inputs = tuple(dict.fromkeys((*result.missing_inputs, "cumulative_consumption_gwh")))
                 result.warnings.append("Falta consumo acumulado para proyectar take-or-pay.")
             if top_inputs.remaining_forecast_consumption_gwh is None:
+                result.missing_inputs = tuple(dict.fromkeys((*result.missing_inputs, "remaining_forecast_consumption_gwh")))
                 result.warnings.append("Falta previsión de consumo restante para proyectar take-or-pay.")
             if top_minimum is None:
+                result.missing_inputs = tuple(dict.fromkeys((*result.missing_inputs, "take_or_pay_minimum_gwh")))
                 result.warnings.append("Falta mínimo contractual take-or-pay.")
             if (top_minimum is not None and top_inputs.cumulative_consumption_gwh is not None
                     and top_inputs.remaining_forecast_consumption_gwh is not None):
@@ -206,6 +209,8 @@ class CommercialAgent:
             else:
                 result.warnings.append("Falta volumen mensual de referencia o flexibilidad inequívoca; no se calcula el exceso.")
         elif not top_evaluation and re.search(r"consum|previ|prevé|exceso|margen", request, re.I):
+            if not parse_scenario_input(request).base_demand_candidates:
+                result.missing_inputs = tuple(dict.fromkeys((*result.missing_inputs, "forecast_demand_gwh")))
             result.warnings.append("No hay una previsión mensual inequívoca para calcular el exceso.")
         if re.search(r"margen|rentabilidad|beneficio", request, re.I):
             self._margin(parsed, forecast, result)

@@ -294,6 +294,12 @@ class ProcurementAgent:
     def _initial_state(self, request: str) -> ProcurementAgentState:
         context = extract_procurement_context(request)
         facts = context.facts()
+        missing = list(context.ambiguities)
+        for field, value in (("expected_demand_gwh", context.demand_gwh),
+                             ("contracted_supply_gwh", context.supply_gwh),
+                             ("spot_price_eur_mwh", context.spot_price_eur_mwh)):
+            if value is None and field not in missing:
+                missing.append(field)
         return ProcurementAgentState(
             goal=(
                 "Analizar la posición de aprovisionamiento de gas y determinar "
@@ -301,7 +307,7 @@ class ProcurementAgent:
             ),
             original_request=request.strip(),
             known_facts=facts,
-            unresolved_inputs=list(context.ambiguities),
+            unresolved_inputs=missing,
         )
 
     @staticmethod
@@ -366,6 +372,7 @@ class ProcurementAgent:
             tuple(state.observations),
             state.decision_count,
             reason,
+            tuple(state.unresolved_inputs),
         )
 
 

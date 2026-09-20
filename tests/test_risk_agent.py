@@ -79,6 +79,7 @@ class RiskAgentTests(unittest.TestCase):
         self.assertEqual(result.status, RiskStatus.PARTIAL)
         self.assertIsNone(result.stress_scenarios[0].spot_price_eur_mwh)
         self.assertIsNone(result.stress_scenarios[0].spot_exposure_eur)
+        self.assertEqual(result.missing_inputs, ("spot_price_eur_mwh",))
         self.assertIsNone(result.deltas[0].exposure_change_eur)
 
     def test_existing_tools_execute_in_scenario_order(self):

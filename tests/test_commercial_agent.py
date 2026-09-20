@@ -115,6 +115,7 @@ class CommercialAgentTests(unittest.TestCase):
     def test_take_or_pay_missing_remaining_is_incomplete(self):
         result = self.run_agent("Tenemos un consumo acumulado de 30 GWh. ¿Tenemos riesgo de take-or-pay?")
         self.assertIsNone(result.take_or_pay_projection)
+        self.assertIn("remaining_forecast_consumption_gwh", result.missing_inputs)
         self.assertTrue(any("previsión de consumo restante" in warning for warning in result.warnings))
 
     def test_contract_values_are_not_hard_coded(self):

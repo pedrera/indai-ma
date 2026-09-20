@@ -29,6 +29,14 @@ def finish(answer="Análisis completado."):
 
 
 class ProcurementAgentTests(unittest.TestCase):
+    def test_missing_spot_is_structured_while_short_remains_calculable(self) -> None:
+        result = ProcurementAgent(ScriptedDecisionModel([
+            call("calculate_supply_position", {"expected_demand_gwh": 4.8, "contracted_supply_gwh": 4.3}),
+            finish(),
+        ])).run("Demanda 4.8 GWh. Tenemos 4.3 GWh aprovisionados. Posición.")
+        self.assertEqual(result.missing_inputs, ("spot_price_eur_mwh",))
+        self.assertEqual(result.tool_executions[0]["result"]["interpretation"], "SHORT")
+
     def test_short_position_then_spot_exposure(self) -> None:
         model = ScriptedDecisionModel(
             [

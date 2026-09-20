@@ -16,6 +16,7 @@ class DecisionStep:
     missing_information: tuple[str, ...] = ()
     source_action_id: str | None = None
     source_agent: str | None = None
+    readiness: Literal["READY", "PARTIALLY_READY", "BLOCKED"] | None = None
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,7 @@ class DecisionPlan:
     steps: tuple[DecisionStep, ...]
     is_complete: bool
     warnings: tuple[str, ...] = ()
+    readiness: Literal["READY", "PARTIALLY_READY", "BLOCKED"] | None = None
 
 
 def compose_decision_plan(recommendation) -> DecisionPlan | None:

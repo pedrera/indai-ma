@@ -55,3 +55,4 @@ class AgentRunResult:
     observations: tuple[AgentObservation, ...]
     decision_count: int
     termination_reason: str
+    missing_inputs: tuple[str, ...] = ()

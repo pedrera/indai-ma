@@ -64,6 +64,7 @@ class RiskAgent:
                 parsed = parse_scenario_input(request)
                 if len(parsed.base_demand_candidates) != 1 or len(parsed.contracted_supply_candidates) != 1 or len(parsed.spot_price_candidates) > 1:
                     result.status = RiskStatus.NEEDS_INPUT
+                    result.missing_inputs = tuple(parsed.missing_fields)
                     result.summary = "Indica una demanda y un suministro inequívocos en GWh, y un único precio spot si está disponible."
                     if event:
                         self.recorder.fail_stage(event, missing_or_ambiguous_inputs=True)
@@ -93,6 +94,7 @@ class RiskAgent:
                 self.recorder.fail_stage(event, validation_error="invalid_risk_inputs")
             return self._finish(result)
         if inputs.spot_price_eur_mwh is None:
+            result.missing_inputs = tuple(dict.fromkeys((*result.missing_inputs, "spot_price_eur_mwh")))
             result.warnings.append("Falta precio spot: se calculan posiciones y volúmenes, pero no importes de exposición ni deltas monetarios.")
         calculation_started = perf_counter()
         try:

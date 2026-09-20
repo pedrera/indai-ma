@@ -76,6 +76,7 @@ class CommercialAgentResult(BaseModel):
     summary: str
     tool_executions: list[dict] = Field(default_factory=list)
     take_or_pay_projection: TakeOrPayProjection | None = None
+    missing_inputs: tuple[str, ...] = ()
 
     @property
     def content(self) -> str:

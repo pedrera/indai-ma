@@ -72,6 +72,7 @@ class RiskAgentResult(RiskModel):
     tool_executions: list[dict] = Field(default_factory=list)
     interpretation_mode: Literal["deterministic", "llm_prioritized", "deterministic_fallback"] = "deterministic"
     summary: str
+    missing_inputs: tuple[str, ...] = ()
 
     @property
     def content(self):
