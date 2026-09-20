@@ -197,6 +197,16 @@ class ExecutionUXTests(unittest.TestCase):
                         {'category': 'contractual', 'action': 'Revisar la implicación contractual del exceso.',
                          'rationale': None, 'supporting_metrics': [['Exceso contractual', '0.2 GWh']]},
                     ],
+                    'decision_plan': {
+                        'is_complete': True, 'warnings': [], 'steps': [{
+                            'id': 'operational-short', 'category': 'operational',
+                            'action': 'Cubrir el SHORT operativo.', 'rationale': 'No duplicar',
+                            'supporting_metrics': [['SHORT', '0.5 GWh']],
+                            'horizon': 'current_period', 'decision_state': 'review_required',
+                            'depends_on': [], 'missing_information': [],
+                            'source_action_id': 'operational-short', 'source_agent': 'ProcurementAgent',
+                        }],
+                    },
                 },
             }
             recorder = PerformanceRecorder('api-recommendation', 'api', 'remote', 'business_api')
@@ -211,6 +221,8 @@ class ExecutionUXTests(unittest.TestCase):
             self.assertTrue(any('25200' in item.value for item in app.markdown))
             self.assertTrue(any('ACCIONES RECOMENDADAS' in item.value for item in app.markdown))
             self.assertTrue(any('0.5 GWh' in item.value for item in app.markdown))
+            self.assertTrue(any('PLAN DE DECISIÓN' in item.value for item in app.markdown))
+            self.assertTrue(any('Periodo actual · Operativa' in item.value for item in app.markdown))
 
     def test_mode_switch_indexing_and_clipboard_keep_visible_operation(self):
         copied = []

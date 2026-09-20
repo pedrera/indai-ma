@@ -6,7 +6,9 @@ from clipboard_text import (
     build_diagnostics_clipboard_text,
     build_response_clipboard_text,
     build_tool_executions_clipboard_text,
+    build_business_copy_payload,
 )
+from api_client_models import ApiAnalysisResult
 from diagnostics import (
     PerformanceEvent,
     PerformanceSnapshot,
@@ -58,6 +60,28 @@ class Analysis:
 
 
 class ClipboardResponseTests(unittest.TestCase):
+    def test_business_copy_includes_structured_decision_plan_without_duplicates(self):
+        result = ApiAnalysisResult.model_validate({
+            "operation_id": "op-plan", "status": "completed", "summary": "Resumen",
+            "routing": {"selected_agents": ["ProcurementAgent"], "skipped_agents": [],
+                        "method": "deterministic", "reasons": []},
+            "diagnostics": {"llm_calls": 0, "rag_calls": 0, "tool_calls": 2},
+            "recommendation": {
+                "action": "Cubrir SHORT.", "is_complete": True,
+                "actions": [{"id": "operational-short", "category": "operational", "action": "Cubrir SHORT.",
+                              "rationale": "Rationale visible una vez.", "supporting_metrics": [["SHORT", "0.5 GWh"]]}],
+                "decision_plan": {"steps": [{"id": "operational-short", "category": "operational",
+                    "action": "Cubrir SHORT.", "rationale": "No repetir", "supporting_metrics": [["SHORT", "0.5 GWh"]],
+                    "horizon": "current_period", "decision_state": "review_required", "depends_on": [],
+                    "missing_information": [], "source_action_id": "operational-short", "source_agent": "ProcurementAgent"}],
+                    "is_complete": True, "warnings": []},
+            },
+        })
+        text = build_business_copy_payload(result)
+        self.assertIn("PLAN DE DECISIÓN", text)
+        self.assertIn("[PERIODO ACTUAL · OPERATIVA]", text)
+        self.assertLess(text.index("PLAN DE DECISIÓN"), text.index("ACCIONES RECOMENDADAS"))
+        self.assertEqual(text.count("Rationale visible una vez."), 1)
     def test_plain_response_preserves_markdown_and_line_breaks(self):
         content = "## Resultado\n\nLínea uno\nLínea dos"
         self.assertEqual(build_response_clipboard_text(content), content)

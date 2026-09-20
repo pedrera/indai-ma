@@ -1,6 +1,35 @@
 import streamlit as st
 
 
+_PLAN_CATEGORY_LABELS = {"operational": "Operativa", "contractual": "Contractual", "risk": "Riesgo"}
+_PLAN_HORIZON_LABELS = {"current_period": "Periodo actual", "before_period_close": "Antes del cierre", "monitoring": "Seguimiento"}
+_PLAN_STATE_LABELS = {"review_required": "Requiere revisión", "monitor": "Monitorizar", "no_action": "Sin acción", "blocked": "Bloqueado"}
+
+
+def _render_decision_plan(plan):
+    if plan is None or not plan.steps:
+        return
+    st.markdown("**PLAN DE DECISIÓN**")
+    if not plan.is_complete:
+        st.info("Plan incompleto: falta información para algunos pasos.")
+    for index, step in enumerate(plan.steps, 1):
+        category = _PLAN_CATEGORY_LABELS.get(step.category, step.category)
+        horizon = _PLAN_HORIZON_LABELS.get(step.horizon, step.horizon or "")
+        prefix = " · ".join(item for item in (horizon, category) if item)
+        st.markdown(f"**{index}. {prefix}**")
+        st.write(step.action)
+        state = _PLAN_STATE_LABELS.get(step.decision_state, step.decision_state)
+        st.write(f"Estado: {state}")
+        if step.depends_on:
+            st.caption("Relacionado con: " + ", ".join(step.depends_on))
+        if step.missing_information:
+            st.write("Información necesaria:")
+            for item in step.missing_information:
+                st.write(f"- {item}")
+    for warning in plan.warnings:
+        st.caption(f"Aviso del plan: {warning}")
+
+
 def render_business_api_result(result):
     """Render the reduced safe inspector and public Business API contract."""
     st.subheader("Resumen ejecutivo")
@@ -24,6 +53,7 @@ def render_business_api_result(result):
                 st.write(f"- {item}")
         for warning in recommendation.warnings:
             st.warning(warning)
+        _render_decision_plan(getattr(recommendation, "decision_plan", None))
         actions = getattr(recommendation, "actions", ())
         if actions:
             st.markdown("**ACCIONES RECOMENDADAS**")

@@ -6,6 +6,11 @@ from diagnostics import PerformanceEvent, PerformanceSnapshot, PerformanceStatus
 from execution_metrics import build_operation_metrics
 
 
+_PLAN_CATEGORY_LABELS = {"operational": "OPERATIVA", "contractual": "CONTRACTUAL", "risk": "RIESGO"}
+_PLAN_HORIZON_LABELS = {"current_period": "PERIODO ACTUAL", "before_period_close": "ANTES DEL CIERRE", "monitoring": "SEGUIMIENTO"}
+_PLAN_STATE_LABELS = {"review_required": "Requiere revisión", "monitor": "Monitorizar", "no_action": "Sin acción", "blocked": "Bloqueado"}
+
+
 SENSITIVE_KEY_PARTS = (
     "api_key",
     "apikey",
@@ -139,6 +144,23 @@ def build_business_copy_payload(result: Any, *, operation_id: str | None = None,
         recommendation_lines.extend(f"- {item}" for item in recommendation.rationale)
         recommendation_lines.extend(f"Warning: {item}" for item in recommendation.warnings)
         _copy_section(lines, "RECOMENDACIÓN", recommendation_lines)
+        plan = getattr(recommendation, "decision_plan", None)
+        if plan is not None and plan.steps:
+            plan_lines = []
+            if not plan.is_complete:
+                plan_lines.append("Plan incompleto: falta información para algunos pasos.")
+            for index, step in enumerate(plan.steps, 1):
+                category = _PLAN_CATEGORY_LABELS.get(step.category, step.category.upper())
+                horizon = _PLAN_HORIZON_LABELS.get(step.horizon, step.horizon or "")
+                prefix = " · ".join(item for item in (horizon, category) if item)
+                plan_lines.extend([f"{index}. [{prefix}] {step.action}",
+                                   f"   Estado: {_PLAN_STATE_LABELS.get(step.decision_state, step.decision_state)}"])
+                if step.depends_on:
+                    plan_lines.append("   Relacionado con: " + ", ".join(step.depends_on))
+                if step.missing_information:
+                    plan_lines.append("   Información necesaria: " + ", ".join(step.missing_information))
+            plan_lines.extend(f"Aviso del plan: {warning}" for warning in plan.warnings)
+            _copy_section(lines, "PLAN DE DECISIÓN", plan_lines)
         actions = getattr(recommendation, "actions", ())
         if actions:
             category_labels = {
