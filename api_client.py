@@ -53,7 +53,13 @@ class AnalysisApiClient:
         try:
             payload = {"text": text}
             if alternative_evaluation is not None:
-                payload["alternative_evaluation"] = alternative_evaluation
+                if isinstance(alternative_evaluation, dict):
+                    payload["alternative_evaluation"] = dict(alternative_evaluation)
+                else:
+                    payload["alternative_evaluation"] = {
+                        "coverage_volume_gwh": getattr(alternative_evaluation, "coverage_volume_gwh", None),
+                        "coverage_price_eur_mwh": getattr(alternative_evaluation, "coverage_price_eur_mwh", None),
+                    }
             response = self._client.post("/api/v1/analysis", json=payload)
         except httpx.TimeoutException as error:
             raise AnalysisApiTimeoutError("El análisis ha superado el tiempo permitido.") from error

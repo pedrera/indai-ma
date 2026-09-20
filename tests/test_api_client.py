@@ -8,6 +8,7 @@ from api_client import (AnalysisApiClient, AnalysisApiClientError,
                         AnalysisApiTimeoutError)
 from execution_view import execution_header_parts
 from clipboard_text import build_business_copy_payload
+from alternative_evaluation import AlternativeEvaluationInputs
 
 
 PAYLOAD = {
@@ -43,6 +44,25 @@ class ApiClientTests(unittest.TestCase):
         })
         self.assertEqual(seen['body'], {'text': 'pregunta', 'alternative_evaluation': {
             'coverage_volume_gwh': 0.3, 'coverage_price_eur_mwh': 40}})
+
+    def test_serializes_domain_scenario_inputs_at_http_boundary(self):
+        seen = []
+        def handler(request):
+            seen.append(json.loads(request.read()))
+            return httpx.Response(200, json=PAYLOAD)
+        client = self.client(handler)
+        for inputs, expected in [
+            (AlternativeEvaluationInputs(0.3, None), {'coverage_volume_gwh': 0.3, 'coverage_price_eur_mwh': None}),
+            (AlternativeEvaluationInputs(None, 40), {'coverage_volume_gwh': None, 'coverage_price_eur_mwh': 40}),
+            (AlternativeEvaluationInputs(0.3, 40), {'coverage_volume_gwh': 0.3, 'coverage_price_eur_mwh': 40}),
+            (AlternativeEvaluationInputs(0, 0), {'coverage_volume_gwh': 0, 'coverage_price_eur_mwh': 0}),
+        ]:
+            client.analyze('pregunta', inputs)
+            self.assertEqual(seen[-1], {'text': 'pregunta', 'alternative_evaluation': expected})
+            json.dumps(seen[-1])
+        client.analyze('pregunta')
+        self.assertEqual(seen[-1], {'text': 'pregunta'})
+        self.assertNotIn('AlternativeEvaluationInputs', repr(seen))
 
     def test_connection_timeout_http_and_schema_errors_are_safe(self):
         def timeout(request):
