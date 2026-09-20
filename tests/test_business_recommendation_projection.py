@@ -3,6 +3,8 @@ import unittest
 from business_output import build_supervisor_executive_sections
 from business_recommendation import BusinessRecommendation
 from supervisor_models import SupervisorResult, SupervisorRoutingDecision, SupervisorStatus
+from supervisor_models import SpecialistExecutionResult
+from risk_models import RiskAgentResult, RiskScenarioResult, RiskStatus
 
 
 class BusinessRecommendationProjectionTests(unittest.TestCase):
@@ -44,6 +46,37 @@ class BusinessRecommendationProjectionTests(unittest.TestCase):
         projected = build_supervisor_executive_sections(self.make_result(recommendation)).recommendation
         self.assertFalse(projected.is_complete)
         self.assertEqual(projected.warnings, ("Falta demanda.",))
+
+    def test_risk_explanation_describes_structured_scenario_types(self):
+        base = RiskScenarioResult(name="Base", demand_gwh=4.8, supply_gwh=4.3,
+                                  position_gwh=-.5, interpretation="SHORT",
+                                  short_position_gwh=.5, short_position_mwh=500,
+                                  spot_price_eur_mwh=42, spot_exposure_eur=21000)
+        variants = {
+            "BASE": ([], "Análisis de la posición y exposición base."),
+            "DEMAND": ([RiskScenarioResult(name="Demanda +10 %", scenario_type="DEMAND", stress_percent=10,
+                                            demand_gwh=5.28, supply_gwh=4.3, position_gwh=-.98,
+                                            interpretation="SHORT", short_position_gwh=.98, short_position_mwh=980,
+                                            spot_price_eur_mwh=42, spot_exposure_eur=41160)],
+                       "Análisis de sensibilidad de demanda, manteniendo constante el precio spot."),
+            "PRICE": ([RiskScenarioResult(name="Precio spot +20 %", scenario_type="PRICE", stress_percent=20,
+                                           demand_gwh=4.8, supply_gwh=4.3, position_gwh=-.5,
+                                           interpretation="SHORT", short_position_gwh=.5, short_position_mwh=500,
+                                           spot_price_eur_mwh=50.4, spot_exposure_eur=25200)],
+                      "Análisis de sensibilidad al precio spot, manteniendo constantes demanda y suministro."),
+        }
+        variants["DEMAND+PRICE"] = (variants["DEMAND"][0] + variants["PRICE"][0],
+                                     "Análisis de sensibilidad mediante escenarios independientes de demanda y precio spot.")
+        for name, (scenarios, expected) in variants.items():
+            with self.subTest(name=name):
+                risk = RiskAgentResult(status=RiskStatus.COMPLETED, base_scenario=base,
+                                       stress_scenarios=scenarios, summary="legacy summary")
+                result = self.make_result()
+                result = result.model_copy(update={"specialist_results": [
+                    SpecialistExecutionResult(agent_name="RiskAgent", status="completed", result=risk)
+                ]})
+                explanations = dict(build_supervisor_executive_sections(result).explanations)
+                self.assertEqual(explanations["Riesgo"], expected)
 
 
 if __name__ == "__main__":

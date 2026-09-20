@@ -139,7 +139,16 @@ def build_supervisor_executive_sections(result) -> ExecutiveResultProjection:
         value = risk.result
         if value.base_scenario:
             metrics.append(ExecutiveMetric("Riesgo base", f"{value.base_scenario.interpretation} {_fmt(value.base_scenario.short_position_gwh, 'GWh')}", "Calculado"))
-            explanations.append(("Riesgo", value.summary))
+            scenario_types = {scenario.scenario_type for scenario in value.stress_scenarios}
+            if scenario_types == {"DEMAND"}:
+                risk_explanation = "Análisis de sensibilidad de demanda, manteniendo constante el precio spot."
+            elif scenario_types == {"PRICE"}:
+                risk_explanation = "Análisis de sensibilidad al precio spot, manteniendo constantes demanda y suministro."
+            elif {"DEMAND", "PRICE"} <= scenario_types:
+                risk_explanation = "Análisis de sensibilidad mediante escenarios independientes de demanda y precio spot."
+            else:
+                risk_explanation = "Análisis de la posición y exposición base."
+            explanations.append(("Riesgo", risk_explanation))
         for scenario in value.stress_scenarios:
             if scenario.spot_exposure_eur is not None:
                 metrics.append(ExecutiveMetric(f"Exposición · {scenario.name}", _fmt(scenario.spot_exposure_eur, "EUR"), "Calculado"))
