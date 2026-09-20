@@ -117,6 +117,35 @@ class ApiClientTests(unittest.TestCase):
         self.assertEqual(step.source_agent, 'ProcurementAgent')
         self.assertEqual(recommendation.decision_plan.warnings, ['seguimiento'])
 
+    def test_readiness_partial_and_blocked_transport_without_inference(self):
+        payload = dict(PAYLOAD)
+        payload['recommendation'] = {
+            'action': 'Revisar.', 'is_complete': True,
+            'decision_plan': {'is_complete': True, 'readiness': 'PARTIALLY_READY', 'steps': [{
+                'id': 'operational-short', 'category': 'operational', 'action': 'Revisar',
+                'readiness': 'PARTIALLY_READY', 'missing_information': ['synthetic-input'],
+            }, {'id': 'risk-price-stress-20', 'category': 'risk', 'action': 'Revisar precio',
+                'readiness': 'BLOCKED', 'missing_information': ['spot_price_eur_mwh']} ]},
+        }
+        result = self.client(lambda request: httpx.Response(200, json=payload)).analyze('x')
+        plan = result.recommendation.decision_plan
+        self.assertEqual(plan.readiness, 'PARTIALLY_READY')
+        self.assertEqual(plan.steps[0].readiness, 'PARTIALLY_READY')
+        self.assertEqual(plan.steps[0].missing_information, ['synthetic-input'])
+        self.assertEqual(plan.steps[1].readiness, 'BLOCKED')
+        self.assertEqual(plan.steps[1].missing_information, ['spot_price_eur_mwh'])
+
+    def test_legacy_plan_without_readiness_remains_none(self):
+        payload = dict(PAYLOAD)
+        payload['recommendation'] = {'action': 'Mantener.', 'is_complete': True,
+                                     'decision_plan': {'steps': [{'id': 'operational-short',
+                                         'category': 'operational', 'action': 'Revisar'}],
+                                                       'is_complete': True}}
+        result = self.client(lambda request: httpx.Response(200, json=payload)).analyze('x')
+        self.assertIsNone(result.recommendation.decision_plan.readiness)
+        self.assertIsNone(result.recommendation.decision_plan.steps[0].readiness)
+        self.assertEqual(result.recommendation.decision_plan.steps[0].missing_information, [])
+
     def test_decision_plan_and_action_id_are_optional_for_legacy_payloads(self):
         payload = dict(PAYLOAD)
         payload['recommendation'] = {'action': 'Mantener.', 'is_complete': True,

@@ -69,12 +69,14 @@ class ApiDecisionStep(BaseModel):
     missing_information: list[str] = []
     source_action_id: str | None = None
     source_agent: str | None = None
+    readiness: str | None = None
 
 
 class ApiDecisionPlan(BaseModel):
     steps: list[ApiDecisionStep] = []
     is_complete: bool
     warnings: list[str] = []
+    readiness: str | None = None
 
 
 class ApiBusinessRecommendation(BaseModel):

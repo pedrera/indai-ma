@@ -83,9 +83,11 @@ def analyze(payload: AnalysisRequestDTO, request: Request, service: AnalysisServ
                     missing_information=list(step.missing_information),
                     source_action_id=step.source_action_id,
                     source_agent=step.source_agent,
+                    readiness=step.readiness,
                 ) for step in projection.recommendation.decision_plan.steps],
                 is_complete=projection.recommendation.decision_plan.is_complete,
                 warnings=list(projection.recommendation.decision_plan.warnings),
+                readiness=projection.recommendation.decision_plan.readiness,
             ) if projection.recommendation.decision_plan is not None else None),
         ) if projection.recommendation is not None else None),
     )

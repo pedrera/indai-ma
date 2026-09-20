@@ -159,6 +159,9 @@ class ApiTests(unittest.TestCase):
             'operational-short', 'contractual-take-or-pay',
             'contractual-monthly-excess', 'risk-price-stress-20'])
         self.assertEqual(steps[3]['depends_on'], ['operational-short'])
+        self.assertEqual(recommendation['decision_plan']['readiness'], 'READY')
+        self.assertEqual([step['readiness'] for step in steps], ['READY'] * 4)
+        self.assertEqual([step['missing_information'] for step in steps], [[], [], [], []])
         self.assertEqual(recommendation['actions'][0]['id'], 'operational-short')
         client_result = ApiAnalysisResult.model_validate(response.json())
         copied = build_business_copy_payload(client_result)
