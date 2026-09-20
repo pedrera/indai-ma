@@ -9,6 +9,10 @@ from application_service import AnalysisService, AnalysisServiceError
 from runtime_config import LLMRuntimeConfig
 from business_recommendation import BusinessAction, BusinessRecommendation
 from decision_plan import DecisionPlan, DecisionStep
+from rag_models import RetrievalResult
+from tests.test_commercial_agent import contract_matches
+from clipboard_text import build_business_copy_payload
+from api_client_models import ApiAnalysisResult
 from business_output import ExecutiveResultProjection
 
 
@@ -135,6 +139,31 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(plan['steps'][0]['supporting_metrics'], [['SHORT', '999 GWh']])
         self.assertEqual(plan['steps'][0]['depends_on'], ['synthetic-source'])
         self.assertEqual(data['recommendation']['actions'][0]['id'], 'operational-short')
+
+    def test_canonical_real_service_decision_plan_crosses_http(self):
+        query = ("Analiza la situación completa de Hospital Costa Sur.\n\n"
+                 "El consumo acumulado es de 30 GWh y esperamos consumir otros\n"
+                 "8 GWh hasta final de año.\n\nPara el próximo mes esperamos una demanda de 4.8 GWh y tenemos\n"
+                 "4.3 GWh de suministro.\n\nEl precio spot actual es 42 EUR/MWh.\n\n"
+                 "Analiza también qué ocurriría si el spot sube un 20% y dime qué\n"
+                 "deberíamos revisar.")
+        rag = Mock()
+        rag.retrieve.return_value = RetrievalResult(contract_matches(), 'fixture')
+        service = AnalysisService(rag_factory=lambda recorder, runtime: rag)
+        response = self.client(service).post('/api/v1/analysis', json={'text': query})
+        self.assertEqual(response.status_code, 200)
+        recommendation = response.json()['recommendation']
+        self.assertTrue(recommendation['decision_plan']['is_complete'])
+        steps = recommendation['decision_plan']['steps']
+        self.assertEqual([step['id'] for step in steps], [
+            'operational-short', 'contractual-take-or-pay',
+            'contractual-monthly-excess', 'risk-price-stress-20'])
+        self.assertEqual(steps[3]['depends_on'], ['operational-short'])
+        self.assertEqual(recommendation['actions'][0]['id'], 'operational-short')
+        client_result = ApiAnalysisResult.model_validate(response.json())
+        copied = build_business_copy_payload(client_result)
+        self.assertLess(copied.index('PLAN DE DECISIÓN'), copied.index('ACCIONES RECOMENDADAS'))
+        self.assertIn('Relacionado con: operational-short', copied)
 
 
 if __name__ == '__main__':
