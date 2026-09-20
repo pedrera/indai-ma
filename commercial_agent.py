@@ -148,7 +148,12 @@ class CommercialAgent:
                 result.contract_facts.append(ContractFact(name=field, value=value, unit=unit,
                     evidence=matches[index].chunk.text, source=sources[index]))
         self._additional_facts(matches, sources, result)
-        top_requested = bool(re.search(r"take\s*-?\s*or\s*-?\s*pay|m[ií]nimo\s+(?:contractual|anual)|riesgo.{0,30}take", request, re.I))
+        top_requested = bool(re.search(
+            r"take\s*-?\s*or\s*-?\s*pay|m[ií]nimo\s+(?:contractual|anual)|"
+            r"riesgo.{0,30}take|consumo\s+acumulado|"
+            r"(?:previsi[oó]n\s+restante|consumo\s+restante\s+previsto)|"
+            r"esperamos\s+consumir\s+otros?",
+            request, re.I))
         top_inputs = parse_take_or_pay_inputs(request) if top_requested else None
         top_evaluation = top_requested and bool(re.search(
             r"riesgo|proyec|acumul|restante|esperamos\s+consumir|consumo\s+previsto", request, re.I))

@@ -181,7 +181,7 @@ SUPPLY_PATTERN = re.compile(
 )
 SUPPLY_VALUE_FIRST_PATTERN = re.compile(
     r"(?P<value>\d+(?:[.,]\d+)?)\s*gwh\s+de\s+"
-    r"(?:suministro\s+(?:ya\s+)?contratado|volumen\s+contratado)",
+    r"(?:suministro(?:\s+(?:ya\s+)?contratado)?|volumen\s+contratado)",
     re.IGNORECASE,
 )
 SUPPLY_APPROVISIONED_PATTERN = re.compile(

@@ -92,6 +92,21 @@ class CommercialAgentTests(unittest.TestCase):
         self.assertFalse(result.calculations)
         self.assertFalse(any("previsión mensual" in warning.lower() for warning in result.warnings))
 
+    def test_manual_integrated_query_keeps_temporal_top_inputs(self):
+        query = ("Analiza la situación completa de Hospital Costa Sur.\n\n"
+                 "El consumo acumulado es de 30 GWh y esperamos consumir otros\n"
+                 "8 GWh hasta final de año.\n\n"
+                 "Para el próximo mes esperamos una demanda de 4.8 GWh y tenemos\n"
+                 "4.3 GWh de suministro.\n\n"
+                 "El precio spot actual es 42 EUR/MWh.\n\n"
+                 "Analiza también qué ocurriría si el spot sube un 20% y dime qué\n"
+                 "deberíamos revisar.")
+        result = self.run_agent(query)
+        self.assertEqual(result.take_or_pay_projection.cumulative_consumption_gwh, 30)
+        self.assertEqual(result.take_or_pay_projection.remaining_forecast_consumption_gwh, 8)
+        self.assertEqual(result.take_or_pay_projection.projected_annual_consumption_gwh, 38)
+        self.assertEqual(result.take_or_pay_projection.projected_take_or_pay_deficit_gwh, 2.8)
+
     def test_take_or_pay_minimum_only_does_not_require_temporal_inputs(self):
         result = self.run_agent("¿Cuál es el mínimo take-or-pay de Hospital Costa Sur?")
         self.assertIsNone(result.take_or_pay_projection)
