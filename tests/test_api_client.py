@@ -76,7 +76,7 @@ class ApiClientTests(unittest.TestCase):
             'rationale': ['Exceso y SHORT son magnitudes distintas.'],
             'contractual_implication': 'Exceso contractual: 0.2 GWh.',
             'operational_implication': 'SHORT: 0.5 GWh; exposición: 21000 EUR.',
-            'risk_implication': 'Riesgo base SHORT.',
+            'risk_implication': 'Con un aumento del spot del 20%, la exposición pasa de 21000 a 25200 EUR (+4200 EUR).',
             'supporting_metrics': [['Exceso contractual', '0.2 GWh'], ['SHORT', '0.5 GWh'],
                                    ['Exposición spot', '21000 EUR']],
             'warnings': [],
@@ -86,6 +86,7 @@ class ApiClientTests(unittest.TestCase):
         self.assertEqual(result.recommendation.supporting_metrics[0][1], '0.2 GWh')
         self.assertEqual(result.recommendation.supporting_metrics[1][1], '0.5 GWh')
         self.assertEqual(result.recommendation.operational_implication, payload['recommendation']['operational_implication'])
+        self.assertEqual(result.recommendation.risk_implication, 'Con un aumento del spot del 20%, la exposición pasa de 21000 a 25200 EUR (+4200 EUR).')
 
     def test_old_payload_without_recommendation_remains_valid(self):
         result = self.client(lambda request: httpx.Response(200, json=PAYLOAD)).analyze('x')
@@ -97,14 +98,14 @@ class ApiClientTests(unittest.TestCase):
             'action': 'Cubrir el SHORT operativo.', 'is_complete': True,
             'contractual_implication': 'Exceso contractual independiente: 0.2 GWh.',
             'operational_implication': 'SHORT operativo: 0.5 GWh; exposición spot: 21000 EUR.',
-            'risk_implication': 'Riesgo base SHORT.',
+            'risk_implication': 'Con un aumento del spot del 20%, la exposición pasa de 21000 a 25200 EUR (+4200 EUR).',
             'rationale': ['Son magnitudes diferentes.'], 'warnings': [],
             'supporting_metrics': [['Exceso', '0.2 GWh'], ['SHORT', '0.5 GWh']],
         }
         result = self.client(lambda request: httpx.Response(200, json=payload)).analyze('x')
         text = build_business_copy_payload(result, operation_id='abc123')
         for expected in ('RECOMENDACIÓN', 'Cubrir el SHORT operativo', '0.2 GWh', '0.5 GWh',
-                         '21000 EUR', 'Riesgo base SHORT'):
+                         '21000 EUR', '25200 EUR', 'Con un aumento del spot'):
             self.assertIn(expected, text)
 
 

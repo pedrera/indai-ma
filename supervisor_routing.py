@@ -3,7 +3,7 @@ import json
 import re
 import unicodedata
 
-from gas_analysis import extract_demand_scenarios
+from gas_analysis import extract_demand_scenarios, extract_stress_percentages
 from gas_query_intent import classify_gas_query
 from procurement_common import extract_procurement_context
 from llm_client import GenerationOptions, GenerationCancelledError
@@ -20,7 +20,8 @@ def route_deterministically(request):
     intent = classify_gas_query(request)
     commercial = bool(re.search(r"\bcontratos?\b|contractual|clausula|take.or.pay|vigencia", text)) or bool(
         set(intent.documentary_signals) & {"flexibilidad", "penalizacion", "vencimiento", "rango mensual"})
-    stress = bool(extract_demand_scenarios(request, use_defaults=False)) or bool(re.search(
+    demand_stress, price_stress = extract_stress_percentages(request)
+    stress = bool(demand_stress or price_stress) or bool(re.search(
         r"escenario|stress|estres|que (?:ocurr\w*|pasa\w*|suced\w*) si|cambio de (?:demanda|exposicion)|\b[+-]\s*\d+[,.]?\d*\s*%", text))
     # Supply/demand facts are also inputs for Risk: explicit current-position intent
     # is required to add Procurement alongside a stress or commercial question.

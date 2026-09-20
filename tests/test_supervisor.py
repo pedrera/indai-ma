@@ -14,6 +14,7 @@ from vector_store import LocalVectorStore
 from supervisor import Supervisor
 from supervisor_models import AGENT_ORDER, SupervisorResult
 from supervisor_routing import route_deterministically, resolve_routing
+from business_output import build_supervisor_executive_sections
 from procurement_common import extract_procurement_context
 from tests.test_commercial_agent import contract_matches
 
@@ -241,6 +242,46 @@ class SupervisorTests(unittest.TestCase):
             self.assertLessEqual(sum(i.duration_seconds for i in result.specialist_results), result.total_operation_wall_time)
             starts = [e.metadata['agent_name'] for e in recorder.snapshot().events if e.stage == 'specialist_execution']
             self.assertEqual(starts, list(AGENT_ORDER))
+
+    def test_price_stress_business_e2e_composes_recommendation_without_contamination(self):
+        query = ("Analiza la posición de suministro de Hospital Costa Sur. "
+                 "La demanda prevista es de 4,8 GWh, disponemos de 4,3 GWh "
+                 "de suministro contratado y el precio spot es de 42 EUR/MWh. "
+                 "Revisa también las condiciones contractuales aplicables, "
+                 "analiza el riesgo si el spot sube un 20% y dime qué actuación recomiendas.")
+        with TemporaryDirectory() as directory:
+            recorder = PerformanceRecorder("price-stress", "test", "test", "supervisor")
+            store = LocalVectorStore(directory, Embeddings.model)
+            service = RAGService(Embeddings(), store)
+            service.ingest([("contrato_hospital_costa_sur.txt", "\n\n".join(m.chunk.text for m in contract_matches()).encode())])
+            runner = Supervisor(recorder, lambda r: (_ for _ in ()).throw(AssertionError("LLM not allowed")),
+                                lambda r: RAGService(Embeddings(), store, r))
+            result = runner.run(query, 30)
+            recommendation = build_supervisor_executive_sections(result).recommendation
+            self.assertEqual(result.routing.selected_agents, list(AGENT_ORDER))
+            self.assertEqual(result.status.value, "completed")
+            self.assertEqual((result.total_llm_calls, result.total_rag_calls), (0, 1))
+            commercial, procurement, risk = [item.result for item in result.specialist_results]
+            commercial_calc = commercial.calculations[0].result
+            procurement_exposure = procurement.tool_executions[1]["result"]
+            price = next(s for s in risk.stress_scenarios if s.scenario_type == "PRICE")
+            delta = next(d for d in risk.deltas if d.scenario_type == "PRICE")
+            self.assertEqual(commercial_calc["contractual_excess_gwh"], 0.2)
+            commercial_facts = {fact.name: fact.value for fact in commercial.contract_facts}
+            self.assertEqual(commercial_facts["excess_surcharge_eur_mwh"], 4)
+            self.assertEqual(commercial_calc["contractual_excess_price_eur_mwh"], 46)
+            self.assertEqual(procurement_exposure["short_position_gwh"], 0.5)
+            self.assertEqual(procurement_exposure["exposure_eur"], 21000)
+            self.assertEqual((price.scenario_type, price.stress_percent, price.spot_price_eur_mwh,
+                              price.short_position_gwh, price.spot_exposure_eur),
+                             ("PRICE", 20, 50.4, 0.5, 25200))
+            self.assertEqual(delta.exposure_change_eur, 4200)
+            self.assertNotEqual(commercial_calc["contractual_excess_gwh"], price.short_position_gwh)
+            self.assertIsNotNone(recommendation)
+            self.assertIn("50.4", recommendation.risk_implication)
+            self.assertIn("25,200", recommendation.risk_implication)
+            self.assertIn("4,200", recommendation.risk_implication)
+            self.assertNotIn("DEMAND", recommendation.risk_implication)
 
     def test_partial_failure_preserves_success(self):
         failed = Mock(side_effect=RuntimeError("private internal failure"))

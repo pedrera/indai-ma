@@ -190,7 +190,7 @@ class ExecutionUXTests(unittest.TestCase):
                     'rationale': ['Son magnitudes diferentes.'],
                     'contractual_implication': 'Exceso contractual: 0.2 GWh.',
                     'operational_implication': 'SHORT: 0.5 GWh; exposición: 21000 EUR.',
-                    'risk_implication': None, 'supporting_metrics': [], 'warnings': [],
+                    'risk_implication': 'Con un aumento del spot del 20%, la exposición pasa de 21000 a 25200 EUR (+4200 EUR).', 'supporting_metrics': [], 'warnings': [],
                 },
             }
             recorder = PerformanceRecorder('api-recommendation', 'api', 'remote', 'business_api')
@@ -202,6 +202,7 @@ class ExecutionUXTests(unittest.TestCase):
             app.run()
             self.assertFalse(app.exception)
             self.assertTrue(any('Cubrir el SHORT operativo' in item.value for item in app.markdown))
+            self.assertTrue(any('25200' in item.value for item in app.markdown))
 
     def test_mode_switch_indexing_and_clipboard_keep_visible_operation(self):
         copied = []

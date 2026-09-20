@@ -70,7 +70,7 @@ class ApiTests(unittest.TestCase):
             rationale=('Exceso y SHORT son magnitudes distintas.',),
             contractual_implication='Exceso contractual: 0.2 GWh.',
             operational_implication='SHORT: 0.5 GWh; exposición: 21000 EUR.',
-            risk_implication='Riesgo base SHORT.',
+            risk_implication='Con un aumento del spot del 20%, la exposición pasa de 21000 a 25200 EUR (+4200 EUR).',
             supporting_metrics=(('Exceso contractual', '0.2 GWh'), ('SHORT', '0.5 GWh'),
                                 ('Exposición spot', '21000 EUR')),
         )
@@ -90,6 +90,7 @@ class ApiTests(unittest.TestCase):
         recommendation_json = response.json()['recommendation']
         self.assertEqual(recommendation_json['contractual_implication'], 'Exceso contractual: 0.2 GWh.')
         self.assertEqual(recommendation_json['operational_implication'], 'SHORT: 0.5 GWh; exposición: 21000 EUR.')
+        self.assertIn('25200', recommendation_json['risk_implication'])
         self.assertEqual(recommendation_json['supporting_metrics'][0][1], '0.2 GWh')
         self.assertEqual(recommendation_json['supporting_metrics'][1][1], '0.5 GWh')
 
