@@ -64,6 +64,9 @@ def compose_business_recommendation(supervisor_result: "SupervisorResult") -> Bu
 
     calculation = _commercial_calculation(commercial)
     excess = calculation.get("contractual_excess_gwh")
+    forecast = calculation.get("forecast_demand_gwh")
+    contractual_min = calculation.get("contractual_min_gwh")
+    contractual_max = calculation.get("contractual_max_gwh")
     if excess is not None and float(excess) > 0:
         surcharge = _commercial_surcharge(commercial)
         price = calculation.get("contractual_excess_price_eur_mwh")
@@ -73,6 +76,17 @@ def compose_business_recommendation(supervisor_result: "SupervisorResult") -> Bu
         if price is not None:
             contractual += f" Precio del exceso calculado: {price:g} EUR/MWh."
         metrics.append(("Exceso contractual", f"{excess:g} GWh"))
+        rationale.append(contractual)
+    elif (forecast is not None and contractual_min is not None and contractual_max is not None):
+        if contractual_min <= forecast <= contractual_max:
+            contractual = (f"El consumo previsto de {forecast:g} GWh permanece dentro del rango "
+                           f"contractual de {contractual_min:g}–{contractual_max:g} GWh.")
+        elif forecast < contractual_min:
+            contractual = (f"El consumo previsto de {forecast:g} GWh está por debajo del rango "
+                           f"contractual de {contractual_min:g}–{contractual_max:g} GWh.")
+        else:
+            contractual = (f"El consumo previsto de {forecast:g} GWh está por encima del rango "
+                           f"contractual de {contractual_min:g}–{contractual_max:g} GWh.")
         rationale.append(contractual)
 
     exposure = _execution(procurement.result if procurement and procurement.result else None, "calculate_spot_exposure")
@@ -153,7 +167,9 @@ def compose_business_recommendation(supervisor_result: "SupervisorResult") -> Bu
         action = "Obtener " + ", ".join(unique) + " antes de emitir una recomendación completa."
         complete = False
     else:
-        action = "Cubrir el SHORT operativo." if interpretation == "SHORT" else "Revisar las implicaciones identificadas."
+        action = ("Cubrir el SHORT operativo." if interpretation == "SHORT" else
+                  "Revisar las opciones de gestión del excedente operativo." if interpretation == "LONG" else
+                  "Revisar las implicaciones identificadas.")
         complete = bool(rationale)
     if incomplete_risk:
         complete = False

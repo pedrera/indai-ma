@@ -18,6 +18,13 @@ def procurement(position="SHORT", amount=0.5, exposure=21000):
     return SimpleNamespace(tool_executions=executions)
 
 
+def commercial_range(demand, minimum=3.4, maximum=4.6, excess=0):
+    return SimpleNamespace(calculations=[SimpleNamespace(result={
+        "forecast_demand_gwh": demand, "contractual_min_gwh": minimum,
+        "contractual_max_gwh": maximum, "contractual_excess_gwh": excess,
+    }, inputs={})])
+
+
 class BusinessRecommendationTests(unittest.TestCase):
     def test_hospital_composes_structured_results_without_recalculation(self):
         commercial = SimpleNamespace(calculations=[SimpleNamespace(result={
@@ -49,6 +56,33 @@ class BusinessRecommendationTests(unittest.TestCase):
             ])
             recommendation = compose_business_recommendation(result)
             self.assertNotIn("cubrir el SHORT", recommendation.action)
+
+    def test_long_in_range_is_explicit_and_complete(self):
+        result = SimpleNamespace(specialist_results=[
+            specialist("CommercialAgent", commercial_range(3.6)),
+            specialist("ProcurementAgent", procurement("LONG", .7, None)),
+        ])
+        recommendation = compose_business_recommendation(result)
+        self.assertTrue(recommendation.is_complete)
+        self.assertEqual(recommendation.action, "Revisar las opciones de gestión del excedente operativo.")
+        self.assertIn("3.6", recommendation.contractual_implication)
+        self.assertIn("3.4–4.6", recommendation.contractual_implication)
+        self.assertIn("LONG", recommendation.operational_implication)
+        self.assertIn("0.7", recommendation.operational_implication)
+        for forbidden in ("vender", "revender", "almacenar", "cancelar", "beneficio", "pérdida"):
+            self.assertNotIn(forbidden, recommendation.action.lower() + " " + recommendation.rationale[0].lower())
+
+    def test_long_range_boundaries_and_below_range_do_not_infer_take_or_pay(self):
+        for demand, expected in ((3.4, "dentro del rango"), (4.6, "dentro del rango"),
+                                 (3.2, "por debajo del rango")):
+            with self.subTest(demand=demand):
+                result = SimpleNamespace(specialist_results=[
+                    specialist("CommercialAgent", commercial_range(demand)),
+                    specialist("ProcurementAgent", procurement("LONG", 4.3 - demand, None)),
+                ])
+                recommendation = compose_business_recommendation(result)
+                self.assertIn(expected, recommendation.contractual_implication)
+                self.assertNotIn("take-or-pay", recommendation.contractual_implication.lower())
 
     def test_missing_results_are_incomplete_and_content_is_not_parsed(self):
         result = SimpleNamespace(specialist_results=[
