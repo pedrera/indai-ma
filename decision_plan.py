@@ -1,6 +1,7 @@
 """Deterministic decision-plan projection over BusinessRecommendation actions."""
+from __future__ import annotations
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 
 @dataclass(frozen=True)
@@ -9,6 +10,7 @@ class DecisionAlternative:
     label: str
     description: str
     source_step_id: str
+    evaluation: Any = None
 
 
 @dataclass(frozen=True)
