@@ -5,6 +5,7 @@ from diagnostics import PerformanceRecorder
 from gas_analysis import (
     GasAnalysisError,
     extract_demand_scenarios,
+    extract_stress_percentages,
     extract_gas_positions,
     parse_scenario_analysis,
     parse_scenario_input,
@@ -44,6 +45,19 @@ def _natural_language_case() -> str:
 
 
 class ScenarioOrchestrationTests(unittest.TestCase):
+    def test_stress_percentages_are_classified_by_subject(self):
+        cases = [
+            ("+20%", [20], []), ("demanda +20%", [20], []),
+            ("la demanda sube un 20%", [20], []), ("spot +20%", [], [20]),
+            ("precio spot +20%", [], [20]), ("el spot sube un 20%", [], [20]),
+            ("si el spot sube un 20%", [], [20]), ("spot -10%", [], [-10]),
+            ("la demanda baja un 10%", [-10], []), ("precio spot 42 EUR/MWh", [], []),
+            ("calcula la exposición spot", [], []),
+            ("Si la demanda aumenta un 10% y el spot sube un 20%", [10], [20]),
+        ]
+        for text, demand, price in cases:
+            with self.subTest(text=text):
+                self.assertEqual(extract_stress_percentages(text), (demand, price))
     def test_forecast_consumption_is_detected_as_demand(self) -> None:
         result = parse_scenario_input(
             "El Hospital prevé consumir 4,8 GWh."

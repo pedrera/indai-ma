@@ -21,10 +21,14 @@ class RiskInputs(RiskModel):
     supply_gwh: float = Field(ge=0)
     spot_price_eur_mwh: float | None = Field(default=None, ge=0)
     stress_percentages: list[Annotated[float, Field(ge=-100)]] = Field(default_factory=list, max_length=20)
+    demand_stress_percentages: list[Annotated[float, Field(ge=-100)]] = Field(default_factory=list, max_length=20)
+    price_stress_percentages: list[Annotated[float, Field(ge=-100)]] = Field(default_factory=list, max_length=20)
 
 
 class RiskScenarioResult(RiskModel):
     name: str
+    scenario_type: Literal["BASE", "DEMAND", "PRICE"] = "BASE"
+    stress_percent: float = 0
     demand_variation_percent: float = 0
     demand_gwh: float = Field(ge=0)
     supply_gwh: float = Field(ge=0)

@@ -113,6 +113,8 @@ class ScenarioParsingResult:
     gas_type_conflicts: list[str]
     gas_type_user_candidates: list[str]
     gas_type_rag_candidates: list[str]
+    demand_stress_percentages: list[float] | None = None
+    price_stress_percentages: list[float] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -132,6 +134,12 @@ class ScenarioParsingResult:
             "gas_type_conflicts": self.gas_type_conflicts,
             "gas_type_user_candidates": self.gas_type_user_candidates,
             "gas_type_rag_candidates": self.gas_type_rag_candidates,
+            "demand_stress_percentages": (
+                self.demand_stress_percentages
+                if self.demand_stress_percentages is not None
+                else self.scenario_variations
+            ),
+            "price_stress_percentages": self.price_stress_percentages or [],
         }
 
 
@@ -235,11 +243,17 @@ def extract_demand_scenarios(
 ) -> tuple[tuple[str, float], ...]:
     """Return explicitly requested scenarios, optionally using product defaults."""
     text = text.replace("−", "-")
+    classified = extract_stress_percentages(text)
+    price_positions = set()
+    for match in PRICE_VARIATION_PATTERN.finditer(text):
+        price_positions.update(range(match.start(), match.end()))
     variations: list[float] = []
     covered_percent_positions: set[int] = set()
     if SCENARIO_BASE_PATTERN.search(text):
         variations.append(0.0)
     for match in VARIATION_PATTERN.finditer(text):
+        if any(position in price_positions for position in range(match.start(), match.end())):
+            continue
         value = _parse_numeric_value(match)
         label = match.group("label").lower()
         if re.fullmatch(
@@ -263,8 +277,42 @@ def extract_demand_scenarios(
     if strict and any(m.start() not in covered_percent_positions for m in re.finditer("%", text)):
         raise GasAnalysisError("Hay un porcentaje no reconocido como escenario de demanda; usa 'escenario +10 %'.")
     if not variations:
+        if re.search(r"[+-]\s*\d+(?:[.,]\d+)?\s*%", text) and classified[0]:
+            return tuple((_scenario_name(value), value) for value in classified[0])
         return DEFAULT_DEMAND_SCENARIOS if use_defaults else ()
     return tuple((_scenario_name(value), value) for value in variations)
+
+
+PRICE_VARIATION_PATTERN = re.compile(
+    r"\b(?:spot|precio\s+(?:medio\s+)?spot|precio\s+de\s+mercado)\s*"
+    r"(?:(?:sube|subir|aumenta|aumentar|baja|bajar|cae|caer|variaci[oó]n)\s+"
+    r"(?:un\s+)?)?(?P<value>[+-]?\s*\d+(?:[.,]\d+)?)\s*%",
+    re.IGNORECASE,
+)
+
+
+def extract_stress_percentages(text: str) -> tuple[list[float], list[float]]:
+    """Classify explicit percentage stresses as demand or price without applying them."""
+    text = text.replace("−", "-")
+    prices = []
+    price_spans = []
+    for match in PRICE_VARIATION_PATTERN.finditer(text):
+        value = _parse_numeric_value(match)
+        prefix = text[max(0, match.start() - 40):match.start()].casefold()
+        if re.search(r"(?:baja|bajar|cae|caer|disminuye)(?:\s+un)?\s*$", prefix):
+            value = -abs(value)
+        prices.append(value)
+        price_spans.append(match.span())
+    demands = []
+    for match in re.finditer(r"[+-]?\s*\d+(?:[.,]\d+)?\s*%", text):
+        if any(start <= match.start() < end for start, end in price_spans):
+            continue
+        value = float(match.group(0).replace(" ", "").replace(",", ".").rstrip("%"))
+        prefix = text[max(0, match.start() - 40):match.start()].casefold()
+        if re.search(r"(?:baja|bajar|cae|caer|disminuye|reducci[oó]n|reduce)(?:\s+un)?\s*$", prefix):
+            value = -abs(value)
+        demands.append(value)
+    return list(dict.fromkeys(demands)), list(dict.fromkeys(prices))
 
 
 def _scenario_name(variation_percent: float) -> str:
@@ -343,6 +391,7 @@ def parse_scenario_input(
     if gas_resolution.status in {"ambiguous", "conflict"}:
         ambiguities.insert(0, "gas_type")
     scenarios = extract_demand_scenarios(text)
+    demand_stress, price_stress = extract_stress_percentages(text)
     return ScenarioParsingResult(
         detected_gas_types=gas_types,
         base_demand_candidates=candidates["base_demand_gwh"],
@@ -353,6 +402,8 @@ def parse_scenario_input(
         sales_price_candidates=candidates["sales_price_eur_mwh"],
         spot_price_candidates=candidates["spot_price_eur_mwh"],
         scenario_variations=[value for _, value in scenarios],
+        demand_stress_percentages=demand_stress,
+        price_stress_percentages=price_stress,
         missing_fields=missing_fields,
         ambiguities=ambiguities,
         gas_type_source=gas_resolution.source,
