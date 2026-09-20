@@ -157,6 +157,48 @@ class BusinessRecommendationTests(unittest.TestCase):
         self.assertNotIn("comprar", recommendation.action.lower())
         self.assertNotIn("SHORT", " ".join(recommendation.rationale))
 
+    def test_actions_are_structured_ordered_and_keep_domains_separate(self):
+        projection = calculate_take_or_pay_projection(40.8, 30, 8)
+        commercial = SimpleNamespace(calculations=[SimpleNamespace(result={
+            "contractual_excess_gwh": 0.2,
+        }, inputs={})], contract_facts=[], take_or_pay_projection=projection)
+        base = SimpleNamespace(scenario_type="BASE", short_position_gwh=0.5,
+                               interpretation="SHORT", spot_price_eur_mwh=42,
+                               spot_exposure_eur=21000)
+        price = SimpleNamespace(scenario_type="PRICE", stress_percent=20,
+                                demand_gwh=4.8, spot_price_eur_mwh=50.4,
+                                spot_exposure_eur=25200)
+        risk = SimpleNamespace(base_scenario=base, stress_scenarios=[price],
+                               deltas=[SimpleNamespace(scenario_name="Precio spot +20 %",
+                                                       scenario_type="PRICE",
+                                                       exposure_change_eur=4200)])
+        recommendation = compose_business_recommendation(SimpleNamespace(
+            specialist_results=[specialist("CommercialAgent", commercial),
+                                 specialist("ProcurementAgent", procurement()),
+                                 specialist("RiskAgent", risk)]))
+        self.assertEqual([item.category for item in recommendation.actions],
+                         ["operational", "contractual", "contractual", "risk"])
+        all_metrics = [metric for item in recommendation.actions for metric in item.supporting_metrics]
+        self.assertIn(("SHORT operativo", "0.5 GWh"), all_metrics)
+        self.assertIn(("Exceso contractual", "0.2 GWh"), all_metrics)
+        self.assertIn(("Déficit take-or-pay proyectado", "2.8 GWh"), all_metrics)
+        self.assertIn(("Delta de exposición", "+4,200 EUR"), all_metrics)
+        self.assertNotIn("3.3 GWh", str(recommendation.actions))
+
+    def test_balanced_and_top_above_do_not_create_artificial_actions(self):
+        balanced = compose_business_recommendation(SimpleNamespace(
+            specialist_results=[specialist("ProcurementAgent", procurement("BALANCED", 0, None))]))
+        self.assertEqual(balanced.actions, ())
+        projection = calculate_take_or_pay_projection(40.8, 50, 8)
+        above = compose_business_recommendation(SimpleNamespace(
+            specialist_results=[specialist(
+                "CommercialAgent",
+                SimpleNamespace(calculations=[], contract_facts=[],
+                                take_or_pay_projection=projection),
+            )]
+        ))
+        self.assertEqual(above.actions, ())
+
 
 if __name__ == "__main__":
     unittest.main()

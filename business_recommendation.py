@@ -1,9 +1,17 @@
 """Deterministic composition of a Business recommendation."""
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from supervisor_models import SupervisorResult
+
+
+@dataclass(frozen=True)
+class BusinessAction:
+    category: Literal["operational", "contractual", "risk"]
+    action: str
+    rationale: str | None = None
+    supporting_metrics: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -16,6 +24,7 @@ class BusinessRecommendation:
     risk_implication: str | None = None
     supporting_metrics: tuple[tuple[str, str], ...] = ()
     warnings: tuple[str, ...] = ()
+    actions: tuple[BusinessAction, ...] = ()
 
 
 def _execution(result, name):
@@ -61,6 +70,9 @@ def compose_business_recommendation(supervisor_result: "SupervisorResult") -> Bu
     risk_text = None
     missing: list[str] = []
     incomplete_risk = False
+    operational_actions: list[BusinessAction] = []
+    contractual_actions: list[BusinessAction] = []
+    risk_actions: list[BusinessAction] = []
 
     calculation = _commercial_calculation(commercial)
     top_projection = getattr(getattr(commercial, "result", None), "take_or_pay_projection", None)
@@ -70,10 +82,23 @@ def compose_business_recommendation(supervisor_result: "SupervisorResult") -> Bu
                            f"{top_projection.projected_take_or_pay_deficit_gwh:g} GWh por debajo del mínimo take-or-pay "
                            f"de {top_projection.take_or_pay_minimum_gwh:g} GWh.")
             rationale.append(contractual + " Es una proyección; revisar la previsión y las opciones contractuales antes del cierre del periodo.")
+            contractual_actions.append(BusinessAction(
+                "contractual",
+                "Revisar la previsión de consumo y las opciones contractuales antes del cierre del periodo.",
+                contractual,
+                (("Proyección anual", f"{top_projection.projected_annual_consumption_gwh:g} GWh"),
+                 ("Mínimo take-or-pay", f"{top_projection.take_or_pay_minimum_gwh:g} GWh"),
+                 ("Déficit take-or-pay proyectado", f"{top_projection.projected_take_or_pay_deficit_gwh:g} GWh")),
+            ))
         elif top_projection.status == "AT_MINIMUM":
             contractual = (f"El consumo anual proyectado alcanza exactamente el mínimo take-or-pay de "
                            f"{top_projection.take_or_pay_minimum_gwh:g} GWh.")
             rationale.append(contractual + " Realizar seguimiento de la previsión hasta el cierre del periodo.")
+            contractual_actions.append(BusinessAction(
+                "contractual", "Realizar seguimiento de la previsión hasta el cierre del periodo.", contractual,
+                (("Proyección anual", f"{top_projection.projected_annual_consumption_gwh:g} GWh"),
+                 ("Mínimo take-or-pay", f"{top_projection.take_or_pay_minimum_gwh:g} GWh")),
+            ))
         else:
             contractual = (f"El consumo anual proyectado es de {top_projection.projected_annual_consumption_gwh:g} GWh, "
                            f"por encima del mínimo take-or-pay de {top_projection.take_or_pay_minimum_gwh:g} GWh.")
@@ -94,6 +119,10 @@ def compose_business_recommendation(supervisor_result: "SupervisorResult") -> Bu
             contractual += f" Precio del exceso calculado: {price:g} EUR/MWh."
         metrics.append(("Exceso contractual", f"{excess:g} GWh"))
         rationale.append(contractual)
+        contractual_actions.append(BusinessAction(
+            "contractual", "Revisar la implicación contractual del exceso mensual.", contractual,
+            (("Exceso contractual", f"{excess:g} GWh"),),
+        ))
     elif (forecast is not None and contractual_min is not None and contractual_max is not None):
         if contractual_min <= forecast <= contractual_max:
             contractual = (f"El consumo previsto de {forecast:g} GWh permanece dentro del rango "
@@ -116,6 +145,10 @@ def compose_business_recommendation(supervisor_result: "SupervisorResult") -> Bu
         operational = f"La posición de aprovisionamiento es SHORT por {amount:g} GWh."
         rationale.append("Se recomienda cubrir el SHORT operativo.")
         metrics.append(("SHORT operativo", f"{amount:g} GWh"))
+        operational_actions.append(BusinessAction(
+            "operational", "Revisar la cobertura del SHORT operativo.", operational,
+            (("SHORT operativo", f"{amount:g} GWh"),),
+        ))
     elif interpretation == "BALANCED":
         operational = "La posición de aprovisionamiento es BALANCED; no se recomienda cobertura adicional."
         rationale.append(operational)
@@ -123,6 +156,10 @@ def compose_business_recommendation(supervisor_result: "SupervisorResult") -> Bu
         amount = abs((position or {}).get("result", {}).get("position_gwh", 0))
         operational = f"La posición de aprovisionamiento es LONG por {amount:g} GWh; debe revisarse el excedente."
         rationale.append(operational)
+        operational_actions.append(BusinessAction(
+            "operational", "Revisar las opciones de gestión del excedente operativo.", operational,
+            (("LONG operativo", f"{amount:g} GWh"),),
+        ))
     elif procurement and procurement.result:
         missing.append("posición de aprovisionamiento")
 
@@ -165,6 +202,15 @@ def compose_business_recommendation(supervisor_result: "SupervisorResult") -> Bu
                 risk_text = (risk_text + " " if risk_text else "") + line
                 rationale.append(line)
                 metrics.append((f"Exposición PRICE {scenario.stress_percent:+g}%", f"{_risk_number(scenario.spot_exposure_eur)} EUR"))
+                risk_actions.append(BusinessAction(
+                    "risk",
+                    "Considerar la sensibilidad del precio spot al evaluar la cobertura del SHORT.",
+                    line,
+                    (("Exposición base", f"{_risk_number(base.spot_exposure_eur)} EUR"),
+                     ("Exposición stress", f"{_risk_number(scenario.spot_exposure_eur)} EUR"),
+                     ("Delta de exposición", f"{delta.exposure_change_eur:+,.0f} EUR"),
+                     ("Stress de precio", f"{scenario.stress_percent:+g}%")),
+                ))
             elif scenario_type == "DEMAND":
                 line = f"Escenario de demanda {scenario.stress_percent:+g}%: {scenario.demand_gwh:g} GWh."
                 risk_text = (risk_text + " " if risk_text else "") + line
@@ -190,5 +236,6 @@ def compose_business_recommendation(supervisor_result: "SupervisorResult") -> Bu
         complete = bool(rationale)
     if incomplete_risk:
         complete = False
+    actions = tuple(operational_actions + contractual_actions + risk_actions)
     return BusinessRecommendation(action, complete, tuple(rationale), contractual, operational, risk_text,
-                                  tuple(metrics), tuple(dict.fromkeys(warnings)))
+                                  tuple(metrics), tuple(dict.fromkeys(warnings)), actions)
