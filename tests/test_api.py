@@ -162,6 +162,23 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(recommendation['decision_plan']['readiness'], 'READY')
         self.assertEqual([step['readiness'] for step in steps], ['READY'] * 4)
         self.assertEqual([step['missing_information'] for step in steps], [[], [], [], []])
+        self.assertEqual([len(step['alternatives']) for step in steps], [3, 3, 2, 3])
+        self.assertEqual([item['id'] for item in steps[0]['alternatives']], [
+            'operational-short-full', 'operational-short-partial', 'operational-short-maintain'])
+        self.assertEqual([item['id'] for item in steps[3]['alternatives']], [
+            'price-maintain-exposure', 'price-reduce-exposure', 'price-review-coverage'])
+        self.assertTrue(all(
+            alternative['source_step_id'] == step['id']
+            for step in steps for alternative in step['alternatives']))
+        self.assertEqual(
+            [[alternative['id'] for alternative in step['alternatives']] for step in steps],
+            [
+                ['operational-short-full', 'operational-short-partial', 'operational-short-maintain'],
+                ['top-review-consumption', 'top-review-contract', 'top-maintain-forecast'],
+                ['excess-manage-volume', 'excess-review-contract'],
+                ['price-maintain-exposure', 'price-reduce-exposure', 'price-review-coverage'],
+            ],
+        )
         self.assertEqual(recommendation['actions'][0]['id'], 'operational-short')
         client_result = ApiAnalysisResult.model_validate(response.json())
         copied = build_business_copy_payload(client_result)

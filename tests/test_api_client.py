@@ -135,6 +135,28 @@ class ApiClientTests(unittest.TestCase):
         self.assertEqual(plan.steps[1].readiness, 'BLOCKED')
         self.assertEqual(plan.steps[1].missing_information, ['spot_price_eur_mwh'])
 
+    def test_alternatives_round_trip_without_semantic_correction(self):
+        payload = dict(PAYLOAD)
+        payload['recommendation'] = {'action': 'Revisar.', 'is_complete': True,
+            'decision_plan': {'is_complete': True, 'steps': [{
+                'id': 'synthetic-step', 'category': 'operational', 'action': 'Revisar',
+                'alternatives': [{'id': 'synthetic-alt', 'label': 'Synthetic label',
+                                  'description': 'Synthetic description', 'source_step_id': 'other-step'}],
+            }]}}
+        result = self.client(lambda request: httpx.Response(200, json=payload)).analyze('x')
+        alternative = result.recommendation.decision_plan.steps[0].alternatives[0]
+        self.assertEqual(alternative.model_dump(), {
+            'id': 'synthetic-alt', 'label': 'Synthetic label',
+            'description': 'Synthetic description', 'source_step_id': 'other-step'})
+
+    def test_legacy_step_without_alternatives_defaults_to_empty(self):
+        payload = dict(PAYLOAD)
+        payload['recommendation'] = {'action': 'Mantener.', 'is_complete': True,
+            'decision_plan': {'is_complete': True, 'steps': [{'id': 'legacy',
+                'category': 'operational', 'action': 'Revisar'}]}}
+        result = self.client(lambda request: httpx.Response(200, json=payload)).analyze('x')
+        self.assertEqual(result.recommendation.decision_plan.steps[0].alternatives, [])
+
     def test_legacy_plan_without_readiness_remains_none(self):
         payload = dict(PAYLOAD)
         payload['recommendation'] = {'action': 'Mantener.', 'is_complete': True,

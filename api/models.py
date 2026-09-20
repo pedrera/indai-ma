@@ -60,6 +60,13 @@ class BusinessActionDTO(BaseModel):
     supporting_metrics: list[tuple[str, str]] = []
 
 
+class BusinessDecisionAlternativeDTO(BaseModel):
+    id: str
+    label: str
+    description: str
+    source_step_id: str
+
+
 class BusinessDecisionStepDTO(BaseModel):
     id: str
     category: str
@@ -73,6 +80,7 @@ class BusinessDecisionStepDTO(BaseModel):
     source_action_id: str | None = None
     source_agent: str | None = None
     readiness: str | None = None
+    alternatives: list[BusinessDecisionAlternativeDTO] = []
 
 
 class BusinessDecisionPlanDTO(BaseModel):

@@ -4,6 +4,7 @@ from api.models import (AnalysisRequestDTO, AnalysisResponseDTO, DiagnosticsDTO,
                         EvidenceDTO, ExplanationDTO, HealthDTO, MetricDTO,
                         ProvenanceDTO, RoutingDTO, SpecialistStatusDTO,
                         BusinessRecommendationDTO, BusinessActionDTO,
+                        BusinessDecisionAlternativeDTO,
                         BusinessDecisionPlanDTO, BusinessDecisionStepDTO)
 from application_models import AnalysisRequest
 from application_service import AnalysisService
@@ -84,6 +85,12 @@ def analyze(payload: AnalysisRequestDTO, request: Request, service: AnalysisServ
                     source_action_id=step.source_action_id,
                     source_agent=step.source_agent,
                     readiness=step.readiness,
+                    alternatives=[BusinessDecisionAlternativeDTO(
+                        id=alternative.id,
+                        label=alternative.label,
+                        description=alternative.description,
+                        source_step_id=alternative.source_step_id,
+                    ) for alternative in step.alternatives],
                 ) for step in projection.recommendation.decision_plan.steps],
                 is_complete=projection.recommendation.decision_plan.is_complete,
                 warnings=list(projection.recommendation.decision_plan.warnings),
