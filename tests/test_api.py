@@ -8,6 +8,7 @@ from api.app import create_app
 from application_service import AnalysisService, AnalysisServiceError
 from runtime_config import LLMRuntimeConfig
 from business_recommendation import BusinessAction, BusinessRecommendation
+from decision_plan import DecisionPlan, DecisionStep
 from business_output import ExecutiveResultProjection
 
 
@@ -106,6 +107,34 @@ class ApiTests(unittest.TestCase):
         self.assertEqual([item['category'] for item in recommendation_json['actions']],
                          ['operational', 'contractual', 'contractual', 'risk'])
         self.assertEqual(recommendation_json['actions'][3]['supporting_metrics'][0][1], '+4,200 EUR')
+
+    def test_decision_plan_crosses_http_without_recalculation(self):
+        step = DecisionStep('operational-short', 'operational', 'Cubrir.',
+                            'Estructurado.', (('SHORT', '999 GWh'),),
+                            'current_period', 'review_required', ('synthetic-source',),
+                            ('dato futuro',), 'operational-short', 'ProcurementAgent')
+        recommendation = BusinessRecommendation(
+            action='Cubrir.', is_complete=True,
+            actions=(BusinessAction('operational', 'Cubrir.', id='operational-short'),),
+            decision_plan=DecisionPlan((step,), True, ('seguimiento',)),
+        )
+        service = Mock()
+        service.analyze.return_value = SimpleNamespace(
+            operation_id='op-plan',
+            executive=ExecutiveResultProjection('Resumen', recommendation=recommendation),
+            supervisor_result=SimpleNamespace(
+                status=SimpleNamespace(value='completed'),
+                routing=SimpleNamespace(selected_agents=['ProcurementAgent'], skipped_agents=[],
+                                        routing_method='deterministic', routing_reasons=[]),
+                specialist_results=[], total_llm_calls=0, total_rag_calls=0, total_tool_calls=2,
+            ),
+        )
+        data = self.client(service).post('/api/v1/analysis', json={'text': 'x'}).json()
+        plan = data['recommendation']['decision_plan']
+        self.assertEqual(plan['steps'][0]['id'], 'operational-short')
+        self.assertEqual(plan['steps'][0]['supporting_metrics'], [['SHORT', '999 GWh']])
+        self.assertEqual(plan['steps'][0]['depends_on'], ['synthetic-source'])
+        self.assertEqual(data['recommendation']['actions'][0]['id'], 'operational-short')
 
 
 if __name__ == '__main__':

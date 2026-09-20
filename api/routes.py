@@ -3,7 +3,8 @@ from fastapi import APIRouter, Depends, Request
 from api.models import (AnalysisRequestDTO, AnalysisResponseDTO, DiagnosticsDTO,
                         EvidenceDTO, ExplanationDTO, HealthDTO, MetricDTO,
                         ProvenanceDTO, RoutingDTO, SpecialistStatusDTO,
-                        BusinessRecommendationDTO, BusinessActionDTO)
+                        BusinessRecommendationDTO, BusinessActionDTO,
+                        BusinessDecisionPlanDTO, BusinessDecisionStepDTO)
 from application_models import AnalysisRequest
 from application_service import AnalysisService
 
@@ -63,10 +64,28 @@ def analyze(payload: AnalysisRequestDTO, request: Request, service: AnalysisServ
             supporting_metrics=list(projection.recommendation.supporting_metrics),
             warnings=list(projection.recommendation.warnings),
             actions=[BusinessActionDTO(
+                id=item.id,
                 category=item.category,
                 action=item.action,
                 rationale=item.rationale,
                 supporting_metrics=list(item.supporting_metrics),
             ) for item in projection.recommendation.actions],
+            decision_plan=(BusinessDecisionPlanDTO(
+                steps=[BusinessDecisionStepDTO(
+                    id=step.id,
+                    category=step.category,
+                    action=step.action,
+                    rationale=step.rationale,
+                    supporting_metrics=list(step.supporting_metrics),
+                    horizon=step.horizon,
+                    decision_state=step.decision_state,
+                    depends_on=list(step.depends_on),
+                    missing_information=list(step.missing_information),
+                    source_action_id=step.source_action_id,
+                    source_agent=step.source_agent,
+                ) for step in projection.recommendation.decision_plan.steps],
+                is_complete=projection.recommendation.decision_plan.is_complete,
+                warnings=list(projection.recommendation.decision_plan.warnings),
+            ) if projection.recommendation.decision_plan is not None else None),
         ) if projection.recommendation is not None else None),
     )

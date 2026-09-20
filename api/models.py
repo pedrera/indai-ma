@@ -53,10 +53,31 @@ class DiagnosticsDTO(BaseModel):
 
 
 class BusinessActionDTO(BaseModel):
+    id: str | None = None
     category: str
     action: str
     rationale: str | None = None
     supporting_metrics: list[tuple[str, str]] = []
+
+
+class BusinessDecisionStepDTO(BaseModel):
+    id: str
+    category: str
+    action: str
+    rationale: str | None = None
+    supporting_metrics: list[tuple[str, str]] = []
+    horizon: str | None = None
+    decision_state: str = "review_required"
+    depends_on: list[str] = []
+    missing_information: list[str] = []
+    source_action_id: str | None = None
+    source_agent: str | None = None
+
+
+class BusinessDecisionPlanDTO(BaseModel):
+    steps: list[BusinessDecisionStepDTO] = []
+    is_complete: bool
+    warnings: list[str] = []
 
 
 class BusinessRecommendationDTO(BaseModel):
@@ -69,6 +90,7 @@ class BusinessRecommendationDTO(BaseModel):
     supporting_metrics: list[tuple[str, str]] = []
     warnings: list[str] = []
     actions: list[BusinessActionDTO] = []
+    decision_plan: BusinessDecisionPlanDTO | None = None
 
 
 class AnalysisResponseDTO(BaseModel):

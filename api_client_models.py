@@ -50,10 +50,31 @@ class ApiDiagnostics(BaseModel):
 
 
 class ApiBusinessAction(BaseModel):
+    id: str | None = None
     category: str
     action: str
     rationale: str | None = None
     supporting_metrics: list[tuple[str, str]] = []
+
+
+class ApiDecisionStep(BaseModel):
+    id: str
+    category: str
+    action: str
+    rationale: str | None = None
+    supporting_metrics: list[tuple[str, str]] = []
+    horizon: str | None = None
+    decision_state: str = "review_required"
+    depends_on: list[str] = []
+    missing_information: list[str] = []
+    source_action_id: str | None = None
+    source_agent: str | None = None
+
+
+class ApiDecisionPlan(BaseModel):
+    steps: list[ApiDecisionStep] = []
+    is_complete: bool
+    warnings: list[str] = []
 
 
 class ApiBusinessRecommendation(BaseModel):
@@ -66,6 +87,7 @@ class ApiBusinessRecommendation(BaseModel):
     supporting_metrics: list[tuple[str, str]] = []
     warnings: list[str] = []
     actions: list[ApiBusinessAction] = []
+    decision_plan: ApiDecisionPlan | None = None
 
 
 class ApiAnalysisResult(BaseModel):

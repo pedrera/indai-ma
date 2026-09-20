@@ -89,6 +89,42 @@ class ApiClientTests(unittest.TestCase):
         self.assertEqual(result.recommendation.risk_implication, 'Con un aumento del spot del 20%, la exposición pasa de 21000 a 25200 EUR (+4200 EUR).')
         self.assertEqual(result.recommendation.actions, [])
 
+    def test_decision_plan_round_trip_preserves_order_and_all_transport_fields(self):
+        payload = dict(PAYLOAD)
+        payload['recommendation'] = {
+            'action': 'Cubrir SHORT.', 'is_complete': True,
+            'actions': [{'id': 'operational-short', 'category': 'operational', 'action': 'Cubrir.',
+                         'supporting_metrics': [['SHORT', '0.5 GWh']]}],
+            'decision_plan': {
+                'is_complete': True, 'warnings': ['seguimiento'],
+                'steps': [{
+                    'id': 'operational-short', 'category': 'operational', 'action': 'Cubrir.',
+                    'rationale': 'SHORT estructurado.', 'supporting_metrics': [['SHORT', '999 GWh']],
+                    'horizon': 'current_period', 'decision_state': 'review_required',
+                    'depends_on': ['synthetic-source'], 'missing_information': ['dato futuro'],
+                    'source_action_id': 'operational-short', 'source_agent': 'ProcurementAgent',
+                }],
+            },
+        }
+        result = self.client(lambda request: httpx.Response(200, json=payload)).analyze('x')
+        recommendation = result.recommendation
+        self.assertEqual(recommendation.actions[0].id, 'operational-short')
+        step = recommendation.decision_plan.steps[0]
+        self.assertEqual(step.id, 'operational-short')
+        self.assertEqual(step.supporting_metrics, [('SHORT', '999 GWh')])
+        self.assertEqual(step.depends_on, ['synthetic-source'])
+        self.assertEqual(step.missing_information, ['dato futuro'])
+        self.assertEqual(step.source_agent, 'ProcurementAgent')
+        self.assertEqual(recommendation.decision_plan.warnings, ['seguimiento'])
+
+    def test_decision_plan_and_action_id_are_optional_for_legacy_payloads(self):
+        payload = dict(PAYLOAD)
+        payload['recommendation'] = {'action': 'Mantener.', 'is_complete': True,
+                                     'actions': [{'category': 'operational', 'action': 'Revisar.'}]}
+        result = self.client(lambda request: httpx.Response(200, json=payload)).analyze('x')
+        self.assertIsNone(result.recommendation.decision_plan)
+        self.assertIsNone(result.recommendation.actions[0].id)
+
     def test_api_client_reconstructs_business_actions_in_order(self):
         payload = dict(PAYLOAD)
         payload['recommendation'] = {
