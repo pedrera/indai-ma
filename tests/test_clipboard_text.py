@@ -84,9 +84,15 @@ class ClipboardResponseTests(unittest.TestCase):
         self.assertEqual(text.count("Rationale visible una vez."), 1)
 
     def test_decision_dependency_mapping_preserves_unknown_ids(self):
-        from clipboard_text import decision_dependency_label
+        from clipboard_text import (decision_dependency_label, decision_missing_information_label,
+                                     decision_readiness_label)
         self.assertEqual(decision_dependency_label("operational-short"), "Cobertura del SHORT operativo")
         self.assertEqual(decision_dependency_label("synthetic-source"), "synthetic-source")
+        self.assertEqual(decision_readiness_label("READY"), "Completa")
+        self.assertEqual(decision_readiness_label("PARTIALLY_READY"), "Parcial")
+        self.assertEqual(decision_readiness_label("BLOCKED"), "Insuficiente")
+        self.assertEqual(decision_missing_information_label("spot_price_eur_mwh"), "Precio spot")
+        self.assertEqual(decision_missing_information_label("synthetic-input"), "synthetic-input")
     def test_plain_response_preserves_markdown_and_line_breaks(self):
         content = "## Resultado\n\nLínea uno\nLínea dos"
         self.assertEqual(build_response_clipboard_text(content), content)

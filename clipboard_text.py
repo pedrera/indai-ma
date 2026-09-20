@@ -10,11 +10,29 @@ _PLAN_CATEGORY_LABELS = {"operational": "OPERATIVA", "contractual": "CONTRACTUAL
 _PLAN_HORIZON_LABELS = {"current_period": "PERIODO ACTUAL", "before_period_close": "ANTES DEL CIERRE", "monitoring": "SEGUIMIENTO"}
 _PLAN_STATE_LABELS = {"review_required": "Requiere revisión", "monitor": "Monitorizar", "no_action": "Sin acción", "blocked": "Bloqueado"}
 _DECISION_DEPENDENCY_LABELS = {"operational-short": "Cobertura del SHORT operativo"}
+_READINESS_LABELS = {"READY": "Completa", "PARTIALLY_READY": "Parcial", "BLOCKED": "Insuficiente"}
+_MISSING_INFORMATION_LABELS = {
+    "spot_price_eur_mwh": "Precio spot",
+    "forecast_demand_gwh": "Previsión de demanda",
+    "expected_demand_gwh": "Demanda esperada",
+    "contracted_supply_gwh": "Suministro contratado",
+    "cumulative_consumption_gwh": "Consumo acumulado",
+    "remaining_forecast_consumption_gwh": "Previsión de consumo restante",
+    "take_or_pay_minimum_gwh": "Mínimo contractual take-or-pay",
+}
 
 
 def decision_dependency_label(value: str) -> str:
     """Map a technical decision dependency ID to presentation text only."""
     return _DECISION_DEPENDENCY_LABELS.get(value, value)
+
+
+def decision_readiness_label(value: str) -> str:
+    return _READINESS_LABELS.get(value, value)
+
+
+def decision_missing_information_label(value: str) -> str:
+    return _MISSING_INFORMATION_LABELS.get(value, value)
 
 
 SENSITIVE_KEY_PARTS = (
@@ -155,17 +173,22 @@ def build_business_copy_payload(result: Any, *, operation_id: str | None = None,
             plan_lines = []
             if not plan.is_complete:
                 plan_lines.append("Plan incompleto: falta información para algunos pasos.")
+            if plan.readiness is not None:
+                plan_lines.append(f"Información del plan: {decision_readiness_label(plan.readiness)}")
             for index, step in enumerate(plan.steps, 1):
                 category = _PLAN_CATEGORY_LABELS.get(step.category, step.category.upper())
                 horizon = _PLAN_HORIZON_LABELS.get(step.horizon, step.horizon or "")
                 prefix = " · ".join(item for item in (horizon, category) if item)
                 plan_lines.extend([f"{index}. [{prefix}] {step.action}",
                                    f"   Estado: {_PLAN_STATE_LABELS.get(step.decision_state, step.decision_state)}"])
+                if step.readiness is not None:
+                    plan_lines.append(f"   Información: {decision_readiness_label(step.readiness)}")
                 if step.depends_on:
                     plan_lines.append("   Relacionado con: " + ", ".join(
                         decision_dependency_label(value) for value in step.depends_on))
                 if step.missing_information:
-                    plan_lines.append("   Información necesaria: " + ", ".join(step.missing_information))
+                    plan_lines.append("   Falta:")
+                    plan_lines.extend(f"   - {decision_missing_information_label(item)}" for item in step.missing_information)
             plan_lines.extend(f"Aviso del plan: {warning}" for warning in plan.warnings)
             _copy_section(lines, "PLAN DE DECISIÓN", plan_lines)
         actions = getattr(recommendation, "actions", ())

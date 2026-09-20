@@ -1,5 +1,6 @@
 import streamlit as st
-from clipboard_text import decision_dependency_label
+from clipboard_text import (decision_dependency_label, decision_missing_information_label,
+                             decision_readiness_label)
 
 
 _PLAN_CATEGORY_LABELS = {"operational": "Operativa", "contractual": "Contractual", "risk": "Riesgo"}
@@ -13,6 +14,8 @@ def _render_decision_plan(plan):
     st.markdown("**PLAN DE DECISIÓN**")
     if not plan.is_complete:
         st.info("Plan incompleto: falta información para algunos pasos.")
+    if plan.readiness is not None:
+        st.caption(f"Información del plan: {decision_readiness_label(plan.readiness)}")
     for index, step in enumerate(plan.steps, 1):
         category = _PLAN_CATEGORY_LABELS.get(step.category, step.category)
         horizon = _PLAN_HORIZON_LABELS.get(step.horizon, step.horizon or "")
@@ -21,13 +24,15 @@ def _render_decision_plan(plan):
         st.write(step.action)
         state = _PLAN_STATE_LABELS.get(step.decision_state, step.decision_state)
         st.write(f"Estado: {state}")
+        if step.readiness is not None:
+            st.write(f"Información: {decision_readiness_label(step.readiness)}")
         if step.depends_on:
             st.caption("Relacionado con: " + ", ".join(
                 decision_dependency_label(value) for value in step.depends_on))
         if step.missing_information:
-            st.write("Información necesaria:")
+            st.write("Falta:")
             for item in step.missing_information:
-                st.write(f"- {item}")
+                st.write(f"- {decision_missing_information_label(item)}")
     for warning in plan.warnings:
         st.caption(f"Aviso del plan: {warning}")
 
