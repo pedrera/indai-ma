@@ -41,6 +41,12 @@ def _commercial_surcharge(item):
                  if fact.name == "excess_surcharge_eur_mwh"), None)
 
 
+def _risk_number(value):
+    if value is None:
+        return None
+    return f"{value:,.0f}" if isinstance(value, (int, float)) and float(value).is_integer() else f"{value:g}"
+
+
 def compose_business_recommendation(supervisor_result: "SupervisorResult") -> BusinessRecommendation:
     """Compose conclusions from specialist outputs without recalculating them."""
     specialists = {item.agent_name: item for item in supervisor_result.specialist_results}
@@ -54,6 +60,7 @@ def compose_business_recommendation(supervisor_result: "SupervisorResult") -> Bu
     operational = None
     risk_text = None
     missing: list[str] = []
+    incomplete_risk = False
 
     calculation = _commercial_calculation(commercial)
     excess = calculation.get("contractual_excess_gwh")
@@ -101,10 +108,37 @@ def compose_business_recommendation(supervisor_result: "SupervisorResult") -> Bu
         if base:
             risk_text = f"La posición de riesgo base es {base.interpretation} por {base.short_position_gwh:g} GWh."
             rationale.append(risk_text)
-        if risk.result.stress_scenarios:
-            names = ", ".join(s.name for s in risk.result.stress_scenarios)
-            risk_text = (risk_text + " " if risk_text else "") + f"Se incorporan los escenarios existentes: {names}."
-        elif not base:
+        stress = list(risk.result.stress_scenarios)
+        deltas = list(getattr(risk.result, "deltas", ()))
+        for scenario_index, scenario in enumerate(stress):
+            scenario_type = getattr(scenario, "scenario_type", "DEMAND")
+            if scenario_type == "PRICE":
+                scenario_name = getattr(scenario, "name", None)
+                delta = next((item for item in deltas
+                              if getattr(item, "scenario_name", None) == scenario_name), None)
+                if delta is None and scenario_index < len(deltas):
+                    candidate = deltas[scenario_index]
+                    if getattr(candidate, "scenario_type", "PRICE") == "PRICE":
+                        delta = candidate
+                if (base is None or base.spot_price_eur_mwh is None or
+                        scenario.spot_price_eur_mwh is None or base.spot_exposure_eur is None or
+                        scenario.spot_exposure_eur is None or delta is None or
+                        delta.exposure_change_eur is None):
+                    incomplete_risk = True
+                    warnings.append(f"El escenario PRICE {scenario.stress_percent:g}% no tiene exposición monetaria completa.")
+                    continue
+                line = (f"Con un aumento del spot del {scenario.stress_percent:g}%, el precio pasa de "
+                        f"{_risk_number(base.spot_price_eur_mwh)} a {_risk_number(scenario.spot_price_eur_mwh)} EUR/MWh "
+                        f"y la exposición del SHORT pasa de {_risk_number(base.spot_exposure_eur)} a "
+                        f"{_risk_number(scenario.spot_exposure_eur)} EUR ({delta.exposure_change_eur:+,.0f} EUR).")
+                risk_text = (risk_text + " " if risk_text else "") + line
+                rationale.append(line)
+                metrics.append((f"Exposición PRICE {scenario.stress_percent:+g}%", f"{_risk_number(scenario.spot_exposure_eur)} EUR"))
+            elif scenario_type == "DEMAND":
+                line = f"Escenario de demanda {scenario.stress_percent:+g}%: {scenario.demand_gwh:g} GWh."
+                risk_text = (risk_text + " " if risk_text else "") + line
+                rationale.append(line)
+        if not stress and not base:
             missing.append("posición de riesgo")
 
     if commercial and not calculation:
@@ -121,5 +155,7 @@ def compose_business_recommendation(supervisor_result: "SupervisorResult") -> Bu
     else:
         action = "Cubrir el SHORT operativo." if interpretation == "SHORT" else "Revisar las implicaciones identificadas."
         complete = bool(rationale)
+    if incomplete_risk:
+        complete = False
     return BusinessRecommendation(action, complete, tuple(rationale), contractual, operational, risk_text,
                                   tuple(metrics), tuple(dict.fromkeys(warnings)))
