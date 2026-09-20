@@ -206,6 +206,14 @@ class ExecutionUXTests(unittest.TestCase):
                             'depends_on': ['operational-short'], 'missing_information': [],
                             'readiness': 'READY',
                             'source_action_id': 'operational-short', 'source_agent': 'ProcurementAgent',
+                            'alternatives': [
+                                {'id': 'operational-short-full', 'label': 'Evaluar cobertura completa',
+                                 'description': 'Evaluar la cobertura completa del SHORT operativo.',
+                                 'source_step_id': 'operational-short'},
+                                {'id': 'operational-short-partial', 'label': 'Evaluar cobertura parcial',
+                                 'description': 'Evaluar una cobertura parcial del SHORT operativo.',
+                                 'source_step_id': 'operational-short'},
+                            ],
                         }],
                     },
                 },
@@ -228,6 +236,9 @@ class ExecutionUXTests(unittest.TestCase):
             self.assertTrue(any('Información del plan: Completa' in item.value
                                 for item in (*app.caption, *app.markdown)))
             self.assertTrue(any('Información: Completa' in item.value for item in app.markdown))
+            self.assertTrue(any('Opciones a considerar:' in item.value for item in app.markdown))
+            self.assertTrue(any('Evaluar cobertura completa' in item.value for item in app.markdown))
+            self.assertFalse(any('operational-short-full' in item.value for item in app.markdown))
 
     def test_mode_switch_indexing_and_clipboard_keep_visible_operation(self):
         copied = []

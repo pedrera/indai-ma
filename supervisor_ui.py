@@ -33,6 +33,11 @@ def _render_decision_plan(plan):
             st.write("Falta:")
             for item in step.missing_information:
                 st.write(f"- {decision_missing_information_label(item)}")
+        alternatives = getattr(step, "alternatives", ())
+        if alternatives:
+            st.write("Opciones a considerar:")
+            for alternative in alternatives:
+                st.write(f"- {alternative.label}")
     for warning in plan.warnings:
         st.caption(f"Aviso del plan: {warning}")
 

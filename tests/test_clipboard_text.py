@@ -73,7 +73,13 @@ class ClipboardResponseTests(unittest.TestCase):
                 "decision_plan": {"steps": [{"id": "operational-short", "category": "operational",
                     "action": "Cubrir SHORT.", "rationale": "No repetir", "supporting_metrics": [["SHORT", "0.5 GWh"]],
                     "horizon": "current_period", "decision_state": "review_required", "depends_on": [],
-                    "missing_information": [], "source_action_id": "operational-short", "source_agent": "ProcurementAgent"}],
+                    "missing_information": [], "source_action_id": "operational-short", "source_agent": "ProcurementAgent",
+                    "alternatives": [{"id": "operational-short-full", "label": "Evaluar cobertura completa",
+                                      "description": "Evaluar la cobertura completa del SHORT operativo.",
+                                      "source_step_id": "operational-short"},
+                                     {"id": "operational-short-partial", "label": "Evaluar cobertura parcial",
+                                      "description": "Evaluar una cobertura parcial del SHORT operativo.",
+                                      "source_step_id": "operational-short"}]}],
                     "is_complete": True, "warnings": []},
             },
         })
@@ -82,6 +88,11 @@ class ClipboardResponseTests(unittest.TestCase):
         self.assertIn("[PERIODO ACTUAL · OPERATIVA]", text)
         self.assertLess(text.index("PLAN DE DECISIÓN"), text.index("ACCIONES RECOMENDADAS"))
         self.assertEqual(text.count("Rationale visible una vez."), 1)
+        self.assertIn("Opciones a considerar:", text)
+        self.assertIn("Evaluar cobertura completa", text)
+        self.assertIn("Evaluar la cobertura completa del SHORT operativo.", text)
+        self.assertNotIn("operational-short-full", text)
+        self.assertNotIn("source_step_id", text)
 
     def test_decision_dependency_mapping_preserves_unknown_ids(self):
         from clipboard_text import (decision_dependency_label, decision_missing_information_label,

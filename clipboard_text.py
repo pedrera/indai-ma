@@ -189,6 +189,14 @@ def build_business_copy_payload(result: Any, *, operation_id: str | None = None,
                 if step.missing_information:
                     plan_lines.append("   Falta:")
                     plan_lines.extend(f"   - {decision_missing_information_label(item)}" for item in step.missing_information)
+                alternatives = getattr(step, "alternatives", ())
+                if alternatives:
+                    plan_lines.append("   Opciones a considerar:")
+                    for alternative in alternatives:
+                        plan_lines.extend([
+                            f"   - {alternative.label}",
+                            f"     {alternative.description}",
+                        ])
             plan_lines.extend(f"Aviso del plan: {warning}" for warning in plan.warnings)
             _copy_section(lines, "PLAN DE DECISIÓN", plan_lines)
         actions = getattr(recommendation, "actions", ())
