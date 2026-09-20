@@ -63,6 +63,23 @@ def compose_business_recommendation(supervisor_result: "SupervisorResult") -> Bu
     incomplete_risk = False
 
     calculation = _commercial_calculation(commercial)
+    top_projection = getattr(getattr(commercial, "result", None), "take_or_pay_projection", None)
+    if top_projection is not None:
+        if top_projection.status == "BELOW_MINIMUM":
+            contractual = (f"El consumo anual proyectado es de {top_projection.projected_annual_consumption_gwh:g} GWh, "
+                           f"{top_projection.projected_take_or_pay_deficit_gwh:g} GWh por debajo del mínimo take-or-pay "
+                           f"de {top_projection.take_or_pay_minimum_gwh:g} GWh.")
+            rationale.append(contractual + " Es una proyección; revisar la previsión y las opciones contractuales antes del cierre del periodo.")
+        elif top_projection.status == "AT_MINIMUM":
+            contractual = (f"El consumo anual proyectado alcanza exactamente el mínimo take-or-pay de "
+                           f"{top_projection.take_or_pay_minimum_gwh:g} GWh.")
+            rationale.append(contractual + " Realizar seguimiento de la previsión hasta el cierre del periodo.")
+        else:
+            contractual = (f"El consumo anual proyectado es de {top_projection.projected_annual_consumption_gwh:g} GWh, "
+                           f"por encima del mínimo take-or-pay de {top_projection.take_or_pay_minimum_gwh:g} GWh.")
+            rationale.append(contractual)
+        metrics.append(("Consumo anual proyectado", f"{top_projection.projected_annual_consumption_gwh:g} GWh"))
+        metrics.append(("Déficit take-or-pay proyectado", f"{top_projection.projected_take_or_pay_deficit_gwh:g} GWh"))
     excess = calculation.get("contractual_excess_gwh")
     forecast = calculation.get("forecast_demand_gwh")
     contractual_min = calculation.get("contractual_min_gwh")
@@ -155,7 +172,7 @@ def compose_business_recommendation(supervisor_result: "SupervisorResult") -> Bu
         if not stress and not base:
             missing.append("posición de riesgo")
 
-    if commercial and not calculation:
+    if commercial and not calculation and top_projection is None and not getattr(getattr(commercial, "result", None), "contract_facts", ()):
         missing.append("resultado contractual")
     if procurement and procurement.result and not position:
         missing.append("posición de aprovisionamiento")

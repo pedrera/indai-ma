@@ -2,6 +2,7 @@ from enum import Enum
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from take_or_pay import TakeOrPayProjection
 
 
 class CommercialStatus(str, Enum):
@@ -74,6 +75,7 @@ class CommercialAgentResult(BaseModel):
     tools_used: list[str] = Field(default_factory=list)
     summary: str
     tool_executions: list[dict] = Field(default_factory=list)
+    take_or_pay_projection: TakeOrPayProjection | None = None
 
     @property
     def content(self) -> str:

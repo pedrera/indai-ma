@@ -2,6 +2,7 @@ import unittest
 from types import SimpleNamespace
 
 from business_recommendation import compose_business_recommendation
+from take_or_pay import calculate_take_or_pay_projection
 
 
 def specialist(name, result):
@@ -143,6 +144,18 @@ class BusinessRecommendationTests(unittest.TestCase):
             specialist_results=[specialist("RiskAgent", risk)]))
         self.assertFalse(recommendation.is_complete)
         self.assertTrue(recommendation.warnings)
+
+    def test_take_or_pay_projection_is_composed_without_recalculation_or_procurement_mix(self):
+        projection = calculate_take_or_pay_projection(40.8, 30, 8)
+        commercial = SimpleNamespace(calculations=[], contract_facts=[], take_or_pay_projection=projection)
+        result = SimpleNamespace(specialist_results=[specialist("CommercialAgent", commercial)])
+        recommendation = compose_business_recommendation(result)
+        self.assertTrue(recommendation.is_complete)
+        self.assertIn("38", recommendation.contractual_implication)
+        self.assertIn("2.8", recommendation.contractual_implication)
+        self.assertIn("40.8", recommendation.contractual_implication)
+        self.assertNotIn("comprar", recommendation.action.lower())
+        self.assertNotIn("SHORT", " ".join(recommendation.rationale))
 
 
 if __name__ == "__main__":

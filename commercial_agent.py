@@ -16,6 +16,7 @@ from contractual_analysis import extract_contractual_volume_terms, calculate_con
 from gas_analysis import parse_scenario_input
 from llm_client import GenerationCancelledError, GenerationOptions, LLMTimeoutError
 from tool_registry import LocalToolRegistry
+from take_or_pay import calculate_take_or_pay_projection, parse_take_or_pay_inputs
 
 
 class ProviderCommercialModel:
@@ -147,6 +148,23 @@ class CommercialAgent:
                 result.contract_facts.append(ContractFact(name=field, value=value, unit=unit,
                     evidence=matches[index].chunk.text, source=sources[index]))
         self._additional_facts(matches, sources, result)
+        top_requested = bool(re.search(r"take\s*-?\s*or\s*-?\s*pay|m[ií]nimo\s+(?:contractual|anual)|riesgo.{0,30}take", request, re.I))
+        top_inputs = parse_take_or_pay_inputs(request) if top_requested else None
+        top_evaluation = top_requested and bool(re.search(
+            r"riesgo|proyec|acumul|restante|esperamos\s+consumir|consumo\s+previsto", request, re.I))
+        top_minimum = next((f.value for f in result.contract_facts if f.name == "take_or_pay_minimum_gwh"), None)
+        if top_evaluation:
+            if top_inputs.cumulative_consumption_gwh is None:
+                result.warnings.append("Falta consumo acumulado para proyectar take-or-pay.")
+            if top_inputs.remaining_forecast_consumption_gwh is None:
+                result.warnings.append("Falta previsión de consumo restante para proyectar take-or-pay.")
+            if top_minimum is None:
+                result.warnings.append("Falta mínimo contractual take-or-pay.")
+            if (top_minimum is not None and top_inputs.cumulative_consumption_gwh is not None
+                    and top_inputs.remaining_forecast_consumption_gwh is not None):
+                result.take_or_pay_projection = calculate_take_or_pay_projection(
+                    top_minimum, top_inputs.cumulative_consumption_gwh,
+                    top_inputs.remaining_forecast_consumption_gwh)
         parsed = parse_scenario_input(request)
         forecast = _single(parsed.base_demand_candidates)
         spot = _single(parsed.spot_price_candidates)
@@ -182,7 +200,7 @@ class CommercialAgent:
                             informational_warnings.append(warning)
             else:
                 result.warnings.append("Falta volumen mensual de referencia o flexibilidad inequívoca; no se calcula el exceso.")
-        elif re.search(r"consum|previ|prevé|exceso|margen", request, re.I):
+        elif not top_evaluation and re.search(r"consum|previ|prevé|exceso|margen", request, re.I):
             result.warnings.append("No hay una previsión mensual inequívoca para calcular el exceso.")
         if re.search(r"margen|rentabilidad|beneficio", request, re.I):
             self._margin(parsed, forecast, result)

@@ -82,6 +82,26 @@ class CommercialAgentTests(unittest.TestCase):
         self.assertIn("Spot + 4", result.summary)
         self.assertNotIn("calculate_margin", result.tools_used)
 
+    def test_take_or_pay_projection_is_structured_and_temporal_inputs_are_not_monthly(self):
+        query = ("Analiza el take-or-pay de Hospital Costa Sur. El consumo acumulado es de 30 GWh "
+                 "y esperamos consumir otros 8 GWh hasta final de año.")
+        result = self.run_agent(query)
+        self.assertEqual(result.take_or_pay_projection.projected_annual_consumption_gwh, 38)
+        self.assertEqual(result.take_or_pay_projection.projected_take_or_pay_deficit_gwh, 2.8)
+        self.assertEqual(result.take_or_pay_projection.status, "BELOW_MINIMUM")
+        self.assertFalse(result.calculations)
+        self.assertFalse(any("previsión mensual" in warning.lower() for warning in result.warnings))
+
+    def test_take_or_pay_minimum_only_does_not_require_temporal_inputs(self):
+        result = self.run_agent("¿Cuál es el mínimo take-or-pay de Hospital Costa Sur?")
+        self.assertIsNone(result.take_or_pay_projection)
+        self.assertFalse(any("proyectar take-or-pay" in warning for warning in result.warnings))
+
+    def test_take_or_pay_missing_remaining_is_incomplete(self):
+        result = self.run_agent("Tenemos un consumo acumulado de 30 GWh. ¿Tenemos riesgo de take-or-pay?")
+        self.assertIsNone(result.take_or_pay_projection)
+        self.assertTrue(any("previsión de consumo restante" in warning for warning in result.warnings))
+
     def test_contract_values_are_not_hard_coded(self):
         matches = [replace(m, chunk=replace(m.chunk, text=m.chunk.text.replace("4 GWh", "5 GWh")))
                    for m in contract_matches()]
