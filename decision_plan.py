@@ -4,6 +4,14 @@ from typing import Literal
 
 
 @dataclass(frozen=True)
+class DecisionAlternative:
+    id: str
+    label: str
+    description: str
+    source_step_id: str
+
+
+@dataclass(frozen=True)
 class DecisionStep:
     id: str
     category: Literal["operational", "contractual", "risk"]
@@ -17,6 +25,7 @@ class DecisionStep:
     source_action_id: str | None = None
     source_agent: str | None = None
     readiness: Literal["READY", "PARTIALLY_READY", "BLOCKED"] | None = None
+    alternatives: tuple[DecisionAlternative, ...] = ()
 
 
 @dataclass(frozen=True)

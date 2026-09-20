@@ -261,6 +261,8 @@ def compose_business_recommendation(supervisor_result: "SupervisorResult") -> Bu
     )
     from decision_readiness import compose_decision_readiness
     decision_plan = compose_decision_readiness(supervisor_result, None, decision_plan)
+    from decision_alternatives import compose_decision_alternatives
+    decision_plan = compose_decision_alternatives(decision_plan)
     return BusinessRecommendation(action, complete, tuple(rationale), contractual, operational, risk_text,
                                   tuple(metrics), tuple(dict.fromkeys(warnings)), actions,
                                   decision_plan)
