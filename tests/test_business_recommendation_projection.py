@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 
 from business_output import build_supervisor_executive_sections
 from business_recommendation import BusinessRecommendation
@@ -77,6 +78,32 @@ class BusinessRecommendationProjectionTests(unittest.TestCase):
                 ]})
                 explanations = dict(build_supervisor_executive_sections(result).explanations)
                 self.assertEqual(explanations["Riesgo"], expected)
+
+    def test_integrated_separation_only_mentions_short_when_position_is_short(self):
+        commercial = SimpleNamespace(comparison=None, calculations=[SimpleNamespace(
+            result={"forecast_demand_gwh": 3.6, "contractual_min_gwh": 3.4,
+                    "contractual_max_gwh": 4.6, "contractual_excess_gwh": 0},
+            inputs={})], contract_facts=[], summary="Contrato", warnings=[])
+
+        def projected(interpretation, position):
+            procurement = SimpleNamespace(result=SimpleNamespace(
+                tool_executions=[{"name": "calculate_supply_position", "result": {
+                    "interpretation": interpretation, "position_gwh": position,
+                    "short_position_gwh": max(-position, 0)}}],
+                content="Aprovisionamiento", warnings=[]), agent_name="ProcurementAgent")
+            commercial_item = SimpleNamespace(result=commercial, agent_name="CommercialAgent")
+            return build_supervisor_executive_sections(SimpleNamespace(
+                warnings=[], specialist_results=[commercial_item, procurement], recommendation=None))
+
+        short = projected("SHORT", -0.5)
+        self.assertTrue(any("SHORT" in text for _, text in short.explanations))
+        self.assertIn("SHORT", short.summary)
+
+        for interpretation, position in (("LONG", 0.7), ("BALANCED", 0.0)):
+            with self.subTest(interpretation=interpretation):
+                result = projected(interpretation, position)
+                self.assertNotIn("SHORT", result.summary)
+                self.assertFalse(any("SHORT" in text for _, text in result.explanations))
 
 
 if __name__ == "__main__":

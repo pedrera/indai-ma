@@ -159,7 +159,12 @@ def build_supervisor_executive_sections(result) -> ExecutiveResultProjection:
     for item in result.specialist_results:
         if item.result is None and item.error:
             warnings.append(f"{item.agent_name}: {item.error}")
-    if commercial and procurement:
+    procurement_interpretation = None
+    if procurement and procurement.result:
+        position_execution = next((item for item in procurement.result.tool_executions
+                                    if item.get("name") == "calculate_supply_position"), None)
+        procurement_interpretation = (position_execution or {}).get("result", {}).get("interpretation")
+    if commercial and procurement and procurement_interpretation == "SHORT":
         explanations.append(("Implicación integrada", "El exceso contractual y el SHORT de aprovisionamiento son magnitudes distintas y no deben sumarse ni sustituirse."))
     conclusions = []
     if commercial and commercial.result and commercial.result.comparison is not None:
@@ -179,7 +184,7 @@ def build_supervisor_executive_sections(result) -> ExecutiveResultProjection:
             conclusions.append(f"Posición de aprovisionamiento {position['result'].get('interpretation')} de {_fmt(abs(position['result'].get('position_gwh', 0)), 'GWh')}.")
         if exposure and exposure["result"].get("exposure_eur") is not None:
             conclusions.append(f"Exposición spot calculada de {_fmt(exposure['result']['exposure_eur'], 'EUR')}.")
-    if commercial_calc and procurement_result:
+    if commercial_calc and procurement_result and procurement_interpretation == "SHORT":
         conclusions.append("El exceso contractual y el SHORT de aprovisionamiento son magnitudes distintas.")
     risk_result = next((item.result for item in result.specialist_results if item.agent_name == "RiskAgent" and item.result), None)
     if risk_result and risk_result.base_scenario:
