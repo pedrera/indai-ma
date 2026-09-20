@@ -299,7 +299,7 @@ def extract_stress_percentages(text: str) -> tuple[list[float], list[float]]:
     for match in PRICE_VARIATION_PATTERN.finditer(text):
         value = _parse_numeric_value(match)
         prefix = text[max(0, match.start() - 40):match.start()].casefold()
-        if re.search(r"(?:baja|bajar|cae|caer|disminuye)(?:\s+un)?\s*$", prefix):
+        if re.search(r"(?:baja|bajar|cae|caer|disminu\w*)(?:\s+un)?\s*$", prefix):
             value = -abs(value)
         prices.append(value)
         price_spans.append(match.span())
@@ -309,7 +309,7 @@ def extract_stress_percentages(text: str) -> tuple[list[float], list[float]]:
             continue
         value = float(match.group(0).replace(" ", "").replace(",", ".").rstrip("%"))
         prefix = text[max(0, match.start() - 40):match.start()].casefold()
-        if re.search(r"(?:baja|bajar|cae|caer|disminuye|reducci[oó]n|reduce)(?:\s+un)?\s*$", prefix):
+        if re.search(r"(?:baja|bajar|cae|caer|disminu\w*|reducci[oó]n|reduce)(?:\s+un)?\s*$", prefix):
             value = -abs(value)
         demands.append(value)
     return list(dict.fromkeys(demands)), list(dict.fromkeys(prices))

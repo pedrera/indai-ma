@@ -52,6 +52,35 @@ class RiskAgentTests(unittest.TestCase):
         self.assertEqual(delta.exposure_change_eur, 20160)
         self.assertEqual(result.risk_findings[1].direction, "worsening")
 
+    def test_price_stress_changes_only_spot_and_exposure(self):
+        query = REFERENCE.replace("aumentase un 10 %", "el spot sube un 20 %")
+        result = self.run_risk(query)
+        self.assertEqual(result.status, RiskStatus.COMPLETED)
+        base, stress, delta = result.base_scenario, result.stress_scenarios[0], result.deltas[0]
+        self.assertEqual(stress.scenario_type, "PRICE")
+        self.assertEqual(stress.stress_percent, 20)
+        self.assertEqual(stress.demand_gwh, base.demand_gwh)
+        self.assertEqual(stress.supply_gwh, base.supply_gwh)
+        self.assertEqual(stress.spot_price_eur_mwh, 50.4)
+        self.assertEqual(stress.position_gwh, -.5)
+        self.assertEqual(stress.interpretation, "SHORT")
+        self.assertEqual(stress.spot_exposure_eur, 25200)
+        self.assertEqual(delta.scenario_type, "PRICE")
+        self.assertEqual(delta.exposure_change_eur, 4200)
+
+    def test_combined_demand_and_price_stress_are_independent(self):
+        result = self.run_risk(REFERENCE.replace("aumentase un 10 %", "la demanda aumentase un 10 % y el spot sube un 20 %"))
+        self.assertEqual([s.scenario_type for s in result.stress_scenarios], ["DEMAND", "PRICE"])
+        self.assertEqual([s.demand_gwh for s in result.stress_scenarios], [5.28, 4.8])
+        self.assertEqual([s.spot_price_eur_mwh for s in result.stress_scenarios], [42, 50.4])
+
+    def test_price_stress_without_spot_is_safe(self):
+        result = self.run_risk(REFERENCE.replace(" y el precio spot es de 42 EUR/MWh", "").replace("aumentase un 10 %", "el spot sube un 20 %"))
+        self.assertEqual(result.status, RiskStatus.PARTIAL)
+        self.assertIsNone(result.stress_scenarios[0].spot_price_eur_mwh)
+        self.assertIsNone(result.stress_scenarios[0].spot_exposure_eur)
+        self.assertIsNone(result.deltas[0].exposure_change_eur)
+
     def test_existing_tools_execute_in_scenario_order(self):
         registry = Mock(wraps=LocalToolRegistry(("calculate_demand_scenario", "calculate_supply_position", "calculate_spot_exposure")))
         self.run_risk(registry=registry)

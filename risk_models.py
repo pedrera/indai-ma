@@ -41,6 +41,8 @@ class RiskScenarioResult(RiskModel):
 
 
 class RiskDelta(RiskModel):
+    scenario_type: Literal["DEMAND", "PRICE"] = "DEMAND"
+    stress_percent: float = 0
     scenario_name: str
     demand_change_gwh: float
     position_change_gwh: float

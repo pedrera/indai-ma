@@ -3,11 +3,14 @@
 from risk_models import RiskDelta, RiskFinding, RiskScenarioResult
 
 
-def build_risk_scenario(name, variation, demand, supply, position, spot_price, exposure):
+def build_risk_scenario(name, variation, demand, supply, position, spot_price, exposure,
+                        *, scenario_type="BASE", stress_percent=0):
     signed = round(position["position_gwh"], 12)
     short = round(exposure["short_position_gwh"], 12) if exposure is not None else max(-signed, 0)
     return RiskScenarioResult(
-        name=name, demand_variation_percent=variation, demand_gwh=round(demand, 12),
+        name=name, scenario_type=scenario_type, stress_percent=stress_percent,
+        demand_variation_percent=variation if scenario_type == "DEMAND" else 0,
+        demand_gwh=round(demand, 12),
         supply_gwh=supply, position_gwh=signed,
         interpretation=position["interpretation"], short_position_gwh=short,
         short_position_mwh=round(short * 1000, 9), spot_price_eur_mwh=spot_price,
@@ -17,6 +20,8 @@ def build_risk_scenario(name, variation, demand, supply, position, spot_price, e
 
 def calculate_risk_delta(base: RiskScenarioResult, stress: RiskScenarioResult) -> RiskDelta:
     return RiskDelta(
+        scenario_type=stress.scenario_type if stress.scenario_type != "BASE" else "DEMAND",
+        stress_percent=stress.stress_percent,
         scenario_name=stress.name,
         demand_change_gwh=round(stress.demand_gwh - base.demand_gwh, 12),
         position_change_gwh=round(stress.position_gwh - base.position_gwh, 12),

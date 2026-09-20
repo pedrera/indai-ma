@@ -7,7 +7,7 @@ from time import perf_counter
 from pydantic import ValidationError
 
 from diagnostics import PerformanceStatus
-from gas_analysis import GasAnalysisError, extract_demand_scenarios, parse_scenario_input
+from gas_analysis import GasAnalysisError, extract_demand_scenarios, extract_stress_percentages, parse_scenario_input
 from llm_client import GenerationCancelledError, GenerationOptions, LLMTimeoutError
 from risk_calculations import build_risk_finding, build_risk_scenario, calculate_risk_delta
 from risk_models import RiskAgentResult, RiskInputs, RiskInterpretation, RiskStatus
@@ -68,14 +68,24 @@ class RiskAgent:
                     if event:
                         self.recorder.fail_stage(event, missing_or_ambiguous_inputs=True)
                     return self._finish(result)
+                demand_stress, price_stress = extract_stress_percentages(request)
+                if not price_stress:
+                    # Preserve the legacy strict validation for malformed demand scenarios.
+                    extract_demand_scenarios(request, use_defaults=False, strict=True)
                 inputs = RiskInputs(demand_gwh=parsed.base_demand_candidates[0],
                     supply_gwh=parsed.contracted_supply_candidates[0],
                     spot_price_eur_mwh=parsed.spot_price_candidates[0] if parsed.spot_price_candidates else None,
-                    stress_percentages=[v for _, v in extract_demand_scenarios(request, use_defaults=False, strict=True) if v != 0])
-            variations = list(dict.fromkeys(v for v in inputs.stress_percentages if v != 0))
+                    stress_percentages=[v for v in demand_stress if v != 0],
+                    demand_stress_percentages=[v for v in demand_stress if v != 0],
+                    price_stress_percentages=[v for v in price_stress if v != 0])
+            # Legacy stress_percentages remains a demand alias; explicit fields win.
+            demand_variations = inputs.demand_stress_percentages or inputs.stress_percentages
+            price_variations = inputs.price_stress_percentages
+            variations = list(dict.fromkeys(v for v in demand_variations if v != 0))
+            price_variations = list(dict.fromkeys(v for v in price_variations if v != 0))
             if event:
                 self.recorder.complete_stage(event, risk_inputs=inputs.model_dump(),
-                    scenario_count=len(variations) + 1)
+                scenario_count=len(variations) + len(price_variations) + 1)
         except (ValidationError, GasAnalysisError, ValueError):
             result.status = RiskStatus.FAILED
             result.summary = "Entradas de riesgo inválidas. Usa volúmenes y spot no negativos y finitos, y porcentajes de demanda desde -100 %. Máximo 20 escenarios explícitos."
@@ -86,10 +96,11 @@ class RiskAgent:
             result.warnings.append("Falta precio spot: se calculan posiciones y volúmenes, pero no importes de exposición ni deltas monetarios.")
         calculation_started = perf_counter()
         try:
-            result.base_scenario = self._scenario("Base", 0, inputs, result)
+            result.base_scenario = self._scenario("Base", 0, inputs, result, scenario_type="BASE")
             result.risk_findings.append(build_risk_finding(result.base_scenario))
             for index, variation in enumerate(variations, 1):
-                scenario = self._scenario(f"Demanda {variation:+g} %", variation, inputs, result)
+                scenario = self._scenario(f"Demanda {variation:+g} %", variation, inputs, result,
+                                          scenario_type="DEMAND")
                 result.stress_scenarios.append(scenario)
                 before = perf_counter()
                 delta = calculate_risk_delta(result.base_scenario, scenario)
@@ -97,6 +108,17 @@ class RiskAgent:
                 self._record("risk_delta", scenario_name=scenario.name, delta=delta.model_dump(),
                              calculation_seconds=perf_counter() - before)
                 result.risk_findings.append(build_risk_finding(result.base_scenario, scenario, delta, f"stress_{index}"))
+            offset = len(variations)
+            for index, variation in enumerate(price_variations, 1):
+                scenario = self._scenario(f"Precio spot {variation:+g} %", variation, inputs, result,
+                                          scenario_type="PRICE")
+                result.stress_scenarios.append(scenario)
+                delta = calculate_risk_delta(result.base_scenario, scenario)
+                result.deltas.append(delta)
+                self._record("risk_delta", scenario_name=scenario.name, delta=delta.model_dump(),
+                             calculation_seconds=0)
+                result.risk_findings.append(build_risk_finding(result.base_scenario, scenario, delta,
+                                                                f"stress_{offset + index}"))
         except (ValueError, OverflowError):
             result.status = RiskStatus.FAILED
             result.summary = "No se pudieron completar los cálculos; revisa los valores de entrada."
@@ -127,25 +149,29 @@ class RiskAgent:
                                          tool_result=execution.result)
         return execution.result
 
-    def _scenario(self, name, variation, inputs, result):
+    def _scenario(self, name, variation, inputs, result, *, scenario_type="DEMAND"):
         self._record("base_scenario" if variation == 0 else "stress_scenario",
                      scenario_name=name, demand_variation_percent=variation)
         demand = inputs.demand_gwh
-        if variation != 0:
+        if scenario_type == "DEMAND" and variation != 0:
             demand = self._execute("calculate_demand_scenario", {
                 "base_demand_gwh": demand, "variation_percent": variation}, name, result)["scenario_demand_gwh"]
             demand = round(demand, 12)
         arguments = {"expected_demand_gwh": demand, "contracted_supply_gwh": inputs.supply_gwh}
         position = self._execute("calculate_supply_position", arguments, name, result)
         exposure = None
-        if inputs.spot_price_eur_mwh is not None:
+        spot_price = inputs.spot_price_eur_mwh
+        if scenario_type == "PRICE" and spot_price is not None:
+            spot_price = round(spot_price * (1 + variation / 100), 12)
+        if spot_price is not None:
             exposure = self._execute("calculate_spot_exposure", {
-                **arguments, "spot_price_eur_mwh": inputs.spot_price_eur_mwh}, name, result)
+                **arguments, "spot_price_eur_mwh": spot_price}, name, result)
         elif self.recorder:
             self.recorder.record_stage("tool_execution", status=PerformanceStatus.SKIPPED,
                 tool_name="calculate_spot_exposure", scenario_name=name, missing_inputs=["spot_price_eur_mwh"])
         return build_risk_scenario(name, variation, demand, inputs.supply_gwh, position,
-                                   inputs.spot_price_eur_mwh, exposure)
+                                   spot_price, exposure, scenario_type=scenario_type,
+                                   stress_percent=variation)
 
     def _interpret(self, result, timeout_seconds, started):
         event = self.recorder.start_stage("risk_interpretation") if self.recorder else None
