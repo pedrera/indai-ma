@@ -108,6 +108,29 @@ class AlternativeEvaluationTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         compose_alternative_evaluations(result, plan, AlternativeEvaluationInputs(invalid))
 
+    def test_explicit_coverage_price_is_separate_from_spot(self):
+        result = SimpleNamespace(specialist_results=[_specialist("ProcurementAgent", _procurement())])
+        plan = DecisionPlan((DecisionStep("operational-short", "operational", "Cubrir", alternatives=(
+            DecisionAlternative("operational-short-full", "Full", "", "operational-short"),
+            DecisionAlternative("operational-short-partial", "Partial", "", "operational-short"),
+            DecisionAlternative("operational-short-maintain", "Maintain", "", "operational-short"),)),), True)
+        enriched = compose_alternative_evaluations(
+            result, plan, AlternativeEvaluationInputs(0.3, 40)
+        )
+        full, partial, maintain = enriched.steps[0].alternatives
+        self.assertEqual(dict((o.metric, o.value) for o in full.evaluation.outcomes)["coverage_cost_eur"], 20000)
+        self.assertEqual(dict((o.metric, o.value) for o in partial.evaluation.outcomes)["coverage_cost_eur"], 12000)
+        self.assertEqual(dict((o.metric, o.value) for o in partial.evaluation.outcomes)["covered_volume_gwh"], 0.3)
+        self.assertNotIn("coverage_cost_eur", [o.metric for o in maintain.evaluation.outcomes])
+        self.assertEqual(partial.evaluation.inputs, AlternativeEvaluationInputs(0.3, 40))
+        self.assertNotIn("12600", str(partial.evaluation.outcomes))
+
+    def test_coverage_price_validation_and_missing_price_are_explicit(self):
+        for invalid in (-1, True, float("nan"), float("inf")):
+            with self.assertRaises(ValueError):
+                AlternativeEvaluationInputs(coverage_price_eur_mwh=invalid)
+        self.assertEqual(AlternativeEvaluationInputs(coverage_price_eur_mwh=0).coverage_price_eur_mwh, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

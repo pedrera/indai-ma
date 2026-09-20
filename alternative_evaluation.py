@@ -11,6 +11,7 @@ EvaluationStatus = Literal["EVALUATED", "PARTIALLY_EVALUATED", "NOT_EVALUATED"]
 @dataclass(frozen=True)
 class AlternativeEvaluationInputs:
     coverage_volume_gwh: float | None = None
+    coverage_price_eur_mwh: float | None = None
 
     def __post_init__(self):
         if self.coverage_volume_gwh is not None and (
@@ -20,6 +21,13 @@ class AlternativeEvaluationInputs:
             or self.coverage_volume_gwh < 0
         ):
             raise ValueError("coverage_volume_gwh must be a finite non-negative number")
+        if self.coverage_price_eur_mwh is not None and (
+            not isinstance(self.coverage_price_eur_mwh, (int, float))
+            or isinstance(self.coverage_price_eur_mwh, bool)
+            or not math.isfinite(self.coverage_price_eur_mwh)
+            or self.coverage_price_eur_mwh < 0
+        ):
+            raise ValueError("coverage_price_eur_mwh must be a finite non-negative number")
 
 
 @dataclass(frozen=True)
@@ -36,6 +44,7 @@ class AlternativeEvaluation:
     status: EvaluationStatus
     outcomes: tuple[AlternativeOutcome, ...] = ()
     missing_inputs: tuple[str, ...] = ()
+    inputs: AlternativeEvaluationInputs | None = None
 
 
 def _execution(result, name):
@@ -62,6 +71,7 @@ def compose_alternative_evaluations(supervisor_result, decision_plan: DecisionPl
     if interpretation != "SHORT" or short is None:
         return decision_plan
     exposure_value = exposure_result.get("exposure_eur")
+    coverage_price = evaluation_inputs.coverage_price_eur_mwh if evaluation_inputs else None
 
     def evaluate(alternative):
         if alternative.id == "operational-short-full":
@@ -69,7 +79,12 @@ def compose_alternative_evaluations(supervisor_result, decision_plan: DecisionPl
                 alternative.id, "EVALUATED",
                 (AlternativeOutcome("covered_volume_gwh", float(short), "GWh", "structured_result"),
                  AlternativeOutcome("remaining_short_gwh", 0.0, "GWh", "derived")),
+                inputs=evaluation_inputs,
             )
+            if coverage_price is not None:
+                evaluation = replace(evaluation, outcomes=evaluation.outcomes + (
+                    AlternativeOutcome("coverage_cost_eur", float(short) * 1000 * coverage_price, "EUR", "derived"),
+                ))
         elif alternative.id == "operational-short-maintain":
             outcomes = (
                 AlternativeOutcome("covered_volume_gwh", 0.0, "GWh", "derived"),
@@ -89,7 +104,12 @@ def compose_alternative_evaluations(supervisor_result, decision_plan: DecisionPl
                     alternative.id, "EVALUATED",
                     (AlternativeOutcome("covered_volume_gwh", float(coverage), "GWh", "scenario_input"),
                      AlternativeOutcome("remaining_short_gwh", float(short - coverage), "GWh", "derived")),
+                    inputs=evaluation_inputs,
                 )
+                if coverage_price is not None:
+                    evaluation = replace(evaluation, outcomes=evaluation.outcomes + (
+                        AlternativeOutcome("coverage_cost_eur", float(coverage) * 1000 * coverage_price, "EUR", "derived"),
+                    ))
         else:
             return alternative
         return replace(alternative, evaluation=evaluation)
