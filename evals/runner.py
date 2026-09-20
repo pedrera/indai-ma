@@ -32,10 +32,13 @@ def load_cases(directory=CASE_DIR, category=None, mode='fast'):
 def result_view(output):
     """Index existing values by name; no derived business values."""
     view = {'status': output.status.value, 'content': output.content}
+    raw_output = output.model_dump(mode='json')
+    if raw_output.get('recommendation') is not None:
+        view['recommendation'] = raw_output['recommendation']
     for item in output.specialist_results:
         if item.result is None:
             continue
-        raw = output.model_dump(mode='json')['specialist_results'][output.specialist_results.index(item)]['result']
+        raw = raw_output['specialist_results'][output.specialist_results.index(item)]['result']
         raw['tools'] = {t['name']: t for t in raw.get('tool_executions', [])}
         raw['facts'] = {f['name']: f['value'] for f in raw.get('contract_facts', [])}
         comparison = raw.get('comparison')
