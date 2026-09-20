@@ -1,5 +1,6 @@
 import unittest
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 from clipboard_text import (
     build_all_clipboard_text,
@@ -7,6 +8,7 @@ from clipboard_text import (
     build_response_clipboard_text,
     build_tool_executions_clipboard_text,
     build_business_copy_payload,
+    format_alternative_evaluation,
 )
 from api_client_models import ApiAnalysisResult
 from diagnostics import (
@@ -104,6 +106,46 @@ class ClipboardResponseTests(unittest.TestCase):
         self.assertEqual(decision_readiness_label("BLOCKED"), "Insuficiente")
         self.assertEqual(decision_missing_information_label("spot_price_eur_mwh"), "Precio spot")
         self.assertEqual(decision_missing_information_label("synthetic-input"), "synthetic-input")
+
+    def test_business_copy_renders_alternative_evaluation_without_internal_keys(self):
+        evaluation = {"alternative_id": "operational-short-partial", "status": "EVALUATED",
+                      "inputs": {"coverage_volume_gwh": 0.3, "coverage_price_eur_mwh": 40},
+                      "outcomes": [{"metric": "covered_volume_gwh", "value": 0.3, "unit": "GWh", "origin": "scenario_input"},
+                                   {"metric": "coverage_cost_eur", "value": 12000, "unit": "EUR", "origin": "derived"}],
+                      "missing_inputs": []}
+        alternative = {"id": "operational-short-partial", "label": "Evaluar cobertura parcial",
+                       "description": "Evaluar una cobertura parcial.", "source_step_id": "operational-short",
+                       "evaluation": evaluation}
+        payload = {"operation_id": "op-eval", "status": "completed", "summary": "Resumen",
+                   "routing": {"selected_agents": ["ProcurementAgent"], "skipped_agents": [], "method": "deterministic", "reasons": []},
+                   "diagnostics": {"llm_calls": 0, "rag_calls": 0, "tool_calls": 2},
+                   "recommendation": {"action": "Revisar", "is_complete": True,
+                                      "decision_plan": {"is_complete": True, "steps": [{
+                                          "id": "operational-short", "category": "operational", "action": "Cubrir",
+                                          "alternatives": [alternative]}]}}}
+        result = ApiAnalysisResult.model_validate(payload)
+        text = build_business_copy_payload(result)
+        self.assertIn("Evaluación: Calculada", text)
+        self.assertIn("Volumen de cobertura: 0.3 GWh", text)
+        self.assertIn("Precio de cobertura: 40 €/MWh", text)
+        self.assertIn("Coste de cobertura: 12,000 €", text)
+        self.assertNotIn("coverage_volume_gwh", text)
+
+    def test_alternative_evaluation_missing_inputs_use_business_labels(self):
+        evaluation = SimpleNamespace(
+            status="NOT_EVALUATED",
+            inputs=None,
+            missing_inputs=("coverage_volume_gwh", "coverage_price_eur_mwh"),
+            outcomes=(),
+        )
+        lines = format_alternative_evaluation(evaluation)
+        text = "\n".join(lines)
+        self.assertIn("Volumen de cobertura", text)
+        self.assertIn("Precio de cobertura", text)
+        self.assertNotIn("coverage_volume_gwh", text)
+        self.assertNotIn("coverage_price_eur_mwh", text)
+        self.assertNotIn("operational-short-partial", text)
+        self.assertNotIn("scenario_input", text)
     def test_plain_response_preserves_markdown_and_line_breaks(self):
         content = "## Resultado\n\nLínea uno\nLínea dos"
         self.assertEqual(build_response_clipboard_text(content), content)

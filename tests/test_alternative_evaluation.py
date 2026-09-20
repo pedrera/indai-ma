@@ -125,6 +125,31 @@ class AlternativeEvaluationTests(unittest.TestCase):
         self.assertEqual(partial.evaluation.inputs, AlternativeEvaluationInputs(0.3, 40))
         self.assertNotIn("12600", str(partial.evaluation.outcomes))
 
+    def test_evaluation_inputs_only_contain_relevant_inputs_per_alternative(self):
+        result = SimpleNamespace(specialist_results=[_specialist("ProcurementAgent", _procurement())])
+        plan = DecisionPlan((DecisionStep("operational-short", "operational", "Cubrir", alternatives=(
+            DecisionAlternative("operational-short-full", "Full", "", "operational-short"),
+            DecisionAlternative("operational-short-partial", "Partial", "", "operational-short"),
+            DecisionAlternative("operational-short-maintain", "Maintain", "", "operational-short"),)),), True)
+        for inputs, full_expected, partial_expected in [
+            (AlternativeEvaluationInputs(0.3, 40), (None, 40), (0.3, 40)),
+            (AlternativeEvaluationInputs(0.3), (None, None), (0.3, None)),
+            (AlternativeEvaluationInputs(coverage_price_eur_mwh=40), (None, 40), (None, 40)),
+            (None, (None, None), (None, None)),
+        ]:
+            with self.subTest(inputs=inputs):
+                alternatives = compose_alternative_evaluations(result, plan, inputs).steps[0].alternatives
+                full, partial, maintain = alternatives
+                self.assertIsNone(maintain.evaluation.inputs)
+                self.assertEqual((getattr(full.evaluation.inputs, 'coverage_volume_gwh', None),
+                                  getattr(full.evaluation.inputs, 'coverage_price_eur_mwh', None)), full_expected)
+                self.assertEqual((getattr(partial.evaluation.inputs, 'coverage_volume_gwh', None),
+                                  getattr(partial.evaluation.inputs, 'coverage_price_eur_mwh', None)), partial_expected)
+                if inputs is None or inputs.coverage_volume_gwh is None:
+                    self.assertEqual(partial.evaluation.status, 'NOT_EVALUATED')
+                else:
+                    self.assertEqual(partial.evaluation.status, 'EVALUATED')
+
     def test_coverage_price_validation_and_missing_price_are_explicit(self):
         for invalid in (-1, True, float("nan"), float("inf")):
             with self.assertRaises(ValueError):

@@ -72,6 +72,8 @@ def compose_alternative_evaluations(supervisor_result, decision_plan: DecisionPl
         return decision_plan
     exposure_value = exposure_result.get("exposure_eur")
     coverage_price = evaluation_inputs.coverage_price_eur_mwh if evaluation_inputs else None
+    full_inputs = (AlternativeEvaluationInputs(coverage_price_eur_mwh=coverage_price)
+                   if coverage_price is not None else None)
 
     def evaluate(alternative):
         if alternative.id == "operational-short-full":
@@ -79,7 +81,7 @@ def compose_alternative_evaluations(supervisor_result, decision_plan: DecisionPl
                 alternative.id, "EVALUATED",
                 (AlternativeOutcome("covered_volume_gwh", float(short), "GWh", "structured_result"),
                  AlternativeOutcome("remaining_short_gwh", 0.0, "GWh", "derived")),
-                inputs=evaluation_inputs,
+                inputs=full_inputs,
             )
             if coverage_price is not None:
                 evaluation = replace(evaluation, outcomes=evaluation.outcomes + (
@@ -96,7 +98,7 @@ def compose_alternative_evaluations(supervisor_result, decision_plan: DecisionPl
         elif alternative.id == "operational-short-partial":
             coverage = evaluation_inputs.coverage_volume_gwh if evaluation_inputs else None
             if coverage is None:
-                evaluation = AlternativeEvaluation(alternative.id, "NOT_EVALUATED", (), ("coverage_volume_gwh",))
+                evaluation = AlternativeEvaluation(alternative.id, "NOT_EVALUATED", (), ("coverage_volume_gwh",), evaluation_inputs)
             elif coverage > short:
                 raise ValueError("coverage_volume_gwh cannot exceed the SHORT volume")
             else:

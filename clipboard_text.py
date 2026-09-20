@@ -12,6 +12,8 @@ _PLAN_STATE_LABELS = {"review_required": "Requiere revisión", "monitor": "Monit
 _DECISION_DEPENDENCY_LABELS = {"operational-short": "Cobertura del SHORT operativo"}
 _READINESS_LABELS = {"READY": "Completa", "PARTIALLY_READY": "Parcial", "BLOCKED": "Insuficiente"}
 _MISSING_INFORMATION_LABELS = {
+    "coverage_volume_gwh": "Volumen de cobertura",
+    "coverage_price_eur_mwh": "Precio de cobertura",
     "spot_price_eur_mwh": "Precio spot",
     "forecast_demand_gwh": "Previsión de demanda",
     "expected_demand_gwh": "Demanda esperada",
@@ -20,6 +22,9 @@ _MISSING_INFORMATION_LABELS = {
     "remaining_forecast_consumption_gwh": "Previsión de consumo restante",
     "take_or_pay_minimum_gwh": "Mínimo contractual take-or-pay",
 }
+_EVALUATION_STATUS_LABELS = {"EVALUATED": "Calculada", "PARTIALLY_EVALUATED": "Parcial", "NOT_EVALUATED": "Pendiente"}
+_EVALUATION_INPUT_LABELS = {"coverage_volume_gwh": ("Volumen de cobertura", "GWh"), "coverage_price_eur_mwh": ("Precio de cobertura", "€/MWh")}
+_EVALUATION_OUTCOME_LABELS = {"covered_volume_gwh": ("Volumen cubierto", "GWh"), "remaining_short_gwh": ("SHORT restante", "GWh"), "coverage_cost_eur": ("Coste de cobertura", "€"), "spot_exposure_eur": ("Exposición spot", "€")}
 
 
 def decision_dependency_label(value: str) -> str:
@@ -33,6 +38,39 @@ def decision_readiness_label(value: str) -> str:
 
 def decision_missing_information_label(value: str) -> str:
     return _MISSING_INFORMATION_LABELS.get(value, value)
+
+
+def _format_evaluation_number(value, unit: str) -> str:
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    rendered = f"{value:,}" if isinstance(value, (int, float)) and unit == "€" else (f"{value:g}" if isinstance(value, (int, float)) else str(value))
+    return f"{rendered} {unit}".strip()
+
+
+def format_alternative_evaluation(evaluation: Any) -> list[str]:
+    """Format public evaluation data without calculating or interpreting it."""
+    if evaluation is None:
+        return []
+    lines = [f"Evaluación: {_EVALUATION_STATUS_LABELS.get(evaluation.status, evaluation.status)}"]
+    inputs = getattr(evaluation, "inputs", None)
+    input_lines = []
+    if inputs is not None:
+        for key, (label, unit) in _EVALUATION_INPUT_LABELS.items():
+            value = getattr(inputs, key, None)
+            if value is not None:
+                input_lines.append(f"- {label}: {_format_evaluation_number(value, unit)}")
+    if input_lines:
+        lines.extend(["Supuestos", *input_lines])
+    missing_lines = [f"- {decision_missing_information_label(item)}" for item in getattr(evaluation, "missing_inputs", ())]
+    if missing_lines:
+        lines.extend(["Falta", *missing_lines])
+    outcomes = []
+    for outcome in getattr(evaluation, "outcomes", ()):
+        label, unit = _EVALUATION_OUTCOME_LABELS.get(outcome.metric, (outcome.metric, outcome.unit))
+        outcomes.append(f"- {label}: {_format_evaluation_number(outcome.value, unit)}")
+    if outcomes:
+        lines.extend(["Consecuencias", *outcomes])
+    return lines
 
 
 SENSITIVE_KEY_PARTS = (
@@ -197,6 +235,8 @@ def build_business_copy_payload(result: Any, *, operation_id: str | None = None,
                             f"   - {alternative.label}",
                             f"     {alternative.description}",
                         ])
+                        plan_lines.extend(f"     {line}" for line in format_alternative_evaluation(
+                            getattr(alternative, "evaluation", None)))
             plan_lines.extend(f"Aviso del plan: {warning}" for warning in plan.warnings)
             _copy_section(lines, "PLAN DE DECISIÓN", plan_lines)
         actions = getattr(recommendation, "actions", ())

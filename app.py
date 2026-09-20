@@ -60,7 +60,7 @@ from vector_store import LocalVectorStore, VectorStoreError
 from demo_scenarios import DEMO_SCENARIOS, get_demo
 from api_client import AnalysisApiClient
 from api_client_models import ApiAnalysisResult
-from business_api_adapter import create_business_api_job
+from business_api_adapter import BusinessApiRequest, create_business_api_job
 from presentation_normalization import normalize_supervisor_result
 from application_models import AnalysisRequest
 from application_service import AnalysisService
@@ -1069,11 +1069,11 @@ def start_supervisor_analysis(request: str, use_synthesis: bool = False) -> None
     job.start()
 
 
-def start_business_api_analysis(request: str) -> None:
+def start_business_api_analysis(request: str, alternative_evaluation=None) -> None:
     operation_id = uuid4().hex[:8]
     recorder = PerformanceRecorder(operation_id, "api", "remote", "business_api")
     st.session_state.pipeline_recorder = recorder
-    job = create_business_api_job(request)
+    job = create_business_api_job(BusinessApiRequest(request, alternative_evaluation))
     st.session_state.business_api_result = None
     st.session_state.generation_job = job
     st.session_state.generation_kind = "business_api"
@@ -1101,13 +1101,25 @@ def render_business() -> None:
         height=180,
         placeholder="Ejemplo: analiza el contrato del Hospital Costa Sur y su posición de aprovisionamiento.",
     )
+    st.markdown("**Escenario de cobertura**")
+    st.caption("Supuestos opcionales para evaluar alternativas de cobertura")
+    volume_enabled = st.checkbox("Definir volumen de cobertura", key="business_coverage_volume_enabled")
+    coverage_volume = st.number_input("Volumen de cobertura (GWh)", min_value=0.0, value=0.0,
+                                      step=0.1, key="business_coverage_volume") if volume_enabled else None
+    price_enabled = st.checkbox("Definir precio de cobertura", key="business_coverage_price_enabled")
+    coverage_price = st.number_input("Precio de cobertura (€/MWh)", min_value=0.0, value=0.0,
+                                     step=1.0, key="business_coverage_price") if price_enabled else None
     if st.button(
         "Analizar",
         key="business_start",
         type="primary",
         disabled=generation_active or not request.strip(),
     ):
-        start_business_api_analysis(request)
+        alternative_evaluation = None
+        if volume_enabled or price_enabled:
+            from alternative_evaluation import AlternativeEvaluationInputs
+            alternative_evaluation = AlternativeEvaluationInputs(coverage_volume, coverage_price)
+        start_business_api_analysis(request, alternative_evaluation)
         st.rerun()
     st.subheader("Advanced / Technical")
     st.caption("Los modos especialistas, la configuración técnica y el inspector están disponibles en la barra lateral.")

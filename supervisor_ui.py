@@ -1,6 +1,6 @@
 import streamlit as st
 from clipboard_text import (decision_dependency_label, decision_missing_information_label,
-                             decision_readiness_label)
+                             decision_readiness_label, format_alternative_evaluation)
 
 
 _PLAN_CATEGORY_LABELS = {"operational": "Operativa", "contractual": "Contractual", "risk": "Riesgo"}
@@ -38,6 +38,11 @@ def _render_decision_plan(plan):
             st.write("Opciones a considerar:")
             for alternative in alternatives:
                 st.write(f"- {alternative.label}")
+                for line in format_alternative_evaluation(getattr(alternative, "evaluation", None)):
+                    if line.startswith(("Evaluación:", "Supuestos", "Falta", "Consecuencias")):
+                        st.write(f"**{line}**")
+                    else:
+                        st.write(line)
     for warning in plan.warnings:
         st.caption(f"Aviso del plan: {warning}")
 

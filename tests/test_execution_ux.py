@@ -10,6 +10,7 @@ from execution_view import ExecutionView, find_execution, clipboard_payloads
 from business_output import commercial_text, supervisor_text
 from business_output import build_supervisor_executive_sections
 from api_client_models import ApiAnalysisResult
+from business_api_adapter import ApiJobAdapter, BusinessApiRequest
 from demo_scenarios import DEMO_SCENARIOS
 from commercial_agent import CommercialAgent
 from rag_models import RetrievalResult
@@ -24,6 +25,17 @@ RISK_QUERY = 'Demanda 4,8 GWh. Tenemos 4,3 GWh aprovisionados. Precio spot 42 EU
 
 
 class ExecutionUXTests(unittest.TestCase):
+    def test_business_adapter_forwards_explicit_inputs_and_legacy_none(self):
+        client = Mock()
+        client.analyze.return_value = "result"
+        adapter = ApiJobAdapter(client)
+        inputs = SimpleNamespace(coverage_volume_gwh=0.3, coverage_price_eur_mwh=40)
+        self.assertEqual(adapter.run(BusinessApiRequest("q", inputs), 10), "result")
+        client.analyze.assert_called_once_with("q", inputs)
+        client.reset_mock()
+        adapter.run(BusinessApiRequest("q", None), 10)
+        client.analyze.assert_called_once_with("q", None)
+
     def make_view(self, operation='A', status='completed'):
         recorder = PerformanceRecorder(operation, 'deterministic', 'none', 'risk_agent')
         result = RiskAgent(recorder=recorder).run(RISK_QUERY)
@@ -212,7 +224,13 @@ class ExecutionUXTests(unittest.TestCase):
                                  'source_step_id': 'operational-short'},
                                 {'id': 'operational-short-partial', 'label': 'Evaluar cobertura parcial',
                                  'description': 'Evaluar una cobertura parcial del SHORT operativo.',
-                                 'source_step_id': 'operational-short'},
+                                 'source_step_id': 'operational-short',
+                                 'evaluation': {'alternative_id': 'operational-short-partial', 'status': 'EVALUATED',
+                                     'inputs': {'coverage_volume_gwh': 0.3, 'coverage_price_eur_mwh': 40},
+                                     'outcomes': [{'metric': 'covered_volume_gwh', 'value': 0.3, 'unit': 'GWh', 'origin': 'scenario_input'},
+                                                  {'metric': 'remaining_short_gwh', 'value': 0.2, 'unit': 'GWh', 'origin': 'derived'},
+                                                  {'metric': 'coverage_cost_eur', 'value': 12000, 'unit': 'EUR', 'origin': 'derived'}],
+                                     'missing_inputs': []}},
                             ],
                         }],
                     },
@@ -236,6 +254,10 @@ class ExecutionUXTests(unittest.TestCase):
             self.assertTrue(any('Información del plan: Completa' in item.value
                                 for item in (*app.caption, *app.markdown)))
             self.assertTrue(any('Información: Completa' in item.value for item in app.markdown))
+            self.assertTrue(any('Evaluación: Calculada' in item.value for item in app.markdown))
+            self.assertTrue(any('Volumen de cobertura: 0.3 GWh' in item.value for item in app.markdown))
+            self.assertTrue(any('Coste de cobertura: 12,000 €' in item.value for item in app.markdown))
+            self.assertFalse(any('covered_volume_gwh' in item.value for item in app.markdown))
             self.assertTrue(any('Opciones a considerar:' in item.value for item in app.markdown))
             self.assertTrue(any('Evaluar cobertura completa' in item.value for item in app.markdown))
             self.assertFalse(any('operational-short-full' in item.value for item in app.markdown))
