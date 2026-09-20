@@ -130,6 +130,12 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(decision.selected_agents, list(AGENT_ORDER))
         self.assertFalse(decision.ambiguity_detected)
 
+    def test_take_or_pay_query_routes_only_commercial(self):
+        query = ("Analiza el take-or-pay de Hospital Costa Sur. El consumo acumulado es de 30 GWh "
+                 "y esperamos consumir otros 8 GWh hasta final de año. Indica si existe riesgo.")
+        decision = route_deterministically(query)
+        self.assertEqual(decision.selected_agents, ["CommercialAgent"])
+
     def test_business_risk_wording_selects_risk_agent(self):
         cases = [
             "Identifica la exposición y los riesgos.",

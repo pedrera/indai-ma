@@ -18,7 +18,7 @@ def route_deterministically(request):
     text = normalized(request)
     context = extract_procurement_context(request)
     intent = classify_gas_query(request)
-    commercial = bool(re.search(r"\bcontratos?\b|contractual|clausula|take.or.pay|vigencia", text)) or bool(
+    commercial = bool(re.search(r"\bcontratos?\b|contractual|clausula|take[ -]?or[ -]?pay|m[ií]nimo\s+(?:anual|contractual)|consumo\s+acumulado|previsi[oó]n\s+restante|vigencia", text)) or bool(
         set(intent.documentary_signals) & {"flexibilidad", "penalizacion", "vencimiento", "rango mensual"})
     demand_stress, price_stress = extract_stress_percentages(request)
     stress = bool(demand_stress or price_stress) or bool(re.search(

@@ -106,6 +106,17 @@ def build_supervisor_executive_sections(result) -> ExecutiveResultProjection:
             provenance.append(ExecutiveProvenance("HECHO DOCUMENTAL", FACT_LABELS.get(fact.name, fact.name), _fmt(fact.value, fact.unit or ""), fact.source.label))
             source = fact.source
             evidence.append(ExecutiveEvidence(source.document_name, source.section or "Sin sección", str(source.page_start), fact.evidence))
+        top = getattr(value, "take_or_pay_projection", None)
+        if top is not None:
+            metrics.append(ExecutiveMetric("Consumo anual proyectado", _fmt(top.projected_annual_consumption_gwh, "GWh"), "Calculado"))
+            metrics.append(ExecutiveMetric("Déficit take-or-pay proyectado", _fmt(top.projected_take_or_pay_deficit_gwh, "GWh"), "Calculado"))
+            provenance.extend((
+                ExecutiveProvenance("ENTRADA OPERATIVA", "Consumo acumulado", _fmt(top.cumulative_consumption_gwh, "GWh"), "Consulta del usuario"),
+                ExecutiveProvenance("ENTRADA OPERATIVA", "Previsión de consumo restante", _fmt(top.remaining_forecast_consumption_gwh, "GWh"), "Consulta del usuario"),
+                ExecutiveProvenance("VALOR CALCULADO", "Consumo anual proyectado", _fmt(top.projected_annual_consumption_gwh, "GWh"), "calculate_take_or_pay_projection"),
+                ExecutiveProvenance("VALOR CALCULADO", "Déficit take-or-pay proyectado", _fmt(top.projected_take_or_pay_deficit_gwh, "GWh"), "calculate_take_or_pay_projection"),
+            ))
+            explanations.append(("Take-or-pay", f"Proyección anual: {top.projected_annual_consumption_gwh:g} GWh frente al mínimo de {top.take_or_pay_minimum_gwh:g} GWh; estado {top.status}."))
         explanations.append(("Contrato", value.summary))
         warnings.extend(value.warnings)
     procurement = present.get("ProcurementAgent")
@@ -173,6 +184,10 @@ def build_supervisor_executive_sections(result) -> ExecutiveResultProjection:
             conclusions.append("Comparación contractual completada para " + " y ".join(names) + ".")
     commercial_calc = next((item.result.calculations[0].result for item in result.specialist_results
                             if item.agent_name == "CommercialAgent" and item.result and item.result.calculations), None)
+    top_projection = next((getattr(item.result, "take_or_pay_projection", None) for item in result.specialist_results
+                           if item.agent_name == "CommercialAgent" and item.result), None)
+    if top_projection:
+        conclusions.append(f"Consumo anual proyectado {_fmt(top_projection.projected_annual_consumption_gwh, 'GWh')} frente a mínimo take-or-pay de {_fmt(top_projection.take_or_pay_minimum_gwh, 'GWh')} ({top_projection.status}).")
     procurement_result = next((item.result for item in result.specialist_results
                                if item.agent_name == "ProcurementAgent" and item.result), None)
     if commercial_calc and commercial_calc.get("contractual_excess_gwh") is not None:

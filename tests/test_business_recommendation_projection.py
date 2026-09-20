@@ -6,6 +6,7 @@ from business_recommendation import BusinessRecommendation
 from supervisor_models import SupervisorResult, SupervisorRoutingDecision, SupervisorStatus
 from supervisor_models import SpecialistExecutionResult
 from risk_models import RiskAgentResult, RiskScenarioResult, RiskStatus
+from take_or_pay import calculate_take_or_pay_projection
 
 
 class BusinessRecommendationProjectionTests(unittest.TestCase):
@@ -104,6 +105,23 @@ class BusinessRecommendationProjectionTests(unittest.TestCase):
                 result = projected(interpretation, position)
                 self.assertNotIn("SHORT", result.summary)
                 self.assertFalse(any("SHORT" in text for _, text in result.explanations))
+
+    def test_take_or_pay_projection_is_presented_with_input_and_calculated_provenance(self):
+        commercial = SimpleNamespace(
+            comparison=None,
+            calculations=[],
+            contract_facts=[],
+            take_or_pay_projection=calculate_take_or_pay_projection(40.8, 30, 8),
+            summary="Contrato", warnings=[])
+        result = SimpleNamespace(
+            warnings=[], recommendation=None,
+            specialist_results=[SimpleNamespace(agent_name="CommercialAgent", result=commercial)])
+        projection = build_supervisor_executive_sections(result)
+        self.assertIn("38", projection.summary)
+        self.assertIn("BELOW_MINIMUM", dict(projection.explanations)["Take-or-pay"])
+        provenance = {(item.category, item.label, item.value) for item in projection.provenance}
+        self.assertIn(("ENTRADA OPERATIVA", "Consumo acumulado", "30 GWh"), provenance)
+        self.assertIn(("VALOR CALCULADO", "Déficit take-or-pay proyectado", "2.8 GWh"), provenance)
 
 
 if __name__ == "__main__":
