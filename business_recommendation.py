@@ -66,7 +66,7 @@ def _stress_action_id(prefix, stress_percent):
     return f"{prefix}-{sign}{magnitude}"
 
 
-def compose_business_recommendation(supervisor_result: "SupervisorResult") -> BusinessRecommendation:
+def compose_business_recommendation(supervisor_result: "SupervisorResult", *, evaluation_inputs=None) -> BusinessRecommendation:
     """Compose conclusions from specialist outputs without recalculating them."""
     specialists = {item.agent_name: item for item in supervisor_result.specialist_results}
     commercial = specialists.get("CommercialAgent")
@@ -264,7 +264,7 @@ def compose_business_recommendation(supervisor_result: "SupervisorResult") -> Bu
     from decision_alternatives import compose_decision_alternatives
     decision_plan = compose_decision_alternatives(decision_plan)
     from alternative_evaluation import compose_alternative_evaluations
-    decision_plan = compose_alternative_evaluations(supervisor_result, decision_plan)
+    decision_plan = compose_alternative_evaluations(supervisor_result, decision_plan, evaluation_inputs)
     return BusinessRecommendation(action, complete, tuple(rationale), contractual, operational, risk_text,
                                   tuple(metrics), tuple(dict.fromkeys(warnings)), actions,
                                   decision_plan)

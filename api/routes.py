@@ -7,6 +7,7 @@ from api.models import (AnalysisRequestDTO, AnalysisResponseDTO, DiagnosticsDTO,
                         BusinessDecisionAlternativeDTO,
                         BusinessDecisionPlanDTO, BusinessDecisionStepDTO)
 from application_models import AnalysisRequest
+from alternative_evaluation import AlternativeEvaluationInputs
 from application_service import AnalysisService
 
 router = APIRouter()
@@ -35,6 +36,10 @@ def analyze(payload: AnalysisRequestDTO, request: Request, service: AnalysisServ
         text=payload.text,
         runtime=request.app.state.runtime_config,
         use_llm_synthesis=request.app.state.use_llm_synthesis,
+        alternative_evaluation=(AlternativeEvaluationInputs(
+            coverage_volume_gwh=payload.alternative_evaluation.coverage_volume_gwh,
+            coverage_price_eur_mwh=payload.alternative_evaluation.coverage_price_eur_mwh,
+        ) if payload.alternative_evaluation is not None else None),
     ))
     projection = result.executive
     routing = result.supervisor_result.routing

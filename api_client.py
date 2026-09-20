@@ -49,9 +49,12 @@ class AnalysisApiClient:
             timeout=httpx.Timeout(self.config.analysis_timeout, connect=self.config.connect_timeout),
         )
 
-    def analyze(self, text: str) -> ApiAnalysisResult:
+    def analyze(self, text: str, alternative_evaluation=None) -> ApiAnalysisResult:
         try:
-            response = self._client.post("/api/v1/analysis", json={"text": text})
+            payload = {"text": text}
+            if alternative_evaluation is not None:
+                payload["alternative_evaluation"] = alternative_evaluation
+            response = self._client.post("/api/v1/analysis", json=payload)
         except httpx.TimeoutException as error:
             raise AnalysisApiTimeoutError("El análisis ha superado el tiempo permitido.") from error
         except httpx.HTTPError as error:
@@ -64,4 +67,3 @@ class AnalysisApiClient:
             return ApiAnalysisResult.model_validate(response.json())
         except (ValueError, TypeError) as error:
             raise AnalysisApiResponseError("Respuesta del backend no válida.") from error
-

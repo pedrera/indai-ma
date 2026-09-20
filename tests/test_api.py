@@ -45,6 +45,18 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(client.post('/api/v1/analysis', json={'text': ''}).status_code, 422)
         self.assertEqual(client.post('/api/v1/analysis', json={}).status_code, 422)
 
+    def test_alternative_evaluation_request_dto_is_optional_and_validated(self):
+        client = self.client()
+        self.assertEqual(client.post('/api/v1/analysis', json={'text': PROCUREMENT,
+            'alternative_evaluation': {'coverage_volume_gwh': 0.3,
+                                        'coverage_price_eur_mwh': 40}}).status_code, 200)
+        for field in ('coverage_volume_gwh', 'coverage_price_eur_mwh'):
+            response = client.post('/api/v1/analysis', json={'text': PROCUREMENT,
+                'alternative_evaluation': {field: -1}})
+            self.assertEqual(response.status_code, 422)
+        self.assertEqual(client.post('/api/v1/analysis', json={'text': PROCUREMENT,
+            'alternative_evaluation': {'coverage_volume_gwh': True}}).status_code, 422)
+
     def test_controlled_result_is_not_http_error(self):
         response = self.client().post('/api/v1/analysis', json={'text': '¿Qué debería hacer?'})
         self.assertEqual(response.status_code, 200)

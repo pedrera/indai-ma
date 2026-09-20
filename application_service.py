@@ -48,7 +48,8 @@ class AnalysisService:
                 rag_factory=rag_factory if self._rag_factory else None,
                 use_llm_synthesis=request.use_llm_synthesis,
             )
-            supervisor_result = supervisor.run(request.text, request.runtime.timeout_seconds)
+            supervisor_result = supervisor.run(request.text, request.runtime.timeout_seconds,
+                                               evaluation_inputs=request.alternative_evaluation)
             executive = build_supervisor_executive_sections(supervisor_result)
             recorder.finish(supervisor_result.status.value)
             return AnalysisResult(supervisor_result, executive, recorder.snapshot(), operation_id)

@@ -155,7 +155,7 @@ class Supervisor:
         return CommercialAgent(None, self.rag_factory(recorder), recorder, registry,
                                interpretation_mode="deterministic")
 
-    def run(self, request, timeout_seconds=None):
+    def run(self, request, timeout_seconds=None, evaluation_inputs=None):
         started = perf_counter()
         first_event = len(self.recorder.snapshot().events)
         self.recorder.record_stage("supervisor_start", agent_name=self.name)
@@ -255,7 +255,7 @@ class Supervisor:
                 output.warnings.append("La síntesis LLM no está disponible o no es válida; se conserva la composición determinista.")
                 output.status = SupervisorStatus.PARTIAL
         output.synthesis_llm_calls = event_counts(self.recorder.snapshot().events[synthesis_start:])["llm_calls"]
-        output.recommendation = compose_business_recommendation(output)
+        output.recommendation = compose_business_recommendation(output, evaluation_inputs=evaluation_inputs)
         self.recorder.record_stage("supervisor_synthesis", synthesis_status=output.synthesis_status,
                                    llm_calls=output.synthesis_llm_calls)
         output.total_operation_wall_time = perf_counter() - started

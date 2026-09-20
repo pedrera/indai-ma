@@ -1,4 +1,5 @@
 import unittest
+import json
 import httpx
 from types import SimpleNamespace
 
@@ -30,6 +31,18 @@ class ApiClientTests(unittest.TestCase):
         self.assertEqual((seen['method'], seen['path']), ('POST', '/api/v1/analysis'))
         self.assertEqual(seen['body'], b'{"text":"pregunta"}')
         self.assertEqual(result.status, 'completed')
+
+    def test_sends_explicit_alternative_evaluation_inputs_additively(self):
+        seen = {}
+        def handler(request):
+            seen['body'] = json.loads(request.read())
+            return httpx.Response(200, json=PAYLOAD)
+        self.client(handler).analyze('pregunta', {
+            'coverage_volume_gwh': 0.3,
+            'coverage_price_eur_mwh': 40,
+        })
+        self.assertEqual(seen['body'], {'text': 'pregunta', 'alternative_evaluation': {
+            'coverage_volume_gwh': 0.3, 'coverage_price_eur_mwh': 40}})
 
     def test_connection_timeout_http_and_schema_errors_are_safe(self):
         def timeout(request):

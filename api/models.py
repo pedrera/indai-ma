@@ -1,8 +1,16 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AnalysisRequestDTO(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     text: str = Field(min_length=1)
+    alternative_evaluation: "BusinessAlternativeEvaluationInputsDTO | None" = None
+
+
+class BusinessAlternativeEvaluationInputsDTO(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False, strict=True)
+    coverage_volume_gwh: float | None = Field(default=None, ge=0)
+    coverage_price_eur_mwh: float | None = Field(default=None, ge=0)
 
 
 class MetricDTO(BaseModel):

@@ -6,6 +6,7 @@ from business_output import ExecutiveResultProjection
 from diagnostics import PerformanceSnapshot
 from runtime_config import LLMRuntimeConfig
 from supervisor_models import SupervisorResult
+from alternative_evaluation import AlternativeEvaluationInputs
 
 
 @dataclass(frozen=True)
@@ -14,6 +15,7 @@ class AnalysisRequest:
     runtime: LLMRuntimeConfig
     use_llm_synthesis: bool = False
     operation_id: str | None = None
+    alternative_evaluation: AlternativeEvaluationInputs | None = None
 
 
 @dataclass(frozen=True)
