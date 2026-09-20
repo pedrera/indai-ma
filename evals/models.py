@@ -18,6 +18,12 @@ class SourceExpectation(BaseModel):
     evidence_contains: str = ''
 
 
+class EvaluationAlternativeEvaluationInputs(BaseModel):
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
+    coverage_volume_gwh: float | None = None
+    coverage_price_eur_mwh: float | None = None
+
+
 class EvaluationCase(BaseModel):
     model_config = ConfigDict(extra='forbid')
     dataset_version: Literal['0.9'] = '0.9'
@@ -38,6 +44,7 @@ class EvaluationCase(BaseModel):
     forbidden_content: list[str] = Field(default_factory=list)
     fixture: Literal['contract', 'injection', 'multi_contract'] = 'contract'
     tags: list[str] = Field(default_factory=list)
+    alternative_evaluation: EvaluationAlternativeEvaluationInputs | None = None
 
 
 class ValueCheck(ValueExpectation):

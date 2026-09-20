@@ -7,6 +7,7 @@ from uuid import uuid4
 from diagnostics import PerformanceRecorder
 from supervisor import Supervisor, event_counts
 from evals.models import EvaluationCase, EvaluationResult, ValueCheck, EvaluationSummary
+from alternative_evaluation import AlternativeEvaluationInputs
 
 CASE_DIR = Path(__file__).parent / 'cases'
 
@@ -163,7 +164,15 @@ class EvaluationRunner:
             recorder = PerformanceRecorder(uuid4().hex[:12], 'offline', 'none', 'supervisor')
             started = perf_counter()
             try:
-                output = self.supervisor_factory(case, recorder).run(case.query, 120)
+                evaluation_inputs = None
+                if case.alternative_evaluation is not None:
+                    evaluation_inputs = AlternativeEvaluationInputs(
+                        coverage_volume_gwh=case.alternative_evaluation.coverage_volume_gwh,
+                        coverage_price_eur_mwh=case.alternative_evaluation.coverage_price_eur_mwh,
+                    )
+                output = self.supervisor_factory(case, recorder).run(
+                    case.query, 120, evaluation_inputs=evaluation_inputs
+                )
                 recorder.finish(output.status.value)
                 result = evaluate(case, output, recorder, (perf_counter()-started)*1000)
             except Exception as error:
