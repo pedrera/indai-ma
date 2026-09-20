@@ -73,6 +73,22 @@ class BusinessDecisionAlternativeDTO(BaseModel):
     label: str
     description: str
     source_step_id: str
+    evaluation: "BusinessAlternativeEvaluationDTO | None" = None
+
+
+class BusinessAlternativeOutcomeDTO(BaseModel):
+    metric: str
+    value: float
+    unit: str
+    origin: str
+
+
+class BusinessAlternativeEvaluationDTO(BaseModel):
+    alternative_id: str
+    status: str
+    outcomes: list[BusinessAlternativeOutcomeDTO] = []
+    missing_inputs: list[str] = []
+    inputs: BusinessAlternativeEvaluationInputsDTO | None = None
 
 
 class BusinessDecisionStepDTO(BaseModel):

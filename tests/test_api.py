@@ -179,6 +179,10 @@ class ApiTests(unittest.TestCase):
             'operational-short-full', 'operational-short-partial', 'operational-short-maintain'])
         self.assertEqual([item['id'] for item in steps[3]['alternatives']], [
             'price-maintain-exposure', 'price-reduce-exposure', 'price-review-coverage'])
+        self.assertEqual(steps[0]['alternatives'][0]['evaluation']['status'], 'EVALUATED')
+        self.assertEqual(steps[0]['alternatives'][1]['evaluation']['status'], 'NOT_EVALUATED')
+        self.assertEqual(steps[0]['alternatives'][1]['evaluation']['missing_inputs'], ['coverage_volume_gwh'])
+        self.assertIsNone(steps[1]['alternatives'][0]['evaluation'])
         self.assertTrue(all(
             alternative['source_step_id'] == step['id']
             for step in steps for alternative in step['alternatives']))

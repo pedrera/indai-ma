@@ -160,7 +160,7 @@ class ApiClientTests(unittest.TestCase):
         alternative = result.recommendation.decision_plan.steps[0].alternatives[0]
         self.assertEqual(alternative.model_dump(), {
             'id': 'synthetic-alt', 'label': 'Synthetic label',
-            'description': 'Synthetic description', 'source_step_id': 'other-step'})
+            'description': 'Synthetic description', 'source_step_id': 'other-step', 'evaluation': None})
 
     def test_legacy_step_without_alternatives_defaults_to_empty(self):
         payload = dict(PAYLOAD)
@@ -169,6 +169,28 @@ class ApiClientTests(unittest.TestCase):
                 'category': 'operational', 'action': 'Revisar'}]}}
         result = self.client(lambda request: httpx.Response(200, json=payload)).analyze('x')
         self.assertEqual(result.recommendation.decision_plan.steps[0].alternatives, [])
+
+    def test_alternative_evaluation_round_trip_preserves_order_origins_and_inputs(self):
+        payload = dict(PAYLOAD)
+        payload['recommendation'] = {'action': 'Revisar.', 'is_complete': True,
+            'decision_plan': {'is_complete': True, 'steps': [{'id': 'operational-short',
+                'category': 'operational', 'action': 'Revisar', 'alternatives': [{
+                    'id': 'operational-short-partial', 'label': 'Parcial', 'description': 'Parcial',
+                    'source_step_id': 'operational-short', 'evaluation': {
+                        'alternative_id': 'operational-short-partial', 'status': 'EVALUATED',
+                        'outcomes': [
+                            {'metric': 'covered_volume_gwh', 'value': 0.3, 'unit': 'GWh', 'origin': 'scenario_input'},
+                            {'metric': 'remaining_short_gwh', 'value': 0.2, 'unit': 'GWh', 'origin': 'derived'},
+                            {'metric': 'coverage_cost_eur', 'value': 12000, 'unit': 'EUR', 'origin': 'derived'},
+                        ], 'missing_inputs': [],
+                        'inputs': {'coverage_volume_gwh': 0.3, 'coverage_price_eur_mwh': 40},
+                    }}]}]}}
+        result = self.client(lambda request: httpx.Response(200, json=payload)).analyze('x')
+        evaluation = result.recommendation.decision_plan.steps[0].alternatives[0].evaluation
+        self.assertEqual([item.metric for item in evaluation.outcomes], [
+            'covered_volume_gwh', 'remaining_short_gwh', 'coverage_cost_eur'])
+        self.assertEqual(evaluation.inputs.coverage_price_eur_mwh, 40)
+        self.assertEqual(evaluation.outcomes[0].origin, 'scenario_input')
 
     def test_legacy_plan_without_readiness_remains_none(self):
         payload = dict(PAYLOAD)

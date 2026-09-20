@@ -62,6 +62,27 @@ class ApiDecisionAlternative(BaseModel):
     label: str
     description: str
     source_step_id: str
+    evaluation: "ApiAlternativeEvaluation | None" = None
+
+
+class ApiAlternativeOutcome(BaseModel):
+    metric: str
+    value: float
+    unit: str
+    origin: str
+
+
+class ApiAlternativeEvaluationInputs(BaseModel):
+    coverage_volume_gwh: float | None = None
+    coverage_price_eur_mwh: float | None = None
+
+
+class ApiAlternativeEvaluation(BaseModel):
+    alternative_id: str
+    status: str
+    outcomes: list[ApiAlternativeOutcome] = []
+    missing_inputs: list[str] = []
+    inputs: ApiAlternativeEvaluationInputs | None = None
 
 
 class ApiDecisionStep(BaseModel):

@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, Request
 
 from api.models import (AnalysisRequestDTO, AnalysisResponseDTO, DiagnosticsDTO,
+                        BusinessAlternativeEvaluationInputsDTO,
                         EvidenceDTO, ExplanationDTO, HealthDTO, MetricDTO,
                         ProvenanceDTO, RoutingDTO, SpecialistStatusDTO,
                         BusinessRecommendationDTO, BusinessActionDTO,
                         BusinessDecisionAlternativeDTO,
+                        BusinessAlternativeEvaluationDTO, BusinessAlternativeOutcomeDTO,
                         BusinessDecisionPlanDTO, BusinessDecisionStepDTO)
 from application_models import AnalysisRequest
 from alternative_evaluation import AlternativeEvaluationInputs
@@ -95,6 +97,19 @@ def analyze(payload: AnalysisRequestDTO, request: Request, service: AnalysisServ
                         label=alternative.label,
                         description=alternative.description,
                         source_step_id=alternative.source_step_id,
+                        evaluation=(BusinessAlternativeEvaluationDTO(
+                            alternative_id=alternative.evaluation.alternative_id,
+                            status=alternative.evaluation.status,
+                            outcomes=[BusinessAlternativeOutcomeDTO(
+                                metric=outcome.metric, value=outcome.value,
+                                unit=outcome.unit, origin=outcome.origin,
+                            ) for outcome in alternative.evaluation.outcomes],
+                            missing_inputs=list(alternative.evaluation.missing_inputs),
+                            inputs=(BusinessAlternativeEvaluationInputsDTO(
+                                coverage_volume_gwh=alternative.evaluation.inputs.coverage_volume_gwh,
+                                coverage_price_eur_mwh=alternative.evaluation.inputs.coverage_price_eur_mwh,
+                            ) if alternative.evaluation.inputs is not None else None),
+                        ) if alternative.evaluation is not None else None),
                     ) for alternative in step.alternatives],
                 ) for step in projection.recommendation.decision_plan.steps],
                 is_complete=projection.recommendation.decision_plan.is_complete,
