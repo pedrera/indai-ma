@@ -24,6 +24,21 @@ def render_business_api_result(result):
                 st.write(f"- {item}")
         for warning in recommendation.warnings:
             st.warning(warning)
+        actions = getattr(recommendation, "actions", ())
+        if actions:
+            st.markdown("**ACCIONES RECOMENDADAS**")
+            category_labels = {
+                "operational": "OPERATIVA",
+                "contractual": "CONTRACTUAL",
+                "risk": "RIESGO",
+            }
+            for index, item in enumerate(actions, 1):
+                category = category_labels.get(item.category, item.category.upper())
+                st.markdown(f"**{index}. [{category}] {item.action}**")
+                if item.rationale:
+                    st.write(item.rationale)
+                for label, value in item.supporting_metrics:
+                    st.write(f"- {label}: {value}")
     if result.metrics:
         st.subheader("Métricas clave")
         st.dataframe([metric.model_dump() for metric in result.metrics], hide_index=True)

@@ -139,6 +139,22 @@ def build_business_copy_payload(result: Any, *, operation_id: str | None = None,
         recommendation_lines.extend(f"- {item}" for item in recommendation.rationale)
         recommendation_lines.extend(f"Warning: {item}" for item in recommendation.warnings)
         _copy_section(lines, "RECOMENDACIÓN", recommendation_lines)
+        actions = getattr(recommendation, "actions", ())
+        if actions:
+            category_labels = {
+                "operational": "OPERATIVA",
+                "contractual": "CONTRACTUAL",
+                "risk": "RIESGO",
+            }
+            action_lines = []
+            for index, item in enumerate(actions, 1):
+                category = category_labels.get(item.category, item.category.upper())
+                action_lines.append(f"{index}. [{category}] {item.action}")
+                if item.rationale:
+                    action_lines.append(f"   {item.rationale}")
+                action_lines.extend(f"   - {label}: {value}"
+                                    for label, value in item.supporting_metrics)
+            _copy_section(lines, "ACCIONES RECOMENDADAS", action_lines)
     metrics = [f"- {item.label}: {item.value} ({item.origin})" for item in getattr(result, "metrics", ())]
     _copy_section(lines, "Key metrics", metrics)
     explanations = [f"- {item.title}: {item.text}" for item in getattr(result, "explanations", ())]

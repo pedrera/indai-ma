@@ -87,6 +87,7 @@ class ApiClientTests(unittest.TestCase):
         self.assertEqual(result.recommendation.supporting_metrics[1][1], '0.5 GWh')
         self.assertEqual(result.recommendation.operational_implication, payload['recommendation']['operational_implication'])
         self.assertEqual(result.recommendation.risk_implication, 'Con un aumento del spot del 20%, la exposición pasa de 21000 a 25200 EUR (+4200 EUR).')
+        self.assertEqual(result.recommendation.actions, [])
 
     def test_api_client_reconstructs_business_actions_in_order(self):
         payload = dict(PAYLOAD)
@@ -108,6 +109,29 @@ class ApiClientTests(unittest.TestCase):
                          ['operational', 'contractual', 'contractual', 'risk'])
         self.assertEqual(result.recommendation.actions[0].supporting_metrics[0][1], '0.5 GWh')
         self.assertEqual(result.recommendation.actions[3].supporting_metrics[0][1], '+4,200 EUR')
+
+    def test_copy_all_preserves_business_actions_without_aggregation(self):
+        payload = dict(PAYLOAD)
+        payload['recommendation'] = {
+            'action': 'Cubrir el SHORT operativo.', 'is_complete': True,
+            'actions': [
+                {'category': 'operational', 'action': 'Revisar cobertura.',
+                 'rationale': 'SHORT estructurado.', 'supporting_metrics': [['SHORT', '0.5 GWh']]},
+                {'category': 'contractual', 'action': 'Revisar exceso.',
+                 'rationale': None, 'supporting_metrics': [['Exceso', '0.2 GWh']]},
+                {'category': 'contractual', 'action': 'Revisar TOP.',
+                 'rationale': 'Déficit separado.', 'supporting_metrics': [['Déficit TOP', '2.8 GWh']]},
+                {'category': 'risk', 'action': 'Revisar sensibilidad.',
+                 'rationale': None, 'supporting_metrics': [['Delta', '+4,200 EUR']]},
+            ],
+        }
+        result = self.client(lambda request: httpx.Response(200, json=payload)).analyze('x')
+        text = build_business_copy_payload(result, operation_id='abc123')
+        self.assertIn('ACCIONES RECOMENDADAS', text)
+        for expected in ('[OPERATIVA]', '[CONTRACTUAL]', '[RIESGO]', '0.5 GWh', '0.2 GWh', '2.8 GWh', '+4,200 EUR'):
+            self.assertIn(expected, text)
+        self.assertNotIn('3.3 GWh', text)
+        self.assertNotIn('3.5 GWh', text)
 
     def test_old_recommendation_payload_without_actions_is_backward_compatible(self):
         payload = dict(PAYLOAD)
