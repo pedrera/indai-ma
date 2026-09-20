@@ -129,6 +129,41 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(decision.selected_agents, list(AGENT_ORDER))
         self.assertFalse(decision.ambiguity_detected)
 
+    def test_business_risk_wording_selects_risk_agent(self):
+        cases = [
+            "Identifica la exposición y los riesgos.",
+            "Analiza el riesgo de precio.",
+            "Analiza los riesgos de mercado.",
+            "Analiza la sensibilidad al spot.",
+            "Evalúa la volatilidad del precio spot.",
+            "Analiza el impacto ante variaciones del spot.",
+        ]
+        for query in cases:
+            with self.subTest(query=query):
+                self.assertIn("RiskAgent", route_deterministically(query).selected_agents)
+
+    def test_risk_routing_does_not_trigger_on_price_or_spot_alone(self):
+        cases = [
+            ("Precio spot 42 EUR/MWh.", []),
+            ("Calcula la exposición spot.", ["ProcurementAgent"]),
+            ("Revisa las condiciones contractuales.", ["CommercialAgent"]),
+            ("El precio contractual es 46 EUR/MWh.", ["CommercialAgent"]),
+        ]
+        for query, expected in cases:
+            with self.subTest(query=query):
+                self.assertEqual(route_deterministically(query).selected_agents, expected)
+
+    def test_natural_language_integrated_business_query_routes_three_agents(self):
+        query = ("Analiza la posición de suministro de Hospital Costa Sur. "
+                 "La demanda prevista es de 4,8 GWh, disponemos de 4,3 GWh "
+                 "de suministro contratado y el precio spot es de 42 EUR/MWh. "
+                 "Revisa también las condiciones contractuales aplicables, "
+                 "identifica la exposición y los riesgos, y dime qué actuación "
+                 "recomiendas.")
+        decision = route_deterministically(query)
+        self.assertEqual(decision.selected_agents, list(AGENT_ORDER))
+        self.assertFalse(decision.ambiguity_detected)
+
     def test_ambiguous_router_only_once(self):
         router = Mock()
         router.select.return_value = {"selected_agents": ["RiskAgent"]}

@@ -27,10 +27,18 @@ def route_deterministically(request):
     position_text = re.sub(r"posicion contractual|cobertura contractual", "", text)
     position = bool(re.search(r"posicion|\bshort\b|\blong\b|\bbalanced\b|deficit|cobertura|coste (?:spot|de cubrir)", position_text))
     facts = context.demand_gwh is not None and context.supply_gwh is not None
-    procurement_intent = bool(re.search(r"aprovisionamiento|suministro", text))
-    risk_intent = bool(re.search(r"\briesgo\b|situacion de riesgo|analisis de riesgo", text))
+    procurement_intent = bool(re.search(r"aprovisionamiento|suministro|exposicion\s+spot", text))
+    risk_intent = bool(re.search(
+        r"\briesgos\b|"
+        r"\briesgo\s+de\s+(?:precio|mercado)\b|"
+        r"situacion\s+de\s+riesgo|analisis\s+de\s+riesgo|\bde\s+riesgo\b|"
+        r"sensibilidad\s+(?:al?\s+)?(?:spot|precio)|"
+        r"volatilidad\s+(?:del?\s+)?(?:spot|precio)|"
+        r"impacto\s+(?:ante\s+)?(?:movimientos?|variaciones?)\s+(?:del?\s+)?(?:spot|precio)",
+        text,
+    ))
     procurement = position or (facts and (not commercial and not stress or procurement_intent))
-    risk = stress or (facts and risk_intent)
+    risk = stress or risk_intent
     selected = [name for name, enabled in zip(AGENT_ORDER, (commercial, procurement, risk)) if enabled]
     reasons = []
     if commercial:
