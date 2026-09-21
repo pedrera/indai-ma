@@ -1108,7 +1108,10 @@ def render_business() -> None:
                                       step=0.1, key="business_coverage_volume") if volume_enabled else None
     price_enabled = st.checkbox("Definir precio de cobertura", key="business_coverage_price_enabled")
     coverage_price = st.number_input("Precio de cobertura (€/MWh)", min_value=0.0, value=0.0,
-                                     step=1.0, key="business_coverage_price") if price_enabled else None
+                                      step=1.0, key="business_coverage_price") if price_enabled else None
+    top_enabled = st.checkbox("Definir previsión restante revisada", key="business_top_forecast_enabled")
+    revised_forecast = st.number_input("Previsión restante revisada (GWh)", min_value=0.0, value=0.0,
+                                         step=0.1, key="business_top_forecast") if top_enabled else None
     if st.button(
         "Analizar",
         key="business_start",
@@ -1116,9 +1119,9 @@ def render_business() -> None:
         disabled=generation_active or not request.strip(),
     ):
         alternative_evaluation = None
-        if volume_enabled or price_enabled:
+        if volume_enabled or price_enabled or top_enabled:
             from alternative_evaluation import AlternativeEvaluationInputs
-            alternative_evaluation = AlternativeEvaluationInputs(coverage_volume, coverage_price)
+            alternative_evaluation = AlternativeEvaluationInputs(coverage_volume, coverage_price, revised_forecast)
         start_business_api_analysis(request, alternative_evaluation)
         st.rerun()
     st.subheader("Advanced / Technical")

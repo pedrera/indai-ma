@@ -14,6 +14,7 @@ _READINESS_LABELS = {"READY": "Completa", "PARTIALLY_READY": "Parcial", "BLOCKED
 _MISSING_INFORMATION_LABELS = {
     "coverage_volume_gwh": "Volumen de cobertura",
     "coverage_price_eur_mwh": "Precio de cobertura",
+    "revised_remaining_forecast_consumption_gwh": "Previsión restante revisada",
     "spot_price_eur_mwh": "Precio spot",
     "forecast_demand_gwh": "Previsión de demanda",
     "expected_demand_gwh": "Demanda esperada",
@@ -23,8 +24,8 @@ _MISSING_INFORMATION_LABELS = {
     "take_or_pay_minimum_gwh": "Mínimo contractual take-or-pay",
 }
 _EVALUATION_STATUS_LABELS = {"EVALUATED": "Calculada", "PARTIALLY_EVALUATED": "Parcial", "NOT_EVALUATED": "Pendiente"}
-_EVALUATION_INPUT_LABELS = {"coverage_volume_gwh": ("Volumen de cobertura", "GWh"), "coverage_price_eur_mwh": ("Precio de cobertura", "€/MWh")}
-_EVALUATION_OUTCOME_LABELS = {"covered_volume_gwh": ("Volumen cubierto", "GWh"), "remaining_short_gwh": ("SHORT restante", "GWh"), "coverage_cost_eur": ("Coste de cobertura", "€"), "spot_exposure_eur": ("Exposición spot", "€")}
+_EVALUATION_INPUT_LABELS = {"coverage_volume_gwh": ("Volumen de cobertura", "GWh"), "coverage_price_eur_mwh": ("Precio de cobertura", "€/MWh"), "revised_remaining_forecast_consumption_gwh": ("Previsión restante revisada", "GWh")}
+_EVALUATION_OUTCOME_LABELS = {"covered_volume_gwh": ("Volumen cubierto", "GWh"), "remaining_short_gwh": ("SHORT restante", "GWh"), "remaining_long_gwh": ("LONG restante", "GWh"), "projected_consumption_gwh": ("Consumo proyectado", "GWh"), "projected_top_deficit_gwh": ("Déficit TOP proyectado", "GWh"), "coverage_cost_eur": ("Coste de cobertura", "€"), "spot_exposure_eur": ("Exposición spot", "€")}
 
 
 def decision_dependency_label(value: str) -> str:

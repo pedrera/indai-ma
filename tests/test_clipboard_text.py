@@ -144,8 +144,33 @@ class ClipboardResponseTests(unittest.TestCase):
         self.assertIn("Precio de cobertura", text)
         self.assertNotIn("coverage_volume_gwh", text)
         self.assertNotIn("coverage_price_eur_mwh", text)
+
+    def test_supported_alternative_missing_inputs_are_business_labels(self):
+        evaluation = SimpleNamespace(
+            status="NOT_EVALUATED",
+            inputs=None,
+            missing_inputs=("revised_remaining_forecast_consumption_gwh", "coverage_volume_gwh"),
+            outcomes=(),
+        )
+        text = "\n".join(format_alternative_evaluation(evaluation))
+        self.assertIn("Previsión restante revisada", text)
+        self.assertIn("Volumen de cobertura", text)
+        self.assertNotIn("revised_remaining_forecast_consumption_gwh", text)
+        self.assertNotIn("coverage_volume_gwh", text)
         self.assertNotIn("operational-short-partial", text)
         self.assertNotIn("scenario_input", text)
+
+    def test_alternative_copy_format_does_not_show_cross_domain_inputs(self):
+        short_evaluation = SimpleNamespace(
+            status="EVALUATED",
+            inputs=SimpleNamespace(coverage_volume_gwh=0.3, coverage_price_eur_mwh=40,
+                                   revised_remaining_forecast_consumption_gwh=None),
+            missing_inputs=(), outcomes=(),
+        )
+        text = "\n".join(format_alternative_evaluation(short_evaluation))
+        self.assertIn("Volumen de cobertura", text)
+        self.assertIn("Precio de cobertura", text)
+        self.assertNotIn("Previsión restante revisada", text)
     def test_plain_response_preserves_markdown_and_line_breaks(self):
         content = "## Resultado\n\nLínea uno\nLínea dos"
         self.assertEqual(build_response_clipboard_text(content), content)
