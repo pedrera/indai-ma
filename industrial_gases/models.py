@@ -4,6 +4,10 @@ from decimal import Decimal
 from typing import Literal
 
 
+class DomainValidationError(ValueError):
+    """Expected invalid domain or input data."""
+
+
 def _decimal(value) -> Decimal:
     if isinstance(value, bool):
         raise ValueError("boolean is not a numeric domain value")

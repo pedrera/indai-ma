@@ -4,6 +4,7 @@ from decimal import Decimal
 from .models import (
     ConsumptionForecast, ConsumptionRate, DeliveryPlan, InventorySnapshot,
     Quantity, SupplyInstallation, SupplyProjection, _SignedQuantity,
+    DomainValidationError,
 )
 from .provenance import Provenance
 
@@ -15,9 +16,9 @@ def _duration_days(start: datetime, end: datetime) -> Decimal:
 
 def calculate_days_of_supply(inventory: Quantity, consumption_rate: ConsumptionRate) -> Decimal | None:
     if inventory.unit != consumption_rate.quantity_unit:
-        raise ValueError("inventory and consumption rate units are incompatible")
+        raise DomainValidationError("inventory and consumption rate units are incompatible")
     if consumption_rate.time_unit != "day":
-        raise ValueError("Phase 1A requires a daily consumption rate")
+        raise DomainValidationError("Phase 1A requires a daily consumption rate")
     if consumption_rate.value == 0:
         return None
     return inventory.value / consumption_rate.value
@@ -26,15 +27,15 @@ def calculate_days_of_supply(inventory: Quantity, consumption_rate: ConsumptionR
 def project_inventory(snapshot: InventorySnapshot, forecast: ConsumptionForecast,
                       at: datetime) -> Quantity:
     if snapshot.installation_id != forecast.installation_id:
-        raise ValueError("snapshot and forecast installations differ")
+        raise DomainValidationError("snapshot and forecast installations differ")
     if at.tzinfo is None or at.utcoffset() is None:
-        raise ValueError("timestamps must be timezone-aware")
+        raise DomainValidationError("timestamps must be timezone-aware")
     if at < snapshot.observed_at:
-        raise ValueError("projection time precedes inventory snapshot")
+        raise DomainValidationError("projection time precedes inventory snapshot")
     if forecast.valid_until is not None and at > forecast.valid_until:
-        raise ValueError("projection exceeds forecast validity")
+        raise DomainValidationError("projection exceeds forecast validity")
     if snapshot.inventory.unit != forecast.rate.quantity_unit:
-        raise ValueError("inventory and forecast units are incompatible")
+        raise DomainValidationError("inventory and forecast units are incompatible")
     days = _duration_days(snapshot.observed_at, at)
     consumed = forecast.rate.value * days
     remaining = snapshot.inventory.value - consumed
@@ -54,27 +55,27 @@ def build_supply_projection(installation: SupplyInstallation, snapshot: Inventor
                             forecast: ConsumptionForecast, delivery: DeliveryPlan,
                             safety_stock: Quantity, reference_time: datetime) -> SupplyProjection:
     if reference_time.tzinfo is None or reference_time.utcoffset() is None:
-        raise ValueError("reference_time must be timezone-aware")
+        raise DomainValidationError("reference_time must be timezone-aware")
     if delivery.planned_delivery_at < reference_time:
-        raise ValueError("delivery cannot be in the past")
+        raise DomainValidationError("delivery cannot be in the past")
     installation_ids = {installation.installation_id, snapshot.installation_id,
                         forecast.installation_id, delivery.installation_id}
     if len(installation_ids) != 1:
-        raise ValueError("scenario objects refer to different installations")
+        raise DomainValidationError("scenario objects refer to different installations")
     if installation.capacity.unit != snapshot.inventory.unit or safety_stock.unit != snapshot.inventory.unit:
-        raise ValueError("capacity, inventory and safety stock units differ")
+        raise DomainValidationError("capacity, inventory and safety stock units differ")
     if delivery.planned_quantity.unit != snapshot.inventory.unit:
-        raise ValueError("delivery and inventory units differ")
+        raise DomainValidationError("delivery and inventory units differ")
     if snapshot.inventory.value > installation.capacity.value:
-        raise ValueError("inventory exceeds installation capacity")
+        raise DomainValidationError("inventory exceeds installation capacity")
     if safety_stock.value > installation.capacity.value:
-        raise ValueError("safety stock exceeds installation capacity")
+        raise DomainValidationError("safety stock exceeds installation capacity")
     if reference_time != snapshot.observed_at:
-        raise ValueError("reference_time must equal snapshot observed_at")
+        raise DomainValidationError("reference_time must equal snapshot observed_at")
     if reference_time < forecast.valid_from:
-        raise ValueError("reference_time precedes forecast validity")
+        raise DomainValidationError("reference_time precedes forecast validity")
     if forecast.valid_until is not None and delivery.planned_delivery_at > forecast.valid_until:
-        raise ValueError("delivery exceeds forecast validity")
+        raise DomainValidationError("delivery exceeds forecast validity")
     days = calculate_days_of_supply(snapshot.inventory, forecast.rate)
     elapsed_days = _duration_days(reference_time, delivery.planned_delivery_at)
     consumption = Quantity(forecast.rate.value * elapsed_days, snapshot.inventory.unit)
