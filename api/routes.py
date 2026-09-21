@@ -41,6 +41,7 @@ def analyze(payload: AnalysisRequestDTO, request: Request, service: AnalysisServ
         alternative_evaluation=(AlternativeEvaluationInputs(
             coverage_volume_gwh=payload.alternative_evaluation.coverage_volume_gwh,
             coverage_price_eur_mwh=payload.alternative_evaluation.coverage_price_eur_mwh,
+            revised_remaining_forecast_consumption_gwh=payload.alternative_evaluation.revised_remaining_forecast_consumption_gwh,
         ) if payload.alternative_evaluation is not None else None),
     ))
     projection = result.executive
@@ -108,6 +109,7 @@ def analyze(payload: AnalysisRequestDTO, request: Request, service: AnalysisServ
                             inputs=(BusinessAlternativeEvaluationInputsDTO(
                                 coverage_volume_gwh=alternative.evaluation.inputs.coverage_volume_gwh,
                                 coverage_price_eur_mwh=alternative.evaluation.inputs.coverage_price_eur_mwh,
+                                revised_remaining_forecast_consumption_gwh=alternative.evaluation.inputs.revised_remaining_forecast_consumption_gwh,
                             ) if alternative.evaluation.inputs is not None else None),
                         ) if alternative.evaluation is not None else None),
                     ) for alternative in step.alternatives],

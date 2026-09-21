@@ -60,6 +60,9 @@ class AnalysisApiClient:
                         "coverage_volume_gwh": getattr(alternative_evaluation, "coverage_volume_gwh", None),
                         "coverage_price_eur_mwh": getattr(alternative_evaluation, "coverage_price_eur_mwh", None),
                     }
+                    revised = getattr(alternative_evaluation, "revised_remaining_forecast_consumption_gwh", None)
+                    if revised is not None:
+                        payload["alternative_evaluation"]["revised_remaining_forecast_consumption_gwh"] = revised
             response = self._client.post("/api/v1/analysis", json=payload)
         except httpx.TimeoutException as error:
             raise AnalysisApiTimeoutError("El análisis ha superado el tiempo permitido.") from error

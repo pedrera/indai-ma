@@ -64,6 +64,19 @@ class ApiClientTests(unittest.TestCase):
         self.assertEqual(seen[-1], {'text': 'pregunta'})
         self.assertNotIn('AlternativeEvaluationInputs', repr(seen))
 
+    def test_serializes_top_revised_forecast_and_explicit_zero(self):
+        seen = []
+        def handler(request):
+            seen.append(json.loads(request.read()))
+            return httpx.Response(200, json=PAYLOAD)
+        client = self.client(handler)
+        client.analyze('top', AlternativeEvaluationInputs(revised_remaining_forecast_consumption_gwh=11))
+        self.assertEqual(seen[-1]['alternative_evaluation'], {
+            'coverage_volume_gwh': None, 'coverage_price_eur_mwh': None,
+            'revised_remaining_forecast_consumption_gwh': 11})
+        client.analyze('top', AlternativeEvaluationInputs(revised_remaining_forecast_consumption_gwh=0))
+        self.assertEqual(seen[-1]['alternative_evaluation']['revised_remaining_forecast_consumption_gwh'], 0)
+
     def test_connection_timeout_http_and_schema_errors_are_safe(self):
         def timeout(request):
             raise httpx.ReadTimeout("late")

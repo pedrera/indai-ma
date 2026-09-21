@@ -75,6 +75,7 @@ class ApiAlternativeOutcome(BaseModel):
 class ApiAlternativeEvaluationInputs(BaseModel):
     coverage_volume_gwh: float | None = None
     coverage_price_eur_mwh: float | None = None
+    revised_remaining_forecast_consumption_gwh: float | None = None
 
 
 class ApiAlternativeEvaluation(BaseModel):

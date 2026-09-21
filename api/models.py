@@ -11,6 +11,7 @@ class BusinessAlternativeEvaluationInputsDTO(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False, strict=True)
     coverage_volume_gwh: float | None = Field(default=None, ge=0)
     coverage_price_eur_mwh: float | None = Field(default=None, ge=0)
+    revised_remaining_forecast_consumption_gwh: float | None = Field(default=None, ge=0)
 
 
 class MetricDTO(BaseModel):
