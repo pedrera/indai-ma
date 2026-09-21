@@ -169,6 +169,7 @@ class EvaluationRunner:
                     evaluation_inputs = AlternativeEvaluationInputs(
                         coverage_volume_gwh=case.alternative_evaluation.coverage_volume_gwh,
                         coverage_price_eur_mwh=case.alternative_evaluation.coverage_price_eur_mwh,
+                        revised_remaining_forecast_consumption_gwh=case.alternative_evaluation.revised_remaining_forecast_consumption_gwh,
                     )
                 output = self.supervisor_factory(case, recorder).run(
                     case.query, 120, evaluation_inputs=evaluation_inputs
