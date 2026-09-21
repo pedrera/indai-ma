@@ -21,6 +21,7 @@ from .models import (
     SupplyProjection,
 )
 from .provenance import Provenance
+from .service import Finding, SupplyAssuranceRequest, SupplyAssuranceResult, SupplyAssuranceService
 
 __all__ = [
     "Application", "ApplicationGasRequirement", "ConsumptionForecast",
@@ -29,4 +30,5 @@ __all__ = [
     "SupplyInstallation", "SupplyProjection", "build_supply_projection",
     "calculate_days_of_supply", "calculate_required_delivery_volume",
     "project_inventory",
+    "Finding", "SupplyAssuranceRequest", "SupplyAssuranceResult", "SupplyAssuranceService",
 ]
