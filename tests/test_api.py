@@ -182,7 +182,9 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(steps[0]['alternatives'][0]['evaluation']['status'], 'EVALUATED')
         self.assertEqual(steps[0]['alternatives'][1]['evaluation']['status'], 'NOT_EVALUATED')
         self.assertEqual(steps[0]['alternatives'][1]['evaluation']['missing_inputs'], ['coverage_volume_gwh'])
-        self.assertIsNone(steps[1]['alternatives'][0]['evaluation'])
+        self.assertEqual(steps[1]['alternatives'][0]['evaluation']['status'], 'NOT_EVALUATED')
+        self.assertEqual(steps[1]['alternatives'][0]['evaluation']['missing_inputs'],
+                         ['revised_remaining_forecast_consumption_gwh'])
         self.assertTrue(all(
             alternative['source_step_id'] == step['id']
             for step in steps for alternative in step['alternatives']))
@@ -200,6 +202,50 @@ class ApiTests(unittest.TestCase):
         copied = build_business_copy_payload(client_result)
         self.assertLess(copied.index('PLAN DE DECISIÓN'), copied.index('ACCIONES RECOMENDADAS'))
         self.assertIn('Relacionado con: Cobertura del SHORT operativo', copied)
+
+    def test_revised_top_input_is_isolated_from_short_alternatives_over_http(self):
+        query = ("Analiza la situación completa de Hospital Costa Sur. El consumo acumulado es de 30 GWh "
+                 "y esperamos consumir otros 8 GWh hasta final de año. Para el próximo mes esperamos una "
+                 "demanda de 4.8 GWh y tenemos 4.3 GWh de suministro. El precio spot actual es 42 EUR/MWh. "
+                 "Analiza también qué ocurriría si el spot sube un 20% y dime qué deberíamos revisar.")
+        rag = Mock()
+        rag.retrieve.return_value = RetrievalResult(contract_matches(), 'fixture')
+        service = AnalysisService(rag_factory=lambda recorder, runtime: rag)
+        response = self.client(service).post('/api/v1/analysis', json={
+            'text': query,
+            'alternative_evaluation': {
+                'revised_remaining_forecast_consumption_gwh': 11,
+            },
+        })
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        plan = data['recommendation']['decision_plan']
+        short = {item['id']: item for item in plan['steps'][0]['alternatives']}
+        top = {item['id']: item for item in plan['steps'][1]['alternatives']}
+
+        short_partial = short['operational-short-partial']['evaluation']
+        self.assertEqual(short_partial['status'], 'NOT_EVALUATED')
+        self.assertIn('coverage_volume_gwh', short_partial['missing_inputs'])
+        self.assertIsNone(short_partial['inputs']['revised_remaining_forecast_consumption_gwh'])
+        full_inputs = short['operational-short-full']['evaluation']['inputs']
+        self.assertTrue(full_inputs is None or full_inputs.get('revised_remaining_forecast_consumption_gwh') is None)
+
+        top_review = top['top-review-consumption']['evaluation']
+        self.assertEqual(top_review['status'], 'EVALUATED')
+        self.assertEqual(top_review['inputs']['revised_remaining_forecast_consumption_gwh'], 11)
+        self.assertEqual([item['value'] for item in top_review['outcomes']], [41.0, 0.0])
+        baseline = top['top-maintain-forecast']['evaluation']
+        self.assertIsNone(baseline['inputs'])
+        self.assertEqual([item['value'] for item in baseline['outcomes']], [38.0, 2.8])
+
+        client_result = ApiAnalysisResult.model_validate(data)
+        client_steps = client_result.recommendation.decision_plan.steps
+        client_short = client_steps[0].alternatives[1].evaluation
+        client_top = client_steps[1].alternatives[0].evaluation
+        client_baseline = client_steps[1].alternatives[2].evaluation
+        self.assertIsNone(client_short.inputs.revised_remaining_forecast_consumption_gwh)
+        self.assertEqual(client_top.inputs.revised_remaining_forecast_consumption_gwh, 11)
+        self.assertEqual([item.value for item in client_baseline.outcomes], [38.0, 2.8])
 
 
 if __name__ == '__main__':
