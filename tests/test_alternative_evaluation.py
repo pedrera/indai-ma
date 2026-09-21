@@ -27,6 +27,99 @@ def _procurement(exposure=21000):
 
 
 class AlternativeEvaluationTests(unittest.TestCase):
+    def test_top_review_consumption_uses_revised_forecast_without_mutating_baseline(self):
+        from decision_plan import compose_decision_plan
+        from decision_alternatives import compose_decision_alternatives
+        from take_or_pay import calculate_take_or_pay_projection
+        baseline = calculate_take_or_pay_projection(40.8, 30, 8)
+        result = SimpleNamespace(specialist_results=[_specialist(
+            "CommercialAgent", SimpleNamespace(take_or_pay_projection=baseline)
+        )])
+        recommendation = SimpleNamespace(actions=(SimpleNamespace(
+            id="contractual-take-or-pay", category="contractual", action="Revisar TOP",
+            rationale=None, supporting_metrics=()),), is_complete=True, warnings=())
+        plan = compose_decision_alternatives(compose_decision_plan(recommendation))
+        evaluated = compose_alternative_evaluations(
+            result, plan, AlternativeEvaluationInputs(revised_remaining_forecast_consumption_gwh=11)
+        )
+        scenario = evaluated.steps[0].alternatives[0].evaluation
+        self.assertEqual(scenario.status, "EVALUATED")
+        self.assertEqual(scenario.inputs.revised_remaining_forecast_consumption_gwh, 11)
+        self.assertEqual([(item.metric, item.value, item.origin) for item in scenario.outcomes], [
+            ("projected_consumption_gwh", 41.0, "derived"),
+            ("projected_top_deficit_gwh", 0.0, "derived"),
+        ])
+        self.assertEqual((baseline.projected_annual_consumption_gwh,
+                          baseline.projected_take_or_pay_deficit_gwh,
+                          baseline.status), (38, 2.8, "BELOW_MINIMUM"))
+
+    def test_top_maintain_projects_existing_take_or_pay_result(self):
+        from decision_plan import compose_decision_plan
+        from decision_alternatives import compose_decision_alternatives
+        projection = SimpleNamespace(
+            projected_annual_consumption_gwh=38,
+            projected_take_or_pay_deficit_gwh=2.8,
+            status="BELOW_MINIMUM",
+        )
+        result = SimpleNamespace(specialist_results=[_specialist(
+            "CommercialAgent", SimpleNamespace(take_or_pay_projection=projection)
+        )])
+        recommendation = SimpleNamespace(actions=(SimpleNamespace(
+            id="contractual-take-or-pay", category="contractual", action="Revisar TOP",
+            rationale=None, supporting_metrics=()),), is_complete=True, warnings=())
+        plan = compose_decision_alternatives(compose_decision_plan(recommendation))
+        evaluated = compose_alternative_evaluations(result, plan)
+        alternatives = evaluated.steps[0].alternatives
+        maintain = alternatives[2]
+        self.assertEqual(maintain.id, "top-maintain-forecast")
+        self.assertEqual(maintain.evaluation.status, "EVALUATED")
+        self.assertIsNone(maintain.evaluation.inputs)
+        self.assertEqual([(outcome.metric, outcome.value, outcome.unit, outcome.origin)
+                          for outcome in maintain.evaluation.outcomes], [
+            ("projected_consumption_gwh", 38.0, "GWh", "structured_result"),
+            ("projected_top_deficit_gwh", 2.8, "GWh", "structured_result"),
+        ])
+        self.assertEqual(alternatives[0].evaluation.status, "NOT_EVALUATED")
+        self.assertEqual(alternatives[0].evaluation.missing_inputs,
+                         ("revised_remaining_forecast_consumption_gwh",))
+        self.assertIsNone(alternatives[1].evaluation)
+
+    def test_top_alternatives_remain_unevaluated_without_projection(self):
+        from decision_plan import compose_decision_plan
+        from decision_alternatives import compose_decision_alternatives
+        result = SimpleNamespace(specialist_results=[])
+        recommendation = SimpleNamespace(actions=(SimpleNamespace(
+            id="contractual-take-or-pay", category="contractual", action="Revisar TOP",
+            rationale=None, supporting_metrics=()),), is_complete=True, warnings=())
+        evaluated = compose_alternative_evaluations(result, compose_decision_alternatives(compose_decision_plan(recommendation)))
+        self.assertTrue(all(item.evaluation is None for item in evaluated.steps[0].alternatives))
+
+    def test_long_maintain_is_evaluated_from_structured_position_only(self):
+        result = SimpleNamespace(specialist_results=[_specialist(
+            "ProcurementAgent", SimpleNamespace(tool_executions=[{
+                "name": "calculate_supply_position",
+                "result": {"position_gwh": 0.7, "interpretation": "LONG"},
+            }]))])
+        recommendation = SimpleNamespace(actions=(SimpleNamespace(
+            id="operational-long", category="operational", action="Revisar LONG",
+            rationale=None, supporting_metrics=()),), is_complete=True, warnings=())
+        plan = __import__("decision_plan").compose_decision_plan(recommendation)
+        evaluated = compose_alternative_evaluations(result, plan)
+        alternatives = evaluated.steps[0].alternatives
+        self.assertEqual([item.id for item in alternatives], [
+            "operational-long-maintain", "operational-long-reallocation", "operational-long-reduce-future"])
+        maintain, reallocation, reduce_future = alternatives
+        self.assertEqual(maintain.evaluation.status, "EVALUATED")
+        self.assertIsNone(maintain.evaluation.inputs)
+        self.assertEqual((maintain.evaluation.outcomes[0].metric,
+                          maintain.evaluation.outcomes[0].value,
+                          maintain.evaluation.outcomes[0].unit,
+                          maintain.evaluation.outcomes[0].origin),
+                         ("remaining_long_gwh", 0.7, "GWh", "structured_result"))
+        self.assertIsNone(reallocation.evaluation)
+        self.assertIsNone(reduce_future.evaluation)
+        self.assertNotIn("EUR", str(maintain.evaluation))
+
     def test_short_alternatives_are_evaluated_without_assuming_partial_coverage(self):
         result = SimpleNamespace(specialist_results=[_specialist("ProcurementAgent", _procurement())])
         recommendation = SimpleNamespace(actions=(SimpleNamespace(
@@ -150,11 +243,53 @@ class AlternativeEvaluationTests(unittest.TestCase):
                 else:
                     self.assertEqual(partial.evaluation.status, 'EVALUATED')
 
+    def test_short_and_top_inputs_are_isolated_in_both_directions(self):
+        from take_or_pay import calculate_take_or_pay_projection
+        result = SimpleNamespace(specialist_results=[
+            _specialist("ProcurementAgent", _procurement()),
+            _specialist("CommercialAgent", SimpleNamespace(
+                take_or_pay_projection=calculate_take_or_pay_projection(40.8, 30, 8))),
+        ])
+        plan = DecisionPlan((
+            DecisionStep("operational-short", "operational", "Cubrir", alternatives=(
+                DecisionAlternative("operational-short-full", "Full", "", "operational-short"),
+                DecisionAlternative("operational-short-partial", "Partial", "", "operational-short"),
+                DecisionAlternative("operational-short-maintain", "Maintain", "", "operational-short"),)),
+            DecisionStep("contractual-take-or-pay", "contractual", "TOP", alternatives=(
+                DecisionAlternative("top-review-consumption", "Review", "", "contractual-take-or-pay"),
+                DecisionAlternative("top-maintain-forecast", "Maintain", "", "contractual-take-or-pay"),)),
+        ), True, readiness="READY")
+        for inputs in (
+            AlternativeEvaluationInputs(revised_remaining_forecast_consumption_gwh=11),
+            AlternativeEvaluationInputs(coverage_volume_gwh=0.3, coverage_price_eur_mwh=40),
+            AlternativeEvaluationInputs(0.3, 40, 11),
+            AlternativeEvaluationInputs(0, 0, 0),
+        ):
+            with self.subTest(inputs=inputs):
+                evaluated = compose_alternative_evaluations(result, plan, inputs)
+                short = {item.id: item.evaluation for item in evaluated.steps[0].alternatives}
+                top = {item.id: item.evaluation for item in evaluated.steps[1].alternatives}
+                self.assertIsNone(short["operational-short-maintain"].inputs)
+                self.assertEqual(getattr(short["operational-short-partial"].inputs, "coverage_volume_gwh", None), inputs.coverage_volume_gwh)
+                self.assertEqual(getattr(short["operational-short-partial"].inputs, "coverage_price_eur_mwh", None), inputs.coverage_price_eur_mwh)
+                self.assertIsNone(getattr(short["operational-short-partial"].inputs, "revised_remaining_forecast_consumption_gwh", None))
+                self.assertEqual(getattr(top["top-review-consumption"].inputs, "revised_remaining_forecast_consumption_gwh", None), inputs.revised_remaining_forecast_consumption_gwh)
+                self.assertIsNone(getattr(top["top-review-consumption"].inputs, "coverage_volume_gwh", None))
+                self.assertIsNone(getattr(top["top-review-consumption"].inputs, "coverage_price_eur_mwh", None))
+                self.assertIsNone(top["top-maintain-forecast"].inputs)
+
     def test_coverage_price_validation_and_missing_price_are_explicit(self):
         for invalid in (-1, True, float("nan"), float("inf")):
             with self.assertRaises(ValueError):
                 AlternativeEvaluationInputs(coverage_price_eur_mwh=invalid)
         self.assertEqual(AlternativeEvaluationInputs(coverage_price_eur_mwh=0).coverage_price_eur_mwh, 0)
+
+    def test_revised_forecast_validation_preserves_none_and_zero(self):
+        self.assertIsNone(AlternativeEvaluationInputs().revised_remaining_forecast_consumption_gwh)
+        self.assertEqual(AlternativeEvaluationInputs(revised_remaining_forecast_consumption_gwh=0).revised_remaining_forecast_consumption_gwh, 0)
+        for invalid in (-1, True, float("nan"), float("inf")):
+            with self.assertRaises(ValueError):
+                AlternativeEvaluationInputs(revised_remaining_forecast_consumption_gwh=invalid)
 
 
 if __name__ == "__main__":

@@ -70,6 +70,13 @@ def compose_decision_plan(recommendation) -> DecisionPlan | None:
             source_agent = "RiskAgent"
         else:
             continue
+        alternatives = ()
+        if action_id == "operational-long":
+            alternatives = (
+                DecisionAlternative("operational-long-maintain", "Mantener el excedente operativo", "Mantener temporalmente la posición LONG actual.", action_id),
+                DecisionAlternative("operational-long-reallocation", "Evaluar la reasignación", "Evaluar una posible reasignación del excedente operativo.", action_id),
+                DecisionAlternative("operational-long-reduce-future", "Revisar el suministro futuro", "Revisar opciones para reducir suministro futuro.", action_id),
+            )
         steps.append(DecisionStep(
             id=action_id,
             category=action.category,
@@ -81,6 +88,7 @@ def compose_decision_plan(recommendation) -> DecisionPlan | None:
             depends_on=dependency,
             source_action_id=action_id,
             source_agent=source_agent,
+            alternatives=alternatives,
         ))
     if not steps:
         return None

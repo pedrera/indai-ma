@@ -41,6 +41,8 @@ class DecisionPlanTests(unittest.TestCase):
             BusinessAction("operational", "Revisar LONG", id="operational-long"),
         )))
         self.assertEqual(long_plan.steps[0].horizon, "current_period")
+        self.assertEqual([item.id for item in long_plan.steps[0].alternatives], [
+            "operational-long-maintain", "operational-long-reallocation", "operational-long-reduce-future"])
         self.assertIsNone(compose_decision_plan(BusinessRecommendation("BALANCED", True)))
 
     def test_legacy_business_action_construction_remains_valid(self):
