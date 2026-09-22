@@ -91,7 +91,7 @@ def build_supply_projection(installation: SupplyInstallation, snapshot: Inventor
     overflow = max(after_value - installation.capacity.value, Decimal("0"))
     provenance = (
         Provenance("current_inventory", snapshot.inventory, "operational_input", snapshot.source),
-        Provenance("consumption_rate", Quantity(forecast.rate.value, f"{forecast.rate.quantity_unit}/{forecast.rate.time_unit}"), "operational_input", forecast.source),
+        Provenance("consumption_rate", forecast.rate, "operational_input", forecast.source),
         Provenance("safety_stock", safety_stock, "configuration", "supply_installation"),
         Provenance("days_of_supply", days, "deterministic_calculation", "calculate_days_of_supply"),
         Provenance("consumption_until_delivery", consumption, "deterministic_calculation", "build_supply_projection"),

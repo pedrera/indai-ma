@@ -3,6 +3,8 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
+from .units import UnitDimension, unit_spec
+
 
 class DomainValidationError(ValueError):
     """Expected invalid domain or input data."""
@@ -35,9 +37,12 @@ class Quantity:
         value = _decimal(self.value)
         if value < 0:
             raise ValueError("quantity cannot be negative")
-        if not self.unit:
-            raise ValueError("quantity unit is required")
+        unit_spec(self.unit)
         object.__setattr__(self, "value", value)
+
+    @property
+    def dimension(self) -> UnitDimension:
+        return unit_spec(self.unit).dimension
 
     def _check(self, other: "Quantity"):
         if self.unit != other.unit:
@@ -76,6 +81,7 @@ class ConsumptionRate:
         value = _decimal(self.value)
         if value < 0 or not self.quantity_unit or not self.time_unit:
             raise ValueError("invalid consumption rate")
+        unit_spec(self.quantity_unit)
         object.__setattr__(self, "value", value)
 
 
