@@ -10,7 +10,7 @@ from .models import ConsumptionRate, Quantity
 class ExtractionProvenance:
     field: str
     origin: Literal["explicit_input", "resolved_configuration"]
-    extractor: Literal["structured"] = "structured"
+    extractor: Literal["deterministic", "llm"] = "deterministic"
     source_text: str | None = None
 
 
@@ -61,3 +61,13 @@ class ResolvedSupplyIdentity:
     application: IdentityReference = IdentityReference()
     gas_product: IdentityReference = IdentityReference()
     installation: IdentityReference = IdentityReference()
+
+
+@dataclass(frozen=True)
+class ExtractionIssue:
+    field: str
+    code: Literal[
+        "evidence_not_found", "number_mismatch", "unit_mismatch",
+        "unsupported_unit", "ambiguous_numeric_evidence",
+        "field_evidence_mismatch", "unsupported_temporal_expression",
+    ]

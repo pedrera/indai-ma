@@ -5,7 +5,8 @@ from industrial_gases import (
     Application, ApplicationGasRequirement, ConsumptionRate, Customer,
     ExtractedSupplyFacts, ExtractionProvenance, GasProduct, IdentityReference,
     InventorySnapshot, Quantity, ResolvedSupplyIdentity, Site, SupplyAssuranceRequestComposer,
-    SupplyAssuranceService, SupplyInstallation,
+    SupplyAssuranceIdentityContext, SupplyAssuranceInterpreter, SupplyAssuranceService,
+    SupplyInstallation,
 )
 
 
@@ -40,6 +41,23 @@ def facts(**overrides):
 
 
 class IndustrialGasesInterpretationTests(unittest.TestCase):
+    def test_phase_1c2_superscript_unit_aliases_remain_supported(self):
+        interpreter = SupplyAssuranceInterpreter(
+            SupplyAssuranceIdentityContext({"Hospital Costa Sur": identity()})
+        )
+        superscript = chr(0x00b3)
+        aliases = (
+            (f"m3{superscript}", "m3"), (f"Nm3{superscript}", "Nm3"),
+            (f"Sm3{superscript}", "Sm3"), (f"nm3{superscript}", "Nm3"),
+            (f"sm3{superscript}", "Sm3"),
+        )
+        for source_unit, expected_unit in aliases:
+            with self.subTest(source_unit=source_unit):
+                result = interpreter.interpret(
+                    f"Stock actual: 3200 {source_unit}.", REFERENCE
+                )
+                self.assertEqual(result.facts.current_inventory.unit, expected_unit)
+
     def test_complete_healthcare_facts_compose_and_service_completes(self):
         composed = SupplyAssuranceRequestComposer().compose(facts(), identity())
         self.assertIsNotNone(composed.request)
@@ -114,8 +132,8 @@ class IndustrialGasesInterpretationTests(unittest.TestCase):
 
     def test_extraction_provenance_survives_composition(self):
         source = facts(provenance=(
-            ExtractionProvenance("current_inventory", "explicit_input", "structured", "3200 kg"),
-            ExtractionProvenance("safety_stock", "resolved_configuration", "structured", None),
+            ExtractionProvenance("current_inventory", "explicit_input", "deterministic", "3200 kg"),
+            ExtractionProvenance("safety_stock", "resolved_configuration", "deterministic", None),
         ))
         composed = SupplyAssuranceRequestComposer().compose(source, identity())
         self.assertEqual(composed.extraction_provenance, source.provenance)

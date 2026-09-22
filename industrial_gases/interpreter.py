@@ -5,11 +5,12 @@ import re
 import unicodedata
 
 from .interpretation_models import (
-    ExtractedSupplyFacts, ExtractionProvenance, IdentityReference,
+    ExtractedSupplyFacts, ExtractionIssue, ExtractionProvenance, IdentityReference,
     ResolvedSupplyIdentity,
 )
 from .models import ConsumptionRate, Quantity
 from .units import UNIT_CATALOG
+from .lexical import normalize_unit_lexeme, parse_decimal_number, relative_days_evidence
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,7 @@ class SupplyAssuranceInterpretationResult:
     facts: ExtractedSupplyFacts
     identity: ResolvedSupplyIdentity
     unsupported_fragments: tuple[str, ...] = ()
+    issues: tuple[ExtractionIssue, ...] = ()
 
 
 class SupplyAssuranceIdentityContext:
@@ -73,6 +75,101 @@ class SupplyAssuranceIdentityContext:
             installation=installation,
         )
 
+    def resolve_labels(self, labels: dict[str, str | None]) -> ResolvedSupplyIdentity:
+        """Resolve extracted labels against known names, never against IDs."""
+        def normalized(value: str) -> str:
+            return "".join(char for char in unicodedata.normalize("NFKD", value.casefold())
+                           if not unicodedata.combining(char))
+
+        entries = tuple(self._entries.items())
+
+        def supplied(field: str) -> str | None:
+            value = labels.get(field)
+            return value.strip() if isinstance(value, str) and value.strip() else None
+
+        def match_name(field: str, label: str | None):
+            if label is None:
+                return []
+            refs = []
+            for _alias, identity in entries:
+                reference = getattr(identity, field)
+                value = reference.value
+                name = getattr(value, "name", None)
+                if isinstance(name, str) and normalized(name) == normalized(label):
+                    refs.append(reference)
+            return refs
+
+        customer_label = supplied("customer_label")
+        site_label = supplied("site_label")
+        application_label = supplied("application_label")
+        product_label = supplied("gas_product_label")
+        installation_label = supplied("installation_label")
+
+        customer = self._resolved(match_name("customer", customer_label))
+        if customer_label and customer.status == "absent":
+            customer = IdentityReference(label=customer_label)
+        product = self._resolved(match_name("gas_product", product_label))
+        if product_label and product.status == "absent":
+            product = IdentityReference(label=product_label)
+
+        if site_label:
+            site = self._resolved(match_name("site", site_label))
+            if site.status == "absent":
+                site = IdentityReference(label=site_label)
+        elif customer.value is not None:
+            site = self._resolved([
+                identity.site for _alias, identity in entries
+                if identity.customer.value is not None
+                and identity.customer.value.customer_id == customer.value.customer_id
+            ])
+        else:
+            site = IdentityReference()
+
+        if application_label:
+            application = self._resolved(match_name("application", application_label))
+            if application.status == "absent":
+                application = IdentityReference(label=application_label)
+        elif site.value is not None:
+            application = self._resolved([
+                identity.application for _alias, identity in entries
+                if identity.application.value is not None
+                and identity.application.value.site_id == site.value.site_id
+            ])
+        else:
+            application = IdentityReference()
+
+        if installation_label:
+            installation_refs = []
+            target = normalized(installation_label)
+            for alias, identity in entries:
+                value = identity.installation.value
+                if value is None:
+                    continue
+                alias_key = normalized(alias)
+                # A general label may identify several known installations; keep
+                # that state ambiguous instead of selecting one.
+                if alias_key == target or ("tanque" in target and alias_key.startswith(target + " ")):
+                    installation_refs.append(identity.installation)
+            installation = self._resolved(installation_refs)
+            if installation.status == "absent":
+                installation = IdentityReference(label=installation_label)
+        elif site.value is not None and product.value is not None:
+            installation = self._resolved([
+                identity.installation for _alias, identity in entries
+                if identity.installation.value is not None
+                and identity.installation.value.site_id == site.value.site_id
+                and identity.installation.value.gas_product_id == product.value.gas_product_id
+            ])
+        else:
+            installation = IdentityReference()
+        return ResolvedSupplyIdentity(
+            customer=customer,
+            site=site,
+            application=application,
+            gas_product=product,
+            installation=installation,
+        )
+
 
 class SupplyAssuranceInterpreter:
     """Extract only explicitly supported facts; never calculate assurance."""
@@ -85,20 +182,13 @@ class SupplyAssuranceInterpreter:
 
     @staticmethod
     def _number_value(raw: str) -> float:
-        value = raw.replace(" ", "")
-        if "," in value:
-            value = value.replace(".", "").replace(",", ".")
-        elif re.fullmatch(r"\d{1,3}(?:\.\d{3})+", value):
-            value = value.replace(".", "")
-        return float(value)
+        return float(parse_decimal_number(raw))
 
     @staticmethod
     def _unit(raw: str) -> str:
-        return {"m\u00b3": "m3", "Nm\u00b3": "Nm3", "Sm\u00b3": "Sm3",
-                "nm\u00b3": "Nm3", "sm\u00b3": "Sm3", "m3\u00b3": "m3",
-                "Nm3\u00b3": "Nm3", "Sm3\u00b3": "Sm3", "nm3\u00b3": "Nm3", "sm3\u00b3": "Sm3",
-                "m\ufffd": "m3", "Nm\ufffd": "Nm3", "Sm\ufffd": "Sm3",
-                "nm\ufffd": "Nm3", "sm\ufffd": "Sm3"}.get(raw, raw)
+        normalized = normalize_unit_lexeme(raw)
+        return {"m\ufffd": "m3", "Nm\ufffd": "Nm3", "Sm\ufffd": "Sm3",
+                "nm\ufffd": "Nm3", "sm\ufffd": "Sm3"}.get(normalized, normalized)
 
     def interpret(self, text: str, reference_time: datetime) -> SupplyAssuranceInterpretationResult:
         if reference_time.tzinfo is None or reference_time.utcoffset() is None:
@@ -119,7 +209,8 @@ class SupplyAssuranceInterpreter:
             provenance.append(ExtractionProvenance(field, "explicit_input", "deterministic", match.group(0)))
 
         superscript_three = "\u00b3"
-        unit_pattern = (r"(?:kg|t|Nm3|Sm3|m3|L|m" + superscript_three +
+        unit_pattern = (r"(?:kg|t|Nm3" + superscript_three + r"|Sm3" + superscript_three +
+                        r"|m3" + superscript_three + r"|Nm3|Sm3|m3|L|m" + superscript_three +
                         r"|Nm" + superscript_three + r"|Sm" + superscript_three +
                         r"|m\ufffd|Nm\ufffd|Sm\ufffd)(?=\s|[.,;]|$)")
         quantity_match(rf"(?:tenemos|stock\s+actual(?:\s+de)?|inventario(?:\s+de)?)[^\.\n]*?[:=]?\s*(?P<value>\d[\d .]*(?:,\d+)?)\s*(?P<unit>{unit_pattern})", "current_inventory")
@@ -138,9 +229,10 @@ class SupplyAssuranceInterpreter:
                 values["consumption_rate"] = ConsumptionRate(self._number_value(consumption.group("value")), unit, "day")
                 provenance.append(ExtractionProvenance("consumption_rate", "explicit_input", "deterministic", consumption.group(0)))
 
-        days = re.search(r"dentro\s+de\s+(?P<days>\d+)\s+d[ií]as", text, re.I)
+        days = re.search(r"dentro\s+de\s+\d+\s+d[ií]as", text, re.I)
         if days:
-            values["planned_delivery_at"] = reference_time + timedelta(days=int(days.group("days")))
+            day_count = relative_days_evidence(days.group(0))
+            values["planned_delivery_at"] = reference_time + timedelta(days=day_count)
             provenance.append(ExtractionProvenance("planned_delivery_at", "explicit_input", "deterministic", days.group(0)))
         for unsupported_expression in (r"\bma[ñn]ana\b", r"pr[oó]ximo\s+jueves", r"final\s+de\s+semana"):
             match = re.search(unsupported_expression, text, re.I)

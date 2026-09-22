@@ -23,10 +23,17 @@ from .models import (
 )
 from .provenance import Provenance
 from .service import Finding, SupplyAssuranceRequest, SupplyAssuranceResult, SupplyAssuranceService
-from .interpretation_models import ExtractedSupplyFacts, ExtractionProvenance, IdentityReference, ResolvedSupplyIdentity
+from .interpretation_models import (
+    ExtractedSupplyFacts, ExtractionIssue, ExtractionProvenance,
+    IdentityReference, ResolvedSupplyIdentity,
+)
 from .request_composer import SupplyAssuranceCompositionResult, SupplyAssuranceRequestComposer
 from .units import UNIT_CATALOG, UnitDimension, UnitSpec, unit_spec
 from .interpreter import SupplyAssuranceIdentityContext, SupplyAssuranceInterpretationResult, SupplyAssuranceInterpreter
+from .llm_extraction_models import (
+    ExtractedQuantityCandidate, ExtractedRateCandidate,
+    ExtractedRelativeTimeCandidate, ExtractionOperationalError, LLMSupplyExtraction,
+)
 
 __all__ = [
     "Application", "ApplicationGasRequirement", "ConsumptionForecast",
@@ -36,8 +43,17 @@ __all__ = [
     "calculate_days_of_supply", "calculate_required_delivery_volume",
     "project_inventory",
     "Finding", "SupplyAssuranceRequest", "SupplyAssuranceResult", "SupplyAssuranceService",
-    "ExtractedSupplyFacts", "ExtractionProvenance", "IdentityReference", "ResolvedSupplyIdentity",
+    "ExtractedSupplyFacts", "ExtractionIssue", "ExtractionProvenance", "IdentityReference", "ResolvedSupplyIdentity",
     "SupplyAssuranceCompositionResult", "SupplyAssuranceRequestComposer",
     "UNIT_CATALOG", "UnitDimension", "UnitSpec", "unit_spec",
     "SupplyAssuranceIdentityContext", "SupplyAssuranceInterpretationResult", "SupplyAssuranceInterpreter",
+    "ExtractedQuantityCandidate", "ExtractedRateCandidate", "ExtractedRelativeTimeCandidate",
+    "ExtractionOperationalError", "LLMSupplyExtraction", "LLMSupplyAssuranceInterpreter",
 ]
+
+
+def __getattr__(name):
+    if name == "LLMSupplyAssuranceInterpreter":
+        from .llm_interpreter import LLMSupplyAssuranceInterpreter
+        return LLMSupplyAssuranceInterpreter
+    raise AttributeError(name)
