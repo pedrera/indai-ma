@@ -26,6 +26,7 @@ from .service import Finding, SupplyAssuranceRequest, SupplyAssuranceResult, Sup
 from .interpretation_models import ExtractedSupplyFacts, ExtractionProvenance, IdentityReference, ResolvedSupplyIdentity
 from .request_composer import SupplyAssuranceCompositionResult, SupplyAssuranceRequestComposer
 from .units import UNIT_CATALOG, UnitDimension, UnitSpec, unit_spec
+from .interpreter import SupplyAssuranceIdentityContext, SupplyAssuranceInterpretationResult, SupplyAssuranceInterpreter
 
 __all__ = [
     "Application", "ApplicationGasRequirement", "ConsumptionForecast",
@@ -38,4 +39,5 @@ __all__ = [
     "ExtractedSupplyFacts", "ExtractionProvenance", "IdentityReference", "ResolvedSupplyIdentity",
     "SupplyAssuranceCompositionResult", "SupplyAssuranceRequestComposer",
     "UNIT_CATALOG", "UnitDimension", "UnitSpec", "unit_spec",
+    "SupplyAssuranceIdentityContext", "SupplyAssuranceInterpretationResult", "SupplyAssuranceInterpreter",
 ]
