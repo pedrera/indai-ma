@@ -23,6 +23,11 @@ from .models import (
 )
 from .provenance import Provenance
 from .service import Finding, SupplyAssuranceRequest, SupplyAssuranceResult, SupplyAssuranceService
+from .supply_scenarios import (
+    SupplyAssuranceAlternative,
+    SupplyAssuranceScenarioResult,
+    evaluate_supply_assurance_alternative,
+)
 from .interpretation_models import (
     ExtractedSupplyFacts, ExtractionIssue, ExtractionProvenance,
     IdentityReference, ResolvedSupplyIdentity,
@@ -43,6 +48,8 @@ __all__ = [
     "calculate_days_of_supply", "calculate_required_delivery_volume",
     "project_inventory",
     "Finding", "SupplyAssuranceRequest", "SupplyAssuranceResult", "SupplyAssuranceService",
+    "SupplyAssuranceAlternative", "SupplyAssuranceScenarioResult",
+    "evaluate_supply_assurance_alternative",
     "ExtractedSupplyFacts", "ExtractionIssue", "ExtractionProvenance", "IdentityReference", "ResolvedSupplyIdentity",
     "SupplyAssuranceCompositionResult", "SupplyAssuranceRequestComposer",
     "UNIT_CATALOG", "UnitDimension", "UnitSpec", "unit_spec",

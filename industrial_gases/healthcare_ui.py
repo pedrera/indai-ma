@@ -1,4 +1,5 @@
 """Healthcare-specific Streamlit screen for deterministic supply assurance."""
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -18,6 +19,11 @@ from .models import (
     SupplyInstallation,
 )
 from .service import SupplyAssuranceRequest, SupplyAssuranceResult, SupplyAssuranceService
+from .supply_scenarios import (
+    SupplyAssuranceAlternative,
+    SupplyAssuranceScenarioResult,
+    evaluate_supply_assurance_alternative,
+)
 
 
 _REFERENCE_TIME = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -43,6 +49,16 @@ _FINDING_LABELS = {
     "safety_stock_breach": "Projected inventory before delivery is below the configured safety stock.",
     "stockout_before_delivery": "Projected physical inventory reaches zero before the planned delivery.",
     "capacity_overflow": "Projected post-delivery inventory exceeds installation capacity.",
+}
+_WHAT_IF_TYPES = (
+    "Earlier delivery",
+    "Different planned delivery quantity",
+    "Hypothetical consumption forecast",
+)
+_WHAT_IF_IDS = {
+    "Earlier delivery": "healthcare-earlier-delivery",
+    "Different planned delivery quantity": "healthcare-delivery-quantity",
+    "Hypothetical consumption forecast": "healthcare-revised-consumption-forecast",
 }
 
 
@@ -117,6 +133,163 @@ def _quantity_text(quantity: Quantity) -> str:
     return f"{_format_number(quantity.value)} {quantity.unit}"
 
 
+def _days_text(value: Decimal | None) -> str:
+    return "—" if value is None else f"{value:.6f} days"
+
+
+def _render_findings(findings) -> None:
+    if findings:
+        for finding in findings:
+            label = _FINDING_LABELS.get(finding.code, finding.code)
+            st.write(f"- {label}")
+    else:
+        st.write("No findings reported.")
+
+
+def _build_supply_assurance_alternative(
+    baseline_request: SupplyAssuranceRequest,
+    what_if_type: str,
+    explicit_value: int | float,
+) -> SupplyAssuranceAlternative:
+    """Construct one supported request explicitly without generic input patching."""
+    if what_if_type == "Earlier delivery":
+        delivery_at = baseline_request.reference_time + timedelta(days=int(explicit_value))
+        alternative_request = replace(
+            baseline_request,
+            delivery_plan=replace(baseline_request.delivery_plan, planned_delivery_at=delivery_at),
+        )
+    elif what_if_type == "Different planned delivery quantity":
+        alternative_request = replace(
+            baseline_request,
+            delivery_plan=replace(
+                baseline_request.delivery_plan,
+                planned_quantity=Quantity(explicit_value, "kg"),
+            ),
+        )
+    elif what_if_type == "Hypothetical consumption forecast":
+        alternative_request = replace(
+            baseline_request,
+            consumption_forecast=replace(
+                baseline_request.consumption_forecast,
+                rate=ConsumptionRate(explicit_value, "kg", "day"),
+            ),
+        )
+    else:
+        raise ValueError(f"Unsupported Healthcare what-if type: {what_if_type}")
+    return SupplyAssuranceAlternative(
+        id=_WHAT_IF_IDS[what_if_type],
+        label=what_if_type,
+        alternative_request=alternative_request,
+    )
+
+
+def _what_changed_text(
+    baseline_request: SupplyAssuranceRequest,
+    alternative: SupplyAssuranceAlternative,
+) -> str:
+    changed = alternative.alternative_request
+    if alternative.id == _WHAT_IF_IDS["Earlier delivery"]:
+        if (baseline_request.delivery_plan is None or changed.delivery_plan is None or
+                baseline_request.reference_time is None or changed.reference_time is None):
+            return alternative.label
+        baseline_days = (baseline_request.delivery_plan.planned_delivery_at - baseline_request.reference_time).days
+        alternative_days = (changed.delivery_plan.planned_delivery_at - changed.reference_time).days
+        return f"Delivery timing — Baseline: {baseline_days} days; Alternative: {alternative_days} days"
+    if alternative.id == _WHAT_IF_IDS["Different planned delivery quantity"]:
+        if (baseline_request.delivery_plan is None or changed.delivery_plan is None):
+            return alternative.label
+        return (
+            "Planned delivery quantity — Baseline: "
+            f"{_quantity_text(baseline_request.delivery_plan.planned_quantity)}; Alternative: "
+            f"{_quantity_text(changed.delivery_plan.planned_quantity)}"
+        )
+    if (baseline_request.consumption_forecast is None or changed.consumption_forecast is None):
+        return alternative.label
+    return (
+        "Hypothetical consumption forecast — Baseline: "
+        f"{_format_number(baseline_request.consumption_forecast.rate.value)} "
+        f"{baseline_request.consumption_forecast.rate.quantity_unit}/day; Alternative: "
+        f"{_format_number(changed.consumption_forecast.rate.value)} "
+        f"{changed.consumption_forecast.rate.quantity_unit}/day"
+    )
+
+
+def _render_scenario_status(title: str, result: SupplyAssuranceResult) -> None:
+    st.markdown(f"#### {title}")
+    st.caption(f"Status: {result.status}")
+    if result.status == "MISSING_INPUTS":
+        st.write("Missing inputs:")
+        for name in result.missing_inputs:
+            st.write(f"- {_MISSING_INPUT_LABELS.get(name, name)}")
+    elif result.status == "INVALID":
+        st.write("Validation errors:")
+        for error in result.validation_errors:
+            st.write(f"- {error}")
+
+
+def _scenario_metrics(what_if_type: str, projection) -> tuple[tuple[str, str], ...]:
+    if what_if_type == "Different planned delivery quantity":
+        return (
+            ("Inventory after delivery", _quantity_text(projection.inventory_immediately_after_delivery)),
+            ("Capacity exceeded", "Yes" if projection.capacity_exceeded else "No"),
+            ("Overflow", _quantity_text(projection.capacity_overflow)),
+        )
+    return (
+        ("Days of supply", _days_text(projection.days_of_supply)),
+        ("Consumption until delivery", _quantity_text(projection.consumption_until_delivery)),
+        ("Inventory before delivery", _quantity_text(projection.inventory_immediately_before_delivery)),
+        ("Gap to safety stock", _quantity_text(projection.safety_stock_gap_before_delivery)),
+        ("Stockout before delivery", "Yes" if projection.stockout_before_delivery else "No"),
+        ("Inventory after delivery", _quantity_text(projection.inventory_immediately_after_delivery)),
+        ("Minimum quantity needed at delivery", _quantity_text(projection.required_delivery_volume)),
+    )
+
+
+def _render_supply_assurance_scenario(result: SupplyAssuranceScenarioResult) -> None:
+    st.markdown("### WHAT CHANGED")
+    baseline_request = st.session_state.get("healthcare_supply_assurance_request")
+    if baseline_request is not None:
+        st.write(_what_changed_text(baseline_request, result.alternative))
+    else:
+        st.write(result.alternative.label)
+
+    st.markdown("### BASELINE vs ALTERNATIVE")
+    baseline_result = result.baseline_result
+    alternative_result = result.alternative_result
+    if (baseline_result.status != "COMPLETED" or baseline_result.projection is None or
+            alternative_result.status != "COMPLETED" or alternative_result.projection is None):
+        baseline_column, alternative_column = st.columns(2)
+        with baseline_column:
+            _render_scenario_status("BASELINE", baseline_result)
+        with alternative_column:
+            _render_scenario_status("ALTERNATIVE", alternative_result)
+        return
+
+    what_if_type = next(
+        (name for name, alternative_id in _WHAT_IF_IDS.items()
+         if alternative_id == result.alternative.id),
+        None,
+    )
+    if what_if_type is None:
+        st.error("The stored Healthcare scenario type is not recognized.")
+        return
+
+    baseline_column, alternative_column = st.columns(2)
+    with baseline_column:
+        st.markdown("#### BASELINE")
+        for label, value in _scenario_metrics(what_if_type, baseline_result.projection):
+            st.metric(label, value)
+    with alternative_column:
+        st.markdown("#### ALTERNATIVE")
+        for label, value in _scenario_metrics(what_if_type, alternative_result.projection):
+            st.metric(label, value)
+
+    st.markdown("#### Baseline findings")
+    _render_findings(baseline_result.findings)
+    st.markdown("#### Alternative findings")
+    _render_findings(alternative_result.findings)
+
+
 def _render_traceability(result: SupplyAssuranceResult) -> None:
     if result.projection is None:
         return
@@ -187,12 +360,7 @@ def render_supply_assurance_result(result: SupplyAssuranceResult) -> None:
     )
 
     st.markdown("### FINDINGS")
-    if result.findings:
-        for finding in result.findings:
-            label = _FINDING_LABELS.get(finding.code, finding.code)
-            st.write(f"- {label}")
-    else:
-        st.write("No findings reported.")
+    _render_findings(result.findings)
     _render_traceability(result)
 
 
@@ -232,8 +400,69 @@ def render_healthcare_supply_assurance() -> None:
             planned_delivery_kg=planned_delivery,
             safety_stock_kg=safety_stock,
         )
+        st.session_state.healthcare_supply_assurance_request = request
         st.session_state.healthcare_supply_assurance_result = SupplyAssuranceService().assess(request)
+        st.session_state.healthcare_supply_scenario_result = None
 
     result = st.session_state.get("healthcare_supply_assurance_result")
     if result is not None:
         render_supply_assurance_result(result)
+
+    st.markdown("### WHAT-IF ANALYSIS")
+    st.caption(
+        "What-if analysis compares deterministic consequences of an explicit "
+        "assumption using the same rules. It does not recommend or rank alternatives."
+    )
+    baseline_request = st.session_state.get("healthcare_supply_assurance_request")
+    if baseline_request is None:
+        st.info("Run the baseline supply assurance first to enable a what-if comparison.")
+    else:
+        what_if_type = st.selectbox(
+            "Scenario type",
+            _WHAT_IF_TYPES,
+            key="healthcare_what_if_type",
+        )
+        baseline_days = (
+            baseline_request.delivery_plan.planned_delivery_at - baseline_request.reference_time
+        ).days
+        if what_if_type == "Earlier delivery" and baseline_days <= 0:
+            st.info("The current baseline delivery is already at the reference time; no earlier time can be selected.")
+        else:
+            with st.form("healthcare_what_if_form"):
+                if what_if_type == "Earlier delivery":
+                    explicit_value = st.number_input(
+                        "Days until alternative delivery",
+                        min_value=0,
+                        max_value=baseline_days - 1,
+                        value=min(3, baseline_days - 1),
+                        step=1,
+                        key="healthcare_what_if_delivery_days",
+                    )
+                elif what_if_type == "Different planned delivery quantity":
+                    explicit_value = st.number_input(
+                        "Alternative planned delivery quantity (kg)",
+                        min_value=0.0,
+                        value=5000.0,
+                        step=100.0,
+                        key="healthcare_what_if_delivery_quantity_kg",
+                    )
+                else:
+                    explicit_value = st.number_input(
+                        "Hypothetical consumption forecast (kg/day)",
+                        min_value=0.0,
+                        value=500.0,
+                        step=10.0,
+                        key="healthcare_what_if_consumption_rate_kg_day",
+                    )
+                submitted_what_if = st.form_submit_button("Analyze baseline vs alternative", type="primary")
+            if submitted_what_if:
+                alternative = _build_supply_assurance_alternative(
+                    baseline_request, what_if_type, explicit_value,
+                )
+                st.session_state.healthcare_supply_scenario_result = evaluate_supply_assurance_alternative(
+                    baseline_request, alternative, SupplyAssuranceService(),
+                )
+
+    scenario_result = st.session_state.get("healthcare_supply_scenario_result")
+    if scenario_result is not None:
+        _render_supply_assurance_scenario(scenario_result)

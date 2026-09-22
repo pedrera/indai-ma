@@ -6,11 +6,15 @@ import unittest
 
 from streamlit.testing.v1 import AppTest
 
-from industrial_gases import Quantity, SupplyAssuranceService
+from industrial_gases import ConsumptionRate, Quantity, SupplyAssuranceService
 from industrial_gases.healthcare_ui import (
+    _build_supply_assurance_alternative,
     _build_request,
-    render_healthcare_supply_assurance,
     render_supply_assurance_result,
+)
+from industrial_gases.supply_scenarios import (
+    SupplyAssuranceAlternative,
+    evaluate_supply_assurance_alternative,
 )
 
 
@@ -92,6 +96,140 @@ class HealthcareSupplyAssuranceUITests(unittest.TestCase):
         self.assertEqual(values["Inventory before delivery"], "400 kg")
         self.assertEqual(values["Minimum quantity needed at delivery"], "1100 kg")
 
+    def _render_scenario(self, alternative):
+        baseline_request = _build_request()
+        result = evaluate_supply_assurance_alternative(
+            baseline_request, alternative, SupplyAssuranceService(),
+        )
+
+        def page(scenario_result, baseline_request):
+            import streamlit as st
+            from industrial_gases.healthcare_ui import _render_supply_assurance_scenario
+            st.session_state.healthcare_supply_assurance_request = baseline_request
+            _render_supply_assurance_scenario(scenario_result)
+
+        return AppTest.from_function(page, args=(result, baseline_request)).run(), result
+
+    def test_earlier_delivery_what_if_shows_relevant_projection_values(self):
+        request = _build_request()
+        alternative = _build_supply_assurance_alternative(request, "Earlier delivery", 3)
+        app, result = self._render_scenario(alternative)
+
+        self.assertFalse(app.exception)
+        self.assertEqual(result.alternative_result.projection.inventory_immediately_before_delivery,
+                         Quantity(1100, "kg"))
+        visible_text = "\n".join(item.value for item in (*app.markdown, *app.text))
+        self.assertIn("Delivery timing — Baseline: 4 days; Alternative: 3 days", visible_text)
+        self.assertIn("WHAT CHANGED", visible_text)
+        self.assertIn("BASELINE vs ALTERNATIVE", visible_text)
+        self.assertIn("Baseline findings", visible_text)
+        self.assertIn("Alternative findings", visible_text)
+        self.assertGreaterEqual(visible_text.count("below the configured safety stock"), 2)
+        metrics = {metric.label: metric.value for metric in app.metric}
+        self.assertEqual(metrics["Consumption until delivery"], "2100 kg")
+        self.assertEqual(metrics["Inventory before delivery"], "1100 kg")
+        self.assertEqual(metrics["Gap to safety stock"], "-400 kg")
+        self.assertEqual(metrics["Stockout before delivery"], "No")
+        self.assertEqual(metrics["Inventory after delivery"], "5100 kg")
+        self.assertEqual(metrics["Minimum quantity needed at delivery"], "400 kg")
+
+    def test_delivery_quantity_what_if_focuses_on_post_delivery_and_capacity(self):
+        request = _build_request()
+        alternative = _build_supply_assurance_alternative(
+            request, "Different planned delivery quantity", 5000,
+        )
+        app, result = self._render_scenario(alternative)
+
+        self.assertFalse(app.exception)
+        self.assertEqual(result.alternative_result.projection.inventory_immediately_after_delivery,
+                         Quantity(5400, "kg"))
+        metrics = {metric.label: metric.value for metric in app.metric}
+        self.assertEqual(metrics, {
+            "Inventory after delivery": "5400 kg",
+            "Capacity exceeded": "No",
+            "Overflow": "0 kg",
+        })
+        visible_text = "\n".join(item.value for item in (*app.markdown, *app.text))
+        self.assertIn("Planned delivery quantity — Baseline: 4000 kg; Alternative: 5000 kg", visible_text)
+
+    def test_hypothetical_consumption_forecast_is_explicit(self):
+        request = _build_request()
+        alternative = _build_supply_assurance_alternative(
+            request, "Hypothetical consumption forecast", 500,
+        )
+        app, result = self._render_scenario(alternative)
+
+        self.assertFalse(app.exception)
+        self.assertEqual(result.alternative_result.projection.days_of_supply, Decimal("6.4"))
+        self.assertEqual(result.alternative_result.projection.inventory_immediately_before_delivery,
+                         Quantity(1200, "kg"))
+        metrics = {metric.label: metric.value for metric in app.metric}
+        self.assertEqual(metrics["Consumption until delivery"], "2000 kg")
+        self.assertEqual(metrics["Gap to safety stock"], "-300 kg")
+        self.assertEqual(metrics["Inventory after delivery"], "5200 kg")
+        self.assertEqual(metrics["Minimum quantity needed at delivery"], "300 kg")
+        self.assertIn("Hypothetical consumption forecast",
+                      "\n".join(item.value for item in (*app.markdown, *app.text)))
+
+    def test_invalid_what_if_is_shown_without_partial_metrics_or_traceback(self):
+        request = _build_request()
+        invalid_request = replace(
+            request,
+            consumption_forecast=replace(
+                request.consumption_forecast,
+                rate=ConsumptionRate(700, "Nm3", "day"),
+            ),
+        )
+        alternative = SupplyAssuranceAlternative(
+            "healthcare-revised-consumption-forecast",
+            "Hypothetical consumption forecast",
+            invalid_request,
+        )
+        app, result = self._render_scenario(alternative)
+
+        self.assertFalse(app.exception)
+        self.assertEqual(result.baseline_result.status, "COMPLETED")
+        self.assertEqual(result.alternative_result.status, "INVALID")
+        self.assertFalse(app.metric)
+        visible_text = "\n".join(item.value for item in (*app.caption, *app.markdown, *app.text))
+        self.assertIn("Status: COMPLETED", visible_text)
+        self.assertIn("Status: INVALID", visible_text)
+        self.assertIn("inventory and consumption rate units are incompatible", visible_text)
+
+    def test_missing_input_what_if_is_shown_without_partial_metrics(self):
+        request = _build_request()
+        alternative = SupplyAssuranceAlternative(
+            "healthcare-earlier-delivery",
+            "Earlier delivery",
+            replace(request, delivery_plan=None),
+        )
+        app, result = self._render_scenario(alternative)
+
+        self.assertFalse(app.exception)
+        self.assertEqual(result.baseline_result.status, "COMPLETED")
+        self.assertEqual(result.alternative_result.status, "MISSING_INPUTS")
+        self.assertFalse(app.metric)
+        visible_text = "\n".join(item.value for item in (*app.caption, *app.markdown, *app.text))
+        self.assertIn("Status: COMPLETED", visible_text)
+        self.assertIn("Status: MISSING_INPUTS", visible_text)
+        self.assertIn("Missing inputs:", visible_text)
+        self.assertIn("Planned delivery", visible_text)
+
+    def test_what_if_disclaimer_does_not_present_a_recommendation_or_ranking(self):
+        def page():
+            import streamlit as st
+            from industrial_gases.healthcare_ui import render_healthcare_supply_assurance
+            render_healthcare_supply_assurance()
+
+        app = AppTest.from_function(page).run()
+        self.assertFalse(app.exception)
+        visible_text = "\n".join(
+            item.value for group in (app.caption, app.markdown, app.text) for item in group
+        ).lower()
+        self.assertIn("does not recommend or rank alternatives", visible_text)
+        for affirmative in ("recommended quantity", "best option", "winner", "better", "worse", "optimal"):
+            self.assertNotIn(affirmative, visible_text)
+
     def test_app_exposes_healthcare_mode_and_runs_without_other_services(self):
         app_path = Path(__file__).resolve().parents[1] / "app.py"
         with (
@@ -136,6 +274,7 @@ class HealthcareSupplyAssuranceUITests(unittest.TestCase):
             self.assertEqual(metrics["Minimum quantity needed at delivery"], "1100 kg")
             self.assertEqual(metrics["Capacity exceeded"], "No")
             self.assertEqual(metrics["Overflow"], "0 kg")
+            baseline_request = app.session_state["healthcare_supply_assurance_request"]
 
             visible_text = "\n".join(
                 item.value for collection in (app.markdown, app.caption, app.text)
@@ -151,8 +290,77 @@ class HealthcareSupplyAssuranceUITests(unittest.TestCase):
             )
             self.assertIn("projected inventory before delivery is below the configured safety stock", visible_text)
             self.assertNotIn("stockout before delivery = yes", visible_text)
-            self.assertNotIn("recommend", visible_text)
-            self.assertNotIn("recomend", visible_text)
+            self.assertIn("does not recommend or rank alternatives", visible_text)
+            for affirmative in ("recommended quantity", "best option", "winner", "better", "worse", "optimal"):
+                self.assertNotIn(affirmative, visible_text)
+
+            scenario_expectations = (
+                ("Earlier delivery", "2100 kg", "1100 kg"),
+                ("Different planned delivery quantity", "5400 kg", "0 kg"),
+                ("Hypothetical consumption forecast", "2000 kg", "1200 kg"),
+            )
+            for scenario_type, first_value, second_value in scenario_expectations:
+                app.selectbox(key="healthcare_what_if_type").set_value(scenario_type).run()
+                app.button(key="FormSubmitter:healthcare_what_if_form-Analyze baseline vs alternative").click().run()
+                self.assertFalse(app.exception)
+                scenario_result = app.session_state["healthcare_supply_scenario_result"]
+                self.assertEqual(scenario_result.baseline_result.status, "COMPLETED")
+                self.assertEqual(scenario_result.alternative_result.status, "COMPLETED")
+                alternative_request = scenario_result.alternative.alternative_request
+                if scenario_type == "Earlier delivery":
+                    self.assertEqual(alternative_request.consumption_forecast,
+                                     baseline_request.consumption_forecast)
+                    self.assertEqual(alternative_request.delivery_plan.planned_quantity,
+                                     baseline_request.delivery_plan.planned_quantity)
+                    self.assertEqual(scenario_result.baseline_result.projection.days_of_supply,
+                                     scenario_result.alternative_result.projection.days_of_supply)
+                elif scenario_type == "Different planned delivery quantity":
+                    self.assertEqual(alternative_request.delivery_plan.planned_delivery_at,
+                                     baseline_request.delivery_plan.planned_delivery_at)
+                    self.assertEqual(alternative_request.consumption_forecast,
+                                     baseline_request.consumption_forecast)
+                    baseline_projection = scenario_result.baseline_result.projection
+                    alternative_projection = scenario_result.alternative_result.projection
+                    self.assertEqual(alternative_projection.consumption_until_delivery,
+                                     baseline_projection.consumption_until_delivery)
+                    self.assertEqual(alternative_projection.inventory_immediately_before_delivery,
+                                     baseline_projection.inventory_immediately_before_delivery)
+                    self.assertEqual(alternative_projection.safety_stock_gap_before_delivery,
+                                     baseline_projection.safety_stock_gap_before_delivery)
+                    self.assertEqual(alternative_projection.stockout_before_delivery,
+                                     baseline_projection.stockout_before_delivery)
+                    self.assertEqual(alternative_projection.required_delivery_volume,
+                                     baseline_projection.required_delivery_volume)
+                else:
+                    self.assertEqual(alternative_request.delivery_plan, baseline_request.delivery_plan)
+                    self.assertEqual(alternative_request.inventory_snapshot,
+                                     baseline_request.inventory_snapshot)
+                    self.assertEqual(alternative_request.consumption_forecast.rate,
+                                     ConsumptionRate(500, "kg", "day"))
+                visible_metrics = {metric.label: metric.value for metric in app.metric}
+                self.assertIn(first_value, visible_metrics.values())
+                self.assertIn(second_value, visible_metrics.values())
+
+            app.selectbox(key="healthcare_what_if_type").set_value(
+                "Different planned delivery quantity",
+            ).run()
+            app.number_input(key="healthcare_what_if_delivery_quantity_kg").set_value(10000).run()
+            app.button(key="FormSubmitter:healthcare_what_if_form-Analyze baseline vs alternative").click().run()
+            self.assertFalse(app.exception)
+            overflow_result = app.session_state["healthcare_supply_scenario_result"]
+            overflow_projection = overflow_result.alternative_result.projection
+            self.assertEqual(overflow_projection.inventory_immediately_after_delivery, Quantity(10400, "kg"))
+            self.assertTrue(overflow_projection.capacity_exceeded)
+            self.assertEqual(overflow_projection.capacity_overflow, Quantity(400, "kg"))
+            self.assertEqual(overflow_projection.inventory_immediately_before_delivery,
+                             overflow_result.baseline_result.projection.inventory_immediately_before_delivery)
+            self.assertEqual(overflow_projection.safety_stock_gap_before_delivery,
+                             overflow_result.baseline_result.projection.safety_stock_gap_before_delivery)
+            overflow_metrics = {metric.label: metric.value for metric in app.metric}
+            self.assertIn("10400 kg", overflow_metrics.values())
+            self.assertIn("Yes", overflow_metrics.values())
+            self.assertIn("400 kg", overflow_metrics.values())
+            self.assertEqual(app.session_state["healthcare_supply_assurance_request"], baseline_request)
 
             app.number_input(key="healthcare_inventory_kg").set_value(11000).run()
             app.button(key="FormSubmitter:healthcare_supply_assurance_form-Analyze supply assurance").click().run()
