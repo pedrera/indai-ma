@@ -12,7 +12,7 @@ _UNIT = re.compile(
     re.IGNORECASE,
 )
 _WORD_UNIT = re.compile(
-    r"(?:kilogramos?|toneladas?|litros?|Nm3\s*\u00b3|Sm3\s*\u00b3|m3\s*\u00b3|"
+    r"(?:kilos?|kilogramos?|toneladas?|litros?|Nm3\s*\u00b3|Sm3\s*\u00b3|m3\s*\u00b3|"
     r"Nm\s*\u00b3|Sm\s*\u00b3|"
     r"m\s*\u00b3|Nm3|Sm3|m3|kg|t|L)(?=\s|[.,;]|$)", re.IGNORECASE
 )
@@ -54,7 +54,8 @@ def normalize_unit_lexeme(raw: str, *, include_words: bool = False) -> str:
         return aliases[token]
     if include_words:
         words = {
-            "kilogramo": "kg", "kilogramos": "kg", "tonelada": "t",
+            "kilo": "kg", "kilos": "kg", "kilogramo": "kg",
+            "kilogramos": "kg", "tonelada": "t",
             "toneladas": "t", "litro": "L", "litros": "L",
         }
         return words.get(token.casefold(), token)

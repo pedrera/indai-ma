@@ -15,6 +15,7 @@ from industrial_gases import (
     SupplyAssuranceService, SupplyInstallation,
 )
 from llm_client import GenerationCancelledError, LLMTimeoutError
+from industrial_gases.lexical import normalize_unit_lexeme
 
 
 REFERENCE = datetime(2026, 9, 22, 10, tzinfo=timezone(timedelta(hours=2)))
@@ -198,6 +199,23 @@ class LLMSupplyExtractionGroundingTests(unittest.TestCase):
 
 
 class LLMSupplyExtractionLexicalTests(unittest.TestCase):
+    def test_kilo_and_kilos_normalize_to_kg(self):
+        self.assertEqual(normalize_unit_lexeme("kilo", include_words=True), "kg")
+        self.assertEqual(normalize_unit_lexeme("kilos", include_words=True), "kg")
+
+    def test_kilos_rate_is_grounded_and_original_evidence_is_preserved(self):
+        text = "Estamos gastando 700 kilos al día."
+        evidence = text[:-1]
+        payload = {
+            "consumption_rate": {
+                "value": 700, "unit": "kg", "time_unit": "day", "evidence": evidence,
+            },
+        }
+        result, _ = run_extract(text, payload)
+        self.assertEqual(result.facts.consumption_rate, ConsumptionRate(700, "kg", "day"))
+        self.assertEqual(result.facts.provenance[0].source_text, evidence)
+        self.assertIn("700 kilos al día", result.facts.provenance[0].source_text)
+
     def test_numeric_formats_are_grounded_as_decimal(self):
         examples = (("3200", "3200"), ("3.200", "3200"), ("3 200", "3200"),
                     ("3,2", "3.2"), ("3.2", "3.2"))
@@ -307,10 +325,26 @@ class LLMSupplyExtractionBoundaryAndE2ETests(unittest.TestCase):
         self.assertEqual([m["role"] for m in provider.messages], ["system", "user"])
         self.assertNotIn(text, provider.messages[0]["content"])
         system_content = " ".join(provider.messages[0]["content"].split())
-        for instruction in ("Extract only facts", "Do not calculate", "Do not convert units",
-                            "Do not infer missing values", "Do not invent IDs",
-                            "Preserve the unit", "literal evidence", "JSON Schema"):
+        for instruction in ("Extract only facts", "Do not calculate", "Do not convert units physically",
+                            "infer missing values", "Do not invent IDs",
+                            "explicit numeric value and explicit unit",
+                            "never a partial object with null members",
+                            'unsupported temporal wording such as "mañana"',
+                            "set planned_delivery_time to null",
+                            "JSON numbers", "dot for decimal fractions",
+                            "never change the amount", "operational unit codes",
+                            'time_unit exactly "day"', 'kind exactly "relative_days"',
+                            "shortest exact evidence fragment", "literally present",
+                            "JSON Schema"):
             self.assertIn(instruction, system_content)
+        self.assertIn(
+            "kg (kilo, kilos, kilogramo(s)), t (tonelada(s)), L, m3 (m³), Nm3 (Nm³), Sm3 (Sm³)",
+            system_content,
+        )
+        self.assertIn('"customer_label":"Hospital Costa Sur"', system_content)
+        self.assertIn('"value":3.2,"unit":"t","evidence":"quedan 3,2 toneladas"', system_content)
+        self.assertIn('"time_unit":"day"', system_content)
+        self.assertIn('"kind":"relative_days"', system_content)
         self.assertIn("current_inventory", system_content)
         self.assertEqual(json.loads(provider.messages[1]["content"]), {"input_text": text})
         self.assertFalse(provider.options.tool_calling_enabled)
@@ -318,6 +352,81 @@ class LLMSupplyExtractionBoundaryAndE2ETests(unittest.TestCase):
         self.assertEqual(provider.options.trace_purpose, "industrial_gases_extraction")
         self.assertFalse(hasattr(result, "projection"))
         self.assertEqual(result.issues, ())
+
+    def test_unsupported_tomorrow_omits_delivery_candidates_and_keeps_identities(self):
+        text = "El camión con oxígeno para Hospital Costa Sur llegará mañana."
+        payload = {
+            "current_inventory": None,
+            "consumption_rate": None,
+            "planned_delivery_quantity": None,
+            "planned_delivery_time": None,
+            "safety_stock": None,
+            "customer_label": "Hospital Costa Sur",
+            "gas_product_label": "oxígeno",
+        }
+
+        result, _ = run_extract(text, payload)
+
+        self.assertIsNone(result.facts.planned_delivery_quantity)
+        self.assertIsNone(result.facts.planned_delivery_at)
+        self.assertEqual(result.identity.customer.value.customer_id, "customer-1")
+        self.assertIsNone(result.identity.gas_product.value)
+        self.assertEqual(result.identity.gas_product.label, "oxígeno")
+
+    def test_dto_rejects_malformed_quantity_candidate_with_null_value_and_unit(self):
+        payload = {
+            "planned_delivery_quantity": {
+                "value": None,
+                "unit": None,
+                "evidence": "El camión llegará mañana",
+            },
+        }
+
+        with self.assertRaises(ValidationError):
+            LLMSupplyExtraction.model_validate(payload)
+
+        with self.assertRaises(ExtractionOperationalError) as caught:
+            run_extract(
+                "El camión llegará mañana.", payload,
+            )
+        self.assertEqual(caught.exception.code, "schema_invalid")
+
+    def test_compact_prompt_example_is_grounded_without_physical_conversion(self):
+        text = ("En el Hospital Costa Sur quedan 3,2 toneladas de oxígeno medicinal. "
+                "Consumimos 700 kilos al día. Recibiremos 4 toneladas dentro de 4 días. "
+                "La reserva de seguridad es 1,5 toneladas.")
+        payload = {
+            "current_inventory": candidate(3.2, "t", "quedan 3,2 toneladas"),
+            "consumption_rate": {
+                "value": 700, "unit": "kg", "time_unit": "day",
+                "evidence": "Consumimos 700 kilos al día",
+            },
+            "planned_delivery_quantity": candidate(4, "t", "Recibiremos 4 toneladas"),
+            "planned_delivery_time": {
+                "kind": "relative_days", "value": 4, "evidence": "dentro de 4 días",
+            },
+            "safety_stock": candidate(1.5, "t", "reserva de seguridad es 1,5 toneladas"),
+            "customer_label": "Hospital Costa Sur",
+            "gas_product_label": "oxígeno medicinal",
+        }
+        result, provider = run_extract(text, payload)
+
+        self.assertEqual(result.facts.current_inventory, Quantity("3.2", "t"))
+        self.assertEqual(result.facts.consumption_rate, ConsumptionRate(700, "kg", "day"))
+        self.assertEqual(result.facts.planned_delivery_quantity, Quantity(4, "t"))
+        self.assertEqual(result.facts.safety_stock, Quantity("1.5", "t"))
+        self.assertEqual(result.facts.planned_delivery_at, REFERENCE + timedelta(days=4))
+        self.assertEqual(result.identity.customer.value.customer_id, "customer-1")
+        self.assertEqual(
+            [item.source_text for item in result.facts.provenance],
+            ["quedan 3,2 toneladas", "Consumimos 700 kilos al día",
+             "Recibiremos 4 toneladas", "reserva de seguridad es 1,5 toneladas",
+             "dentro de 4 días"],
+        )
+        self.assertEqual(provider.options.max_rounds, 1)
+        self.assertFalse(provider.options.tool_calling_enabled)
+        self.assertEqual(result.issues, ())
+        self.assertNotEqual(result.facts.current_inventory, Quantity(3200, "kg"))
 
     def test_timeout_and_provider_failures_remain_operational_errors(self):
         for error, expected in ((LLMTimeoutError("timeout"), "timeout"),
