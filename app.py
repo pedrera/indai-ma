@@ -65,6 +65,7 @@ from presentation_normalization import normalize_supervisor_result
 from application_models import AnalysisRequest
 from application_service import AnalysisService
 from industrial_gases.healthcare_ui import render_healthcare_supply_assurance
+from industrial_gases.food_beverage_ui import render_food_beverage_supply_assurance
 
 
 GAS_TYPE_LABELS = {
@@ -171,7 +172,7 @@ with st.sidebar:
     st.header("Advanced / Technical")
     selected_mode = st.radio(
         "Modo",
-        ("Business", "Healthcare Supply Assurance", "Chat", "Gas B2B Portfolio Analysis", "ProcurementAgent", "CommercialAgent", "RiskAgent", "Multi-Agent Supervisor", "Evaluation"),
+        ("Business", "Healthcare Supply Assurance", "Food & Beverage Supply Assurance", "Chat", "Gas B2B Portfolio Analysis", "ProcurementAgent", "CommercialAgent", "RiskAgent", "Multi-Agent Supervisor", "Evaluation"),
         key="selected_mode",
         disabled=generation_active,
     )
@@ -1411,6 +1412,8 @@ with main_column:
         render_business()
     elif selected_mode == "Healthcare Supply Assurance":
         render_healthcare_supply_assurance()
+    elif selected_mode == "Food & Beverage Supply Assurance":
+        render_food_beverage_supply_assurance()
     elif selected_mode == "Evaluation":
         from evals.ui import render_evaluation
         render_evaluation()

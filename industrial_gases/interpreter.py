@@ -61,16 +61,23 @@ class SupplyAssuranceIdentityContext:
         customer = self._resolved([identity.customer for identity in customer_matches])
         product = self._resolved([identity.gas_product for identity in product_matches])
         installation = self._resolved([identity.installation for identity in installation_matches])
-        if installation.status == "absent" and len(customer_matches) == 1 and product.status == "resolved":
-            installation = customer_matches[0].installation
+        site = self._resolved([identity.site for identity in customer_matches])
+        application = self._resolved([identity.application for identity in customer_matches])
+        if installation.status == "absent" and site.value is not None and product.value is not None:
+            installation = self._resolved([
+                identity.installation for _label, identity in entries
+                if identity.installation.value is not None
+                and identity.installation.value.site_id == site.value.site_id
+                and identity.installation.value.gas_product_id == product.value.gas_product_id
+            ])
         if customer.status == "absent" and customer_label:
             customer = IdentityReference(label=customer_label.group(0).strip())
         if product.status == "absent" and product_label:
             product = IdentityReference(label=product_label.group(0).strip())
         return ResolvedSupplyIdentity(
             customer=customer,
-            site=self._resolved([identity.site for identity in customer_matches]),
-            application=self._resolved([identity.application for identity in customer_matches]),
+            site=site,
+            application=application,
             gas_product=product,
             installation=installation,
         )

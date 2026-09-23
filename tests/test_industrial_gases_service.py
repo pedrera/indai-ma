@@ -1,10 +1,11 @@
 from datetime import datetime, timedelta, timezone
+from dataclasses import replace
 import unittest
 from unittest.mock import patch
 
 from industrial_gases import (
     Application, ApplicationGasRequirement, ConsumptionForecast, ConsumptionRate, DeliveryPlan, GasProduct,
-    InventorySnapshot, Quantity, Site, SupplyAssuranceRequest,
+    Customer, InventorySnapshot, Quantity, Site, SupplyAssuranceRequest,
     SupplyAssuranceService, SupplyInstallation,
 )
 
@@ -18,7 +19,7 @@ def request(demand_rate=700, inventory=3200, delivery_days=4):
     return SupplyAssuranceRequest(
         customer_id="customer-1",
         site=Site("site-1", "customer-1", "Hospital Costa Sur"),
-        application=Application("app-1", "site-1", "critical oxygen",
+        application=Application("app-1", "site-1", "CO2 process",
                                 (ApplicationGasRequirement("co2", "process"),)),
         gas_product=GasProduct("co2", "CO2", "liquid"),
         installation=installation,
@@ -69,34 +70,153 @@ class SupplyAssuranceServiceTests(unittest.TestCase):
         self.assertEqual(first.findings[0].code, "stockout_before_delivery")
         self.assertEqual(first.findings[0].source_fields, ("stockout_before_delivery", "stockout_at"))
 
-    def test_map_application_can_declare_two_gases_without_aggregation(self):
-        base = request()
-        n2 = SupplyInstallation("n2-tank", "site-1", "nitrogen", "bulk", "cryogenic_tank", Quantity(8000, "kg"))
+    def test_food_and_beverage_co2_and_n2_graphs_are_independent_at_service_boundary(self):
+        customer = Customer("alimentos-del-sur", "Alimentos del Sur")
+        site = Site("malaga-production-plant", customer.customer_id, "Málaga Production Plant")
+
+        co2_product = GasProduct("co2", "CO2", "gas")
+        co2_installation = SupplyInstallation(
+            "co2-bulk-tank", site.site_id, co2_product.gas_product_id,
+            "bulk", "cryogenic_tank", Quantity(1000, "kg"),
+        )
+        co2_request = SupplyAssuranceRequest(
+            customer_id=customer.customer_id,
+            site=site,
+            application=Application(
+                "beverage-carbonation", site.site_id, "Beverage carbonation",
+                (ApplicationGasRequirement(co2_product.gas_product_id, "carbonation"),),
+            ),
+            gas_product=co2_product,
+            installation=co2_installation,
+            inventory_snapshot=InventorySnapshot(
+                co2_installation.installation_id, REFERENCE, Quantity(300, "kg"),
+            ),
+            consumption_forecast=ConsumptionForecast(
+                co2_installation.installation_id, REFERENCE,
+                REFERENCE + timedelta(days=10), ConsumptionRate(50, "kg"),
+            ),
+            delivery_plan=DeliveryPlan(
+                co2_installation.installation_id,
+                REFERENCE + timedelta(days=4), Quantity(250, "kg"),
+            ),
+            safety_stock=Quantity(150, "kg"),
+            reference_time=REFERENCE,
+        )
+
+        n2_product = GasProduct("n2", "N2", "gas")
+        n2_installation = SupplyInstallation(
+            "n2-bulk-tank", site.site_id, n2_product.gas_product_id,
+            "bulk", "cryogenic_tank", Quantity(2000, "Nm3"),
+        )
         n2_request = SupplyAssuranceRequest(
-            customer_id=base.customer_id, site=base.site,
-            application=Application("map", "site-1", "MAP",
-                                    (ApplicationGasRequirement("nitrogen", "inerting"),)),
-            gas_product=GasProduct("nitrogen", "N2", "liquid"), installation=n2,
-            inventory_snapshot=InventorySnapshot("n2-tank", REFERENCE, Quantity(5000, "kg")),
-            consumption_forecast=ConsumptionForecast("n2-tank", REFERENCE, REFERENCE + timedelta(days=10), ConsumptionRate(300, "kg")),
-            delivery_plan=DeliveryPlan("n2-tank", REFERENCE + timedelta(days=4), Quantity(1000, "kg")),
-            safety_stock=Quantity(1000, "kg"), reference_time=REFERENCE)
-        co2_result = SupplyAssuranceService().assess(base)
-        n2_result = SupplyAssuranceService().assess(n2_request)
+            customer_id=customer.customer_id,
+            site=site,
+            application=Application(
+                "modified-atmosphere-inerting", site.site_id,
+                "Modified atmosphere / inerting",
+                (ApplicationGasRequirement(n2_product.gas_product_id, "inerting"),),
+            ),
+            gas_product=n2_product,
+            installation=n2_installation,
+            inventory_snapshot=InventorySnapshot(
+                n2_installation.installation_id, REFERENCE, Quantity(900, "Nm3"),
+            ),
+            consumption_forecast=ConsumptionForecast(
+                n2_installation.installation_id, REFERENCE,
+                REFERENCE + timedelta(days=10), ConsumptionRate(100, "Nm3"),
+            ),
+            delivery_plan=DeliveryPlan(
+                n2_installation.installation_id,
+                REFERENCE + timedelta(days=4), Quantity(300, "Nm3"),
+            ),
+            safety_stock=Quantity(400, "Nm3"),
+            reference_time=REFERENCE,
+        )
+
+        # Independent application requests share a site and are assessed by one service.
+        service = SupplyAssuranceService()
+        co2_result = service.assess(co2_request)
+        n2_result = service.assess(n2_request)
         self.assertEqual((co2_result.status, n2_result.status), ("COMPLETED", "COMPLETED"))
-        self.assertEqual((co2_result.gas_product_id, n2_result.gas_product_id), ("co2", "nitrogen"))
+        self.assertEqual(co2_result.customer_id, n2_result.customer_id)
+        self.assertEqual(co2_result.site_id, n2_result.site_id)
+        self.assertNotEqual(co2_result.application_id, n2_result.application_id)
+        self.assertEqual((co2_result.gas_product_id, n2_result.gas_product_id), ("co2", "n2"))
         self.assertNotEqual(co2_result.installation_id, n2_result.installation_id)
-        self.assertNotEqual(co2_result.projection.current_inventory, n2_result.projection.current_inventory)
+        self.assertEqual(
+            (co2_result.projection.gas_product_id, co2_result.projection.installation_id),
+            ("co2", "co2-bulk-tank"),
+        )
+        self.assertEqual(co2_result.projection.current_inventory, Quantity(300, "kg"))
+        self.assertEqual(co2_result.projection.consumption_until_delivery, Quantity(200, "kg"))
+        self.assertEqual(co2_result.projection.inventory_immediately_before_delivery, Quantity(100, "kg"))
+        self.assertEqual([item.code for item in co2_result.findings], ["safety_stock_breach"])
+        self.assertEqual(co2_result.findings[0].source_fields,
+                         ("safety_stock_gap_before_delivery",))
+
+        self.assertEqual(
+            (n2_result.projection.gas_product_id, n2_result.projection.installation_id),
+            ("n2", "n2-bulk-tank"),
+        )
+        self.assertEqual(n2_result.projection.current_inventory, Quantity(900, "Nm3"))
+        self.assertEqual(n2_result.projection.consumption_until_delivery, Quantity(400, "Nm3"))
+        self.assertEqual(n2_result.projection.inventory_immediately_before_delivery, Quantity(500, "Nm3"))
+        self.assertEqual(n2_result.findings, ())
+
+        # Each result remains independent; no combined site inventory is created.
+        self.assertNotEqual(co2_result.projection.current_inventory.unit,
+                            n2_result.projection.current_inventory.unit)
         self.assertNotEqual(co2_result.projection, n2_result.projection)
-        changed_o2 = SupplyAssuranceService().assess(request(inventory=1000))
-        self.assertNotEqual(changed_o2.projection.current_inventory, co2_result.projection.current_inventory)
-        self.assertEqual(n2_result.projection.current_inventory, Quantity(5000, "kg"))
+        changed_co2 = service.assess(replace(
+            co2_request,
+            inventory_snapshot=replace(co2_request.inventory_snapshot,
+                                       inventory=Quantity(50, "kg")),
+        ))
+        self.assertEqual(changed_co2.status, "COMPLETED")
+        self.assertEqual(changed_co2.projection.current_inventory, Quantity(50, "kg"))
+        self.assertEqual(n2_result.projection.current_inventory, Quantity(900, "Nm3"))
+        self.assertEqual(n2_result.projection.inventory_immediately_before_delivery, Quantity(500, "Nm3"))
+
+    def test_service_rejects_co2_request_with_n2_snapshot(self):
+        co2_request = request()
+        n2_request = SupplyAssuranceRequest(
+            customer_id=co2_request.customer_id,
+            site=co2_request.site,
+            application=Application("n2-app", "site-1", "Modified atmosphere / inerting",
+                                    (ApplicationGasRequirement("n2", "inerting"),)),
+            gas_product=GasProduct("n2", "N2", "gas"),
+            installation=SupplyInstallation("n2-tank", "site-1", "n2", "bulk", "tank", Quantity(1000, "Nm3")),
+            inventory_snapshot=InventorySnapshot("n2-tank", REFERENCE, Quantity(500, "Nm3")),
+            consumption_forecast=ConsumptionForecast("n2-tank", REFERENCE, REFERENCE + timedelta(days=10), ConsumptionRate(50, "Nm3")),
+            delivery_plan=DeliveryPlan("n2-tank", REFERENCE + timedelta(days=4), Quantity(100, "Nm3")),
+            safety_stock=Quantity(100, "Nm3"),
+            reference_time=REFERENCE,
+        )
+        service = SupplyAssuranceService()
+        invalid = service.assess(replace(co2_request, inventory_snapshot=n2_request.inventory_snapshot))
+        self.assertEqual(invalid.status, "INVALID")
+        self.assertIsNone(invalid.projection)
+        self.assertEqual(invalid.missing_inputs, ())
+        self.assertIn("snapshot_installation_mismatch", invalid.validation_errors)
+
+        cross_wired_product = service.assess(replace(
+            co2_request,
+            gas_product=n2_request.gas_product,
+            installation=n2_request.installation,
+            inventory_snapshot=n2_request.inventory_snapshot,
+            consumption_forecast=n2_request.consumption_forecast,
+            delivery_plan=n2_request.delivery_plan,
+            safety_stock=n2_request.safety_stock,
+        ))
+        self.assertEqual(cross_wired_product.status, "INVALID")
+        self.assertIsNone(cross_wired_product.projection)
+        self.assertIn("application_gas_product_not_declared", cross_wired_product.validation_errors)
 
     def test_relationship_mismatches_are_structured_invalid(self):
         base = request()
         cases = (
             ("site_customer_mismatch", Site("site-1", "other", "Hospital Costa Sur")),
-            ("application_site_mismatch", Application("app-1", "other", "critical oxygen",
+            ("application_site_mismatch", Application("app-1", "other", "CO2 process",
                                                         (ApplicationGasRequirement("co2", "process"),))),
             ("installation_product_mismatch", SupplyInstallation("tank-1", "site-1", "n2", "bulk", "cryogenic_tank", Quantity(10000, "kg"))),
             ("snapshot_installation_mismatch", InventorySnapshot("other", REFERENCE, Quantity(3200, "kg"))),
@@ -120,7 +240,7 @@ class SupplyAssuranceServiceTests(unittest.TestCase):
 
     def test_undeclared_application_gas_is_invalid(self):
         base = request()
-        invalid = SupplyAssuranceRequest(**{**base.__dict__, "application": Application("app-1", "site-1", "critical oxygen")})
+        invalid = SupplyAssuranceRequest(**{**base.__dict__, "application": Application("app-1", "site-1", "CO2 process")})
         result = SupplyAssuranceService().assess(invalid)
         self.assertEqual(result.status, "INVALID")
         self.assertIn("application_gas_product_not_declared", result.validation_errors)

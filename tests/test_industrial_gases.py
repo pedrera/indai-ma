@@ -114,29 +114,29 @@ class IndustrialGasesFoundationTests(unittest.TestCase):
             result.current_inventory = Quantity(1, "kg")
         self.assertEqual(result, build_supply_projection(*scenario(), REFERENCE))
 
-    def test_multigas_application_and_installations_are_independent(self):
-        application = Application("map", "site-1", "MAP", (
+    def test_co2_and_n2_projection_calculations_are_independent(self):
+        application = Application("map", "site-1", "Modified atmosphere / inerting", (
             ApplicationGasRequirement("co2", "process"),
             ApplicationGasRequirement("n2", "inerting"),
         ))
         self.assertEqual([item.gas_product_id for item in application.gas_requirements], ["co2", "n2"])
-        o2 = SupplyInstallation("o2-tank", "site-1", "o2", "bulk", "cryogenic_tank", Quantity(10000, "kg"))
-        n2 = SupplyInstallation("n2-tank", "site-1", "n2", "bulk", "cryogenic_tank", Quantity(8000, "kg"))
-        o2_snapshot = InventorySnapshot("o2-tank", REFERENCE, Quantity(3200, "kg"))
-        n2_snapshot = InventorySnapshot("n2-tank", REFERENCE, Quantity(5000, "kg"))
-        o2_forecast = ConsumptionForecast("o2-tank", REFERENCE, None, ConsumptionRate(700, "kg"))
-        n2_forecast = ConsumptionForecast("n2-tank", REFERENCE, None, ConsumptionRate(300, "kg"))
-        o2_plan = DeliveryPlan("o2-tank", REFERENCE + timedelta(days=4), Quantity(4000, "kg"))
-        n2_plan = DeliveryPlan("n2-tank", REFERENCE + timedelta(days=4), Quantity(1000, "kg"))
-        o2_result = build_supply_projection(o2, o2_snapshot, o2_forecast, o2_plan, Quantity(1500, "kg"), REFERENCE)
-        n2_result = build_supply_projection(n2, n2_snapshot, n2_forecast, n2_plan, Quantity(1000, "kg"), REFERENCE)
-        self.assertNotEqual(o2.gas_product_id, n2.gas_product_id)
-        self.assertEqual((o2_result.installation_id, o2_result.gas_product_id), ("o2-tank", "o2"))
+        co2 = SupplyInstallation("co2-tank", "site-1", "co2", "bulk", "cryogenic_tank", Quantity(10000, "kg"))
+        n2 = SupplyInstallation("n2-tank", "site-1", "n2", "bulk", "cryogenic_tank", Quantity(8000, "Nm3"))
+        co2_snapshot = InventorySnapshot("co2-tank", REFERENCE, Quantity(3200, "kg"))
+        n2_snapshot = InventorySnapshot("n2-tank", REFERENCE, Quantity(5000, "Nm3"))
+        co2_forecast = ConsumptionForecast("co2-tank", REFERENCE, None, ConsumptionRate(700, "kg"))
+        n2_forecast = ConsumptionForecast("n2-tank", REFERENCE, None, ConsumptionRate(300, "Nm3"))
+        co2_plan = DeliveryPlan("co2-tank", REFERENCE + timedelta(days=4), Quantity(4000, "kg"))
+        n2_plan = DeliveryPlan("n2-tank", REFERENCE + timedelta(days=4), Quantity(1000, "Nm3"))
+        co2_result = build_supply_projection(co2, co2_snapshot, co2_forecast, co2_plan, Quantity(1500, "kg"), REFERENCE)
+        n2_result = build_supply_projection(n2, n2_snapshot, n2_forecast, n2_plan, Quantity(1000, "Nm3"), REFERENCE)
+        self.assertEqual((co2_result.installation_id, co2_result.gas_product_id), ("co2-tank", "co2"))
         self.assertEqual((n2_result.installation_id, n2_result.gas_product_id), ("n2-tank", "n2"))
-        self.assertEqual(o2_result.current_inventory, Quantity(3200, "kg"))
-        self.assertEqual(n2_result.current_inventory, Quantity(5000, "kg"))
-        self.assertNotEqual(o2_result.consumption_until_delivery, n2_result.consumption_until_delivery)
-        self.assertEqual(o2_result, build_supply_projection(o2, o2_snapshot, o2_forecast, o2_plan, Quantity(1500, "kg"), REFERENCE))
+        self.assertEqual(co2_result.current_inventory, Quantity(3200, "kg"))
+        self.assertEqual(n2_result.current_inventory, Quantity(5000, "Nm3"))
+        self.assertEqual(co2_result.consumption_until_delivery, Quantity(2800, "kg"))
+        self.assertEqual(n2_result.consumption_until_delivery, Quantity(1200, "Nm3"))
+        self.assertEqual(co2_result, build_supply_projection(co2, co2_snapshot, co2_forecast, co2_plan, Quantity(1500, "kg"), REFERENCE))
 
     def test_projection_rejects_mismatched_installation(self):
         installation, snapshot, forecast, plan, safety = scenario()
