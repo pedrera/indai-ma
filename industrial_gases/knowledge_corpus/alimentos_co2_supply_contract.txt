@@ -1,0 +1,5 @@
+DEMO DOCUMENT — ALIMENTOS DEL SUR / CO2 SUPPLY CONTRACT
+
+Fictional example for indAI MA demonstrations. It is not a real contract or legal standard.
+
+This example contract concerns CO2 supplied to the beverage carbonation application at the Málaga production plant through installation co2-bulk-installation. Contract-specific commercial terms are intentionally not asserted by this demo record. Use only terms explicitly present in approved source documents when answering contract questions.

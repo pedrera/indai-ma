@@ -88,11 +88,51 @@ class VectorStoreTests(unittest.TestCase):
             self.assertTrue((Path(directory) / "chunks.jsonl").exists())
 
             reloaded.clear()
-            empty_after_restart = LocalVectorStore(
-                directory, "fake-embedding"
-            )
+            empty_after_restart = LocalVectorStore(directory, "fake-embedding")
             self.assertEqual(empty_after_restart.document_count, 0)
             self.assertEqual(empty_after_restart.chunk_count, 0)
+
+    def test_eligibility_filter_runs_before_vector_top_k_and_metadata_persists(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = LocalVectorStore(directory, "fake-embedding")
+            blocked = _chunk("blocked", "same meaning")
+            allowed = DocumentChunk(**{**_chunk("allowed", "same meaning").as_dict(),
+                                       "metadata": {"gas_product_id": "medical-oxygen"}})
+            blocked = DocumentChunk(**{**blocked.as_dict(),
+                                       "metadata": {"gas_product_id": "co2"}})
+            store.add(
+                [IndexedChunk(blocked, [1.0, 0.0, 0.0]),
+                 IndexedChunk(allowed, [0.8, 0.2, 0.0])],
+                [DocumentMetadata("blocked", "blocked.txt", "hash-blocked", 1, 1,
+                                  {"gas_product_id": "co2"}),
+                 DocumentMetadata("allowed", "allowed.txt", "hash-allowed", 1, 1,
+                                  {"gas_product_id": "medical-oxygen"})],
+            )
+            matches = store.search(
+                [1.0, 0.0, 0.0], top_k=1,
+                eligible=lambda chunk: chunk.metadata.get("gas_product_id") == "medical-oxygen",
+            )
+            self.assertEqual([item.chunk.chunk_id for item in matches], ["allowed"])
+            reloaded = LocalVectorStore(directory, "fake-embedding")
+            document_metadata = {item.document_name: item.metadata for item in reloaded.documents}
+            self.assertEqual(document_metadata["blocked.txt"], {"gas_product_id": "co2"})
+            self.assertEqual(document_metadata["allowed.txt"], {"gas_product_id": "medical-oxygen"})
+            self.assertEqual(reloaded.search(
+                [1.0, 0.0, 0.0], top_k=2,
+                eligible=lambda chunk: chunk.metadata.get("gas_product_id") == "medical-oxygen",
+            )[0].chunk.metadata, {"gas_product_id": "medical-oxygen"})
+
+    def test_rag_ingestion_attaches_metadata_to_chunks_and_document(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            embeddings = FakeEmbeddings()
+            store = LocalVectorStore(directory, embeddings.model)
+            service = RAGService(embeddings, store)
+            metadata = {"document_type": "operating_procedure", "gas_product_id": "n2"}
+            service.ingest([("procedure.txt", b"N2 supply procedure")],
+                           metadata_by_name={"procedure.txt": metadata})
+            self.assertEqual(store.documents[0].metadata, metadata)
+            self.assertEqual(store._items[0].chunk.metadata, metadata)
+            self.assertEqual(store.reopen()._items[0].chunk.metadata, metadata)
 
 
 class RAGServiceTests(unittest.TestCase):

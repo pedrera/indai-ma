@@ -1,0 +1,5 @@
+DEMO DOCUMENT — ALIMENTOS DEL SUR / CO2 INSTALLATION SPECIFICATION
+
+Fictional installation specification for demonstration only; not an engineering standard.
+
+CO2 product is associated with the beverage carbonation application and the distinct bulk installation co2-bulk-installation. The operational inventory unit and installation capacity come from structured data. This record does not define a conversion or combine this installation with any other gas.

@@ -1,6 +1,7 @@
 import os
 import json
 import re
+from typing import Callable
 
 from chunking import chunk_document
 from diagnostics import PerformanceRecorder
@@ -27,7 +28,11 @@ class RAGService:
         self.store = store
         self.recorder = recorder
 
-    def ingest(self, files: list[tuple[str, bytes]]) -> IngestionResult:
+    def ingest(
+        self,
+        files: list[tuple[str, bytes]],
+        metadata_by_name: dict[str, dict] | None = None,
+    ) -> IngestionResult:
         parse_event = self._start("document_parsing", document_count=len(files))
         try:
             documents = [parse_document(name, content) for name, content in files]
@@ -56,7 +61,10 @@ class RAGService:
         chunks = [
             chunk
             for document in new_documents
-            for chunk in chunk_document(document)
+            for chunk in chunk_document(
+                document,
+                metadata=(metadata_by_name or {}).get(document.name, {}),
+            )
         ]
         self._complete(chunk_event, chunk_count=len(chunks))
 
@@ -101,6 +109,7 @@ class RAGService:
                         sha256=document.sha256,
                         page_count=len(document.pages),
                         chunk_count=chunk_counts[document.document_id],
+                        metadata=dict((metadata_by_name or {}).get(document.name, {})),
                     )
                     for document in new_documents
                 ],
@@ -132,7 +141,8 @@ class RAGService:
             document_names=[document.name for document in new_documents],
         )
 
-    def retrieve(self, question: str, top_k: int | None = None) -> RetrievalResult:
+    def retrieve(self, question: str, top_k: int | None = None,
+                 eligible_chunk: Callable[[object], bool] | None = None) -> RetrievalResult:
         top_k = top_k or int(os.getenv("RAG_TOP_K", "4"))
         embedding_event = self._start(
             "query_embedding", embedding_model=self.embeddings.model
@@ -147,7 +157,7 @@ class RAGService:
         )
 
         search_event = self._start("vector_search", top_k=top_k)
-        matches = self.store.search(query_vector, top_k=top_k)
+        matches = self.store.search(query_vector, top_k=top_k, eligible=eligible_chunk)
         self._complete(
             search_event,
             retrieved_chunk_count=len(matches),

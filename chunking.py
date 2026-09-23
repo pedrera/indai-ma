@@ -13,6 +13,7 @@ def chunk_document(
     document: SourceDocument,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     overlap: int = DEFAULT_CHUNK_OVERLAP,
+    metadata: dict | None = None,
 ) -> list[DocumentChunk]:
     if chunk_size <= 0 or overlap < 0 or overlap >= chunk_size:
         raise ValueError("Configuración de chunking inválida.")
@@ -34,6 +35,7 @@ def chunk_document(
                         _make_chunk(
                             document, page.page_number, ordinal, buffer,
                             current_section,
+                            metadata,
                         )
                     )
                     ordinal += 1
@@ -46,6 +48,7 @@ def chunk_document(
                         _make_chunk(
                             document, page.page_number, ordinal, buffer,
                             current_section,
+                            metadata,
                         )
                     )
                     ordinal += 1
@@ -57,6 +60,7 @@ def chunk_document(
                 _make_chunk(
                     document, page.page_number, ordinal, buffer,
                     current_section,
+                    metadata,
                 )
             )
             ordinal += 1
@@ -114,6 +118,7 @@ def _make_chunk(
     ordinal: int,
     text: str,
     section: str | None,
+    metadata: dict | None = None,
 ) -> DocumentChunk:
     identity = (
         f"{document.document_id}:{CHUNKER_VERSION}:{ordinal}:{text}"
@@ -128,4 +133,5 @@ def _make_chunk(
         page_end=page,
         ordinal=ordinal,
         text=text,
+        metadata=dict(metadata or {}),
     )

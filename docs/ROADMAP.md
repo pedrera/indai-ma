@@ -2,9 +2,9 @@
 
 ## Current status
 
-The latest released version is **v1.9.0**. The current `main` commit contains the
-**v1.10.0 Operational Intelligence release candidate**, which has not yet been
-tagged or published.
+The latest released version is **v1.10.0**. The current working tree contains the
+**v1.11.0 Industrial AI release candidate**, which has not yet been tagged or
+published.
 This roadmap distinguishes shipped capabilities from future candidates; candidate
 items are not commitments or claims about the current implementation.
 
@@ -34,16 +34,20 @@ items are not commitments or claims about the current implementation.
 - **v1.10.0 release candidate — Operational Intelligence:** operational attention
   facts and evaluation issues per position, filtered Supply Portfolio UI, explicit
   deterministic what-if comparisons and a structural Decision Model foundation.
+- **v1.11.0 release candidate — Industrial AI:** fictional identity-tagged
+  Industrial Knowledge on the existing RAG stack, identity-scoped retrieval, and
+  an optional grounded Supply Agent embedded in Supply Portfolio. The agent reads
+  existing domain and attention results, retrieves applicable documents, and
+  delegates explicit what-if calculations to the existing scenario evaluator.
 
 ## Future direction
 
 Candidate capabilities are not commitments or claims about the current
 implementation unless described in the completed releases above:
 
-- **v1.11.0 — Industrial AI:** Industrial Knowledge / RAG, Supply Agent and
-  grounded explanation or reasoning.
-- **v1.12.0 — Multi-Agent Industrial Intelligence:** additional industrial agents,
-  coordination and cross-agent workflows.
+- **v1.12.0 — Multi-Agent Industrial Intelligence:** candidate direction for
+  additional industrial agents, coordination and cross-agent workflows; scope is
+  not yet designed.
 - **v2.0.0 — Industrial Decision Intelligence:** longer-term direction, not a
   commitment or an existing capability.
 

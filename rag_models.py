@@ -25,6 +25,7 @@ class DocumentMetadata:
     sha256: str
     page_count: int
     chunk_count: int
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -40,6 +41,7 @@ class DocumentChunk:
     page_end: int
     ordinal: int
     text: str
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -64,6 +66,7 @@ class RetrievedChunk:
             "page_start": self.chunk.page_start,
             "page_end": self.chunk.page_end,
             "score": self.score,
+            "metadata": dict(self.chunk.metadata),
         }
 
 

@@ -495,7 +495,7 @@ def _render_portfolio_what_if(attention: OperationalAttentionResult) -> None:
             _render_decision_result("ALTERNATIVE", alternative.result)
 
 
-def render_supply_portfolio() -> None:
+def render_supply_portfolio(on_run_supply_agent=None) -> None:
     """Render three independent demo positions through the portfolio service."""
     st.header("Supply Portfolio")
     st.caption(
@@ -559,3 +559,103 @@ def render_supply_portfolio() -> None:
         _render_item(item)
 
     _render_portfolio_what_if(attention)
+    _render_supply_agent(portfolio, attention, on_run_supply_agent)
+
+
+def _render_supply_agent(portfolio, attention, on_run_supply_agent) -> None:
+    """Render the grounded assistant inside the existing portfolio experience."""
+    st.divider()
+    st.subheader("Supply Agent")
+    st.caption(
+        "Pregunta sobre una posición. Las cifras operacionales proceden del "
+        "resultado estructurado; los documentos demo aparecen como fuentes separadas."
+    )
+    labels = {
+        item.item_id: _position_label(item)
+        for item in attention.items
+    }
+    selected_id = st.selectbox(
+        "Position for analysis",
+        tuple(labels),
+        format_func=lambda item_id: labels[item_id],
+        key="supply_agent_item_id",
+        disabled=on_run_supply_agent is None,
+    )
+    question = st.text_area(
+        "Question about this position",
+        key="supply_agent_question",
+        height=100,
+        placeholder="What will the inventory be before the next delivery?",
+        disabled=on_run_supply_agent is None,
+    )
+    if st.button(
+        "Ask Supply Agent",
+        key="supply_agent_start",
+        type="primary",
+        disabled=on_run_supply_agent is None or not question.strip(),
+    ):
+        on_run_supply_agent(portfolio, attention, selected_id, question.strip())
+        st.rerun()
+
+    response = st.session_state.get("supply_agent_result")
+    if response is None or response.portfolio_item_id != selected_id:
+        return
+    if response.status.value == "provider_error":
+        st.error("Generation failed. The structured operational evidence is retained below.")
+    elif response.status.value == "failed":
+        st.error("Supply Agent could not complete this analysis.")
+    elif response.status.value == "needs_input":
+        st.info(response.answer or "More information is required.")
+    else:
+        st.markdown("**Answer / LLM interpretation**")
+        st.write(response.answer or "No generated explanation was returned.")
+
+    st.markdown("**Operational evidence**")
+    result = response.position.result
+    if result.status == "COMPLETED" and result.projection is not None:
+        projection = result.projection
+        st.write(f"Domain status: {result.status}")
+        st.write(f"Inventory before delivery: {_quantity_text(projection.inventory_immediately_before_delivery)}")
+        st.write(f"Safety-stock gap: {_quantity_text(projection.safety_stock_gap_before_delivery)}")
+        st.write(f"Stockout before delivery: {'Yes' if projection.stockout_before_delivery else 'No'}")
+        if response.attention_item.facts:
+            st.write("Existing findings: " + ", ".join(
+                fact.source_finding.code for fact in response.attention_item.facts
+            ))
+    else:
+        st.write(f"Domain status: {result.status}")
+        if result.missing_inputs:
+            st.write("Missing inputs: " + ", ".join(result.missing_inputs))
+        if result.validation_errors:
+            st.write("Validation errors: " + ", ".join(result.validation_errors))
+
+    st.markdown("**Knowledge sources**")
+    if response.knowledge_status == "not_requested":
+        st.write("No documentary search was requested for this answer.")
+    elif response.knowledge_status == "no_applicable_knowledge":
+        st.write("No applicable knowledge was retrieved for this position and question.")
+    elif response.knowledge_status == "operational_error":
+        st.warning("Documentary knowledge search failed; structured operational evidence is still available.")
+    elif response.knowledge_status == "retrieved":
+        for source in response.knowledge_sources:
+            st.markdown(f"**{source.chunk.document_name}** · {source.chunk.metadata.get('document_type', 'document')}")
+            st.caption(f"Source: [{source.chunk.chunk_id}] · Page {source.chunk.page_start}")
+            st.write(source.chunk.text)
+
+    if response.scenario_analysis is not None:
+        st.markdown("**Scenario analysis**")
+        scenario = response.scenario_analysis
+        st.write(f"Explicit change: {scenario.alternative.label}")
+        _render_decision_result("BASELINE", scenario.baseline_result)
+        _render_decision_result("ALTERNATIVE", scenario.alternative_result)
+
+    with st.expander("Trace / provenance"):
+        st.write(f"Supply Agent status: {response.status.value}")
+        st.write(f"Domain status: {response.domain_status}")
+        st.write(f"Knowledge status: {response.knowledge_status}")
+        for reference in response.evidence_references:
+            st.write(f"{reference.evidence_type}: {reference.source_id} · {', '.join(reference.fields)}")
+        if response.operational_errors:
+            st.write("Operational errors: " + "; ".join(response.operational_errors))
+        for execution in response.tool_executions:
+            st.write(f"Tool: {execution['name']} · {execution['elapsed_seconds'] * 1000:.3f} ms")

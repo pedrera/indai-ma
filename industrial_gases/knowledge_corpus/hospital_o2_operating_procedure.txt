@@ -1,0 +1,7 @@
+DEMO DOCUMENT — HOSPITAL COSTA SUR / MEDICAL OXYGEN OPERATING PROCEDURE
+
+Fictional example procedure for a demonstration; not a clinical instruction or regulated standard.
+
+The operator records the cryogenic tank inventory snapshot time and the planned delivery time against the same reference timeline. Review the configured safety stock and the deterministic projection together. A safety-stock breach and a projected stockout are distinct facts and must not be described as the same event.
+
+This document introduces no new threshold. Use the structured installation configuration and supply projection as the source of operational values.

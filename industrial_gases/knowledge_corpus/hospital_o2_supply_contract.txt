@@ -1,0 +1,7 @@
+DEMO DOCUMENT — HOSPITAL COSTA SUR / MEDICAL OXYGEN SUPPLY CONTRACT
+
+Fictional example for indAI MA demonstrations. It is not a real contract or legal standard.
+
+The covered installation is Hospital Costa Sur's bulk cryogenic medical oxygen tank. For this demonstration the planned delivery record is 4,000 kg, scheduled four days after the reference time supplied to the analysis. This document records the example contract context only; the inventory projection remains the authority for projected quantities and continuity.
+
+Questions about contractual terms should be answered only from this fictional document. It specifies no medical safety threshold and does not replace the configured safety stock in the structured supply request.

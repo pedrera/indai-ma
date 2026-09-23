@@ -4,6 +4,34 @@ This maintained changelog begins with v1.9.0. Earlier release history is recorde
 in annotated Git tags and selected historical release notes; the repository does
 not reconstruct every development milestone as a release.
 
+## v1.11.0 — Industrial AI (release candidate)
+
+### Industrial Knowledge and Supply Agent
+
+- Add eight clearly fictional Industrial Gases demo documents covering Hospital
+  Costa Sur O₂, Alimentos del Sur CO₂/N₂ and an explicitly applicable global
+  demo policy. Document metadata is preserved with the existing RAG chunks.
+- Add identity-scoped retrieval that filters eligible chunks by structured
+  customer, site, application, gas product and installation identifiers before
+  similarity ranking. Incomplete identity permits only the explicit global demo
+  policy.
+- Add an optional Supply Agent inside Supply Portfolio. It can read the existing
+  position and attention result, search applicable knowledge, and evaluate one
+  user-requested what-if through the existing deterministic scenario evaluator.
+- Keep operational projection, findings, documentary chunks and LLM explanation
+  as separate structured evidence with source references and tool trace.
+- Distinguish domain `INVALID` / `MISSING_INPUTS`, no applicable documents,
+  retrieval operational errors and generation/provider failures. Provider failure
+  preserves evidence already collected.
+
+### Boundaries
+
+- Existing deterministic Healthcare, Food & Beverage and Supply Portfolio paths
+  remain usable without generation. The optional Supply Agent does not calculate
+  supply facts, convert units, create thresholds, recommend, rank, optimize,
+  aggregate gases or search scenarios automatically.
+- FAST remains offline and does not invoke generation LLMs.
+
 ## v1.10.0 — Operational Intelligence (release candidate)
 
 ### Operational Attention

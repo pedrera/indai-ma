@@ -1,0 +1,7 @@
+DEMO DOCUMENT — HOSPITAL COSTA SUR / O2 INSTALLATION SPECIFICATION
+
+Fictional installation specification for the indAI MA demo; not an engineering or medical standard.
+
+Installation ID: hospital-costa-sur-bulk-cryogenic-o2. Supply mode: bulk. Installation type: cryogenic tank. Product identity: medical oxygen. The demonstration capacity is represented in kg by the structured installation model; the current configured capacity is supplied as input data, not inferred from this document.
+
+No unit conversion is defined here. Preserve the operational unit recorded in the structured request.

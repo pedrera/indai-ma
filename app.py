@@ -67,6 +67,12 @@ from application_service import AnalysisService
 from industrial_gases.healthcare_ui import render_healthcare_supply_assurance
 from industrial_gases.food_beverage_ui import render_food_beverage_supply_assurance
 from industrial_gases.portfolio_ui import render_supply_portfolio
+from industrial_gases.industrial_knowledge import demo_knowledge_service
+from industrial_gases.supply_agent import (
+    ProviderSupplyDecisionModel,
+    SupplyAgent,
+    SupplyAgentRequest,
+)
 
 
 GAS_TYPE_LABELS = {
@@ -124,6 +130,8 @@ if "business_api_result" not in st.session_state:
     st.session_state.business_api_result = None
 if "procurement_agent_metadata" not in st.session_state:
     st.session_state.procurement_agent_metadata = None
+if "supply_agent_result" not in st.session_state:
+    st.session_state.supply_agent_result = None
 if "generation_job" not in st.session_state:
     st.session_state.generation_job = None
 if "generation_kind" not in st.session_state:
@@ -1072,6 +1080,41 @@ def start_supervisor_analysis(request: str, use_synthesis: bool = False) -> None
     job.start()
 
 
+def start_supply_agent(portfolio, attention, item_id: str, question: str) -> None:
+    """Run the position-bound Industrial Supply Agent through AgentJob."""
+    operation_id = uuid4().hex[:8]
+    recorder = PerformanceRecorder(operation_id, selected_provider, selected_model or "none", "supply_agent")
+    recorder.record_stage("prompt_build", message_count=1, approximate_prompt_chars=len(question),
+                          item_id=item_id)
+    try:
+        provider = get_llm_provider(
+            selected_provider, selected_model, recorder=recorder,
+            runtime_config=st.session_state.llm_runtime_config,
+        )
+        knowledge = lambda: demo_knowledge_service(
+            LMStudioEmbeddingProvider(model=get_embedding_model_name()), recorder,
+        )
+        runner = SupplyAgent(
+            SupplyAgentRequest(question, item_id), portfolio, attention, knowledge,
+            ProviderSupplyDecisionModel(provider), recorder,
+        )
+        job = AgentJob(
+            runner, question, st.session_state.llm_runtime_config.timeout_seconds,
+            provider,
+        )
+    except Exception:
+        recorder.finish("failed")
+        raise
+    st.session_state.supply_agent_result = None
+    st.session_state.generation_job = job
+    st.session_state.generation_kind = "supply_agent"
+    st.session_state.generation_notice = None
+    st.session_state.operation_started_at = perf_counter()
+    st.session_state.operation_id = operation_id
+    remember_execution_start(recorder)
+    job.start()
+
+
 def start_business_api_analysis(request: str, alternative_evaluation=None) -> None:
     operation_id = uuid4().hex[:8]
     recorder = PerformanceRecorder(operation_id, "api", "remote", "business_api")
@@ -1234,6 +1277,8 @@ def finish_generation(result: GenerationResult) -> None:
                 text = supervisor_text(normalize_supervisor_result(domain))
             elif generation_kind == "business_api" and domain is not None:
                 text = domain.summary
+            elif generation_kind == "supply_agent" and domain is not None:
+                text = domain.answer or ""
             elif generation_kind in {"gas_analysis", "gas_documentary"}:
                 domain = st.session_state.gas_analysis_result or st.session_state.gas_documentary_result
                 text = build_response_clipboard_text(domain) if domain is not None else text
@@ -1252,7 +1297,9 @@ def finish_generation(result: GenerationResult) -> None:
         st.session_state.gas_response_contract = None
 
     if result.status == GenerationStatus.COMPLETED:
-        if generation_kind == "supervisor":
+        if generation_kind == "supply_agent":
+            st.session_state.supply_agent_result = result.domain_result
+        elif generation_kind == "supervisor":
             st.session_state.supervisor_result = result.structured_result
         elif generation_kind == "business_api":
             st.session_state.business_api_result = result.structured_result
@@ -1416,7 +1463,7 @@ with main_column:
     elif selected_mode == "Food & Beverage Supply Assurance":
         render_food_beverage_supply_assurance()
     elif selected_mode == "Supply Portfolio":
-        render_supply_portfolio()
+        render_supply_portfolio(start_supply_agent if selected_model is not None else None)
     elif selected_mode == "Evaluation":
         from evals.ui import render_evaluation
         render_evaluation()

@@ -3,7 +3,7 @@ import math
 import os
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any
+from typing import Any, Callable
 
 from chunking import CHUNKER_VERSION
 from rag_models import (
@@ -92,7 +92,8 @@ class LocalVectorStore:
         self.save()
 
     def search(
-        self, query_embedding: list[float], top_k: int = 4
+        self, query_embedding: list[float], top_k: int = 4,
+        eligible: Callable[[DocumentChunk], bool] | None = None,
     ) -> list[RetrievedChunk]:
         if top_k < 1:
             raise ValueError("top_k debe ser mayor que cero.")
@@ -109,6 +110,7 @@ class LocalVectorStore:
                 score=sum(a * b for a, b in zip(query, item.embedding)),
             )
             for item in self._items
+            if eligible is None or eligible(item.chunk)
         ]
         matches.sort(key=lambda item: (-item.score, item.chunk.chunk_id))
         return matches[:top_k]

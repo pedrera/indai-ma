@@ -1,0 +1,5 @@
+DEMO DOCUMENT — ALIMENTOS DEL SUR / N2 OPERATING PROCEDURE
+
+Fictional example procedure for the indAI MA demo; not a regulated standard.
+
+This procedure concerns nitrogen (N2) used for modified-atmosphere packaging and inerting at the Málaga production plant, installation n2-bulk-installation. Preserve the normalized gas-volume unit Nm3 used by the structured N2 installation. Do not apply CO2 inventory or installation facts to this position.

@@ -1,0 +1,5 @@
+DEMO DOCUMENT — ALIMENTOS DEL SUR / N2 INSTALLATION SPECIFICATION
+
+Fictional installation specification for demonstration only; not an engineering standard.
+
+N2 product is associated with modified-atmosphere packaging and inerting through the distinct installation n2-bulk-installation. This installation uses the structured operational unit Nm3. The record contains no conversion to kg and no values aggregated with CO2.

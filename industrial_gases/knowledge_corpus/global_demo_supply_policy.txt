@@ -1,0 +1,5 @@
+DEMO DOCUMENT — GLOBAL INDUSTRIAL GASES SUPPLY POLICY
+
+Fictional global policy example applicable to the Industrial Gases demo only. It is not an industry standard or a customer contract.
+
+For each installation, describe the structured supply projection and its source data separately from documentary statements. A configured safety-stock breach does not itself establish a stockout. Keep each customer, site, application, gas product, installation, and operational unit separate. This policy sets no numeric thresholds and does not authorize physical aggregation or unit conversion.

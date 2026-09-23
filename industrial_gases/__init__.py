@@ -53,6 +53,16 @@ from .interpretation_models import (
 )
 from .request_composer import SupplyAssuranceCompositionResult, SupplyAssuranceRequestComposer
 from .units import UNIT_CATALOG, UnitDimension, UnitSpec, unit_spec
+from .industrial_knowledge import IndustrialKnowledgeService, demo_knowledge_service
+from .supply_agent import (
+    ProviderSupplyDecisionModel,
+    SupplyAgent,
+    SupplyAgentRequest,
+    SupplyAgentResponse,
+    SupplyAgentStatus,
+    SupplyAgentTools,
+    SupplyEvidenceReference,
+)
 from .interpreter import SupplyAssuranceIdentityContext, SupplyAssuranceInterpretationResult, SupplyAssuranceInterpreter
 from .llm_extraction_models import (
     ExtractedQuantityCandidate, ExtractedRateCandidate,
@@ -80,6 +90,9 @@ __all__ = [
     "SupplyAssuranceIdentityContext", "SupplyAssuranceInterpretationResult", "SupplyAssuranceInterpreter",
     "ExtractedQuantityCandidate", "ExtractedRateCandidate", "ExtractedRelativeTimeCandidate",
     "ExtractionOperationalError", "LLMSupplyExtraction", "LLMSupplyAssuranceInterpreter",
+    "IndustrialKnowledgeService", "demo_knowledge_service", "ProviderSupplyDecisionModel",
+    "SupplyAgent", "SupplyAgentRequest", "SupplyAgentResponse", "SupplyAgentStatus",
+    "SupplyAgentTools", "SupplyEvidenceReference",
 ]
 
 

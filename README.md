@@ -10,8 +10,8 @@ for trading, procurement, CRM, contract-management or enterprise systems.
 
 Product principle: **Simple for the business user, traceable for the technical user.**
 
-**Current state: v1.10.0 release candidate.** The latest published tag is v1.9.0;
-the v1.10.0 tag has not yet been created.
+**Current state: v1.11.0 release candidate.** The latest published tag is
+v1.10.0; the v1.11.0 tag has not yet been created.
 
 ## Energy / Commercial capabilities
 
@@ -48,6 +48,12 @@ The current screens and capabilities are:
   one-at-a-time what-if comparisons. It does not aggregate physical quantities
   across gases or positions, rank positions, or select a winner. Its small Decision
   Model records a baseline and explicit alternatives; it does not choose among them.
+- **Industrial Knowledge / Supply Agent (v1.11.0 candidate):** an optional grounded
+  assistant embedded in Supply Portfolio. It uses a fictional, identity-tagged demo
+  corpus with the existing local RAG stack, and can explain an existing position,
+  retrieve applicable documents, combine both evidence types, or evaluate one
+  explicitly requested what-if through the existing scenario evaluator. Structured
+  domain facts, cited document chunks and generated interpretation remain distinct.
 
 ## Available modes
 
@@ -79,6 +85,13 @@ same deterministic Supply Assurance service. This path requires no generation
 LLM, RAG, agent or Supervisor, and provides no scoring, ranking, recommendation,
 optimization or cross-position physical aggregation.
 
+The optional Supply Agent is a separate path. It requires a configured generation
+provider and local embedding service for documentary retrieval. Its demo corpus is
+fictional and is scoped by customer, site, application, gas product and installation
+metadata before semantic ranking. The Supply Agent explains evidence; it does not
+calculate supply values, recommend actions, rank alternatives or generate scenarios
+automatically. The existing deterministic flows remain usable without it.
+
 See [ARCHITECTURE.md](docs/ARCHITECTURE.md), [DECISIONS.md](docs/DECISIONS.md), [PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md), and [V1_MVP_SPEC.md](docs/V1_MVP_SPEC.md).
 
 ## Requirements
@@ -103,13 +116,16 @@ If PowerShell blocks activation, either run `Set-ExecutionPolicy -Scope Process 
 
 ## LM Studio setup
 
-For the energy/Commercial contract-RAG flow, start the local server at
+For the energy/Commercial contract-RAG flow and optional Industrial Knowledge,
+start the local embedding server at
 `http://localhost:1234/v1` and serve the embedding model identified by
 `RAG_EMBEDDING_MODEL`, currently `text-embedding-nomic-embed-text-v1.5`. Model
 identifiers must match LM Studio. `LMSTUDIO_MODEL` is optional for deterministic
 flows and is only needed when a generation model is used. Healthcare,
-Food & Beverage and Supply Portfolio use deterministic supply-assurance paths and
-do not require LLM generation or RAG.
+Food & Beverage and the baseline Supply Portfolio use deterministic
+supply-assurance paths and do not require LLM generation or RAG. Supply Agent is
+optional and uses the configured generation model plus embeddings when explicitly
+invoked.
 
 ## Environment configuration
 

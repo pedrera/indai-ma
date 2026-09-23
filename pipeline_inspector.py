@@ -20,6 +20,7 @@ from diagnostics import (
     PROCUREMENT_AGENT_PIPELINE_STAGES,
     PROCUREMENT_PLANNER_PIPELINE_STAGES,
     PROCUREMENT_DETERMINISTIC_PIPELINE_STAGES,
+    SUPPLY_AGENT_PIPELINE_STAGES,
     PerformanceEvent,
     PerformanceSnapshot,
     PerformanceStatus,
@@ -563,6 +564,7 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
             return
 
         pipeline_stages = {
+            "supply_agent": SUPPLY_AGENT_PIPELINE_STAGES,
             "risk_agent": RISK_AGENT_PIPELINE_STAGES,
             "commercial_agent": COMMERCIAL_AGENT_PIPELINE_STAGES,
             "gas_analysis": GAS_PIPELINE_STAGES,
@@ -613,6 +615,8 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
             pipeline_stages = ()
         for stage in pipeline_stages:
             icon, label = STAGE_PRESENTATION[stage]
+            if snapshot.mode == "supply_agent" and stage == "agent_start":
+                label = "SupplyAgent"
             if snapshot.mode == "commercial_agent" and stage == "agent_start":
                 label = "CommercialAgent"
             if snapshot.mode == "rag_chat" and stage == "tool_execution":
