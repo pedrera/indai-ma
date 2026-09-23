@@ -1,4 +1,11 @@
-# Current architecture (v0.9.0)
+# Architecture baseline (v0.9.0 — Energy / Commercial)
+
+This document records the v0.9.0 energy/Commercial architecture, not the complete
+current product architecture. Since that baseline, the repository added the
+AnalysisService and FastAPI Business boundary, later Business decision/evaluation
+capabilities, and a separate `industrial_gases/` domain for deterministic physical
+inventory assurance. The current shipped modes and v1.9.0 release-candidate scope
+are summarized in [README.md](../README.md) and [ROADMAP.md](ROADMAP.md).
 
 ```text
 User

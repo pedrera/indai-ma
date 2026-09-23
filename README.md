@@ -2,25 +2,72 @@
 
 ## What it is
 
-indAI MA is a local prototype for traceable B2B energy decision support. The Commercial MVP lets a business user ask a natural-language question, routes it through Supervisor, retrieves contract evidence when needed, runs deterministic tools, and presents an Executive Result. It is not a replacement for trading, procurement, CRM, contract-management or enterprise systems.
+indAI MA is a local prototype for traceable B2B energy and industrial-gas supply
+assurance. Its energy/Commercial flow analyzes contracts, procurement position and
+risk; its separate Industrial Gases domain projects physical inventory continuity
+for individual installations and independent portfolios. It is not a replacement
+for trading, procurement, CRM, contract-management or enterprise systems.
 
 Product principle: **Simple for the business user, traceable for the technical user.**
 
-## Commercial MVP capabilities
+**Current state: v1.9.0 release candidate.** The latest published tag is v1.8.0;
+the v1.9.0 tag has not yet been created.
 
-Business mode provides four editable examples:
+## Energy / Commercial capabilities
 
-1. Hospital Costa Sur integrated analysis.
-2. Hospital Costa Sur versus Industrias Mediterráneo contract comparison.
-3. Procurement position for 120/95/42.
-4. Risk stress scenario with an explicit +10% demand change.
+Business mode sends a natural-language question through the Business API to the
+AnalysisService and Supervisor. CommercialAgent, ProcurementAgent and RiskAgent
+provide separate capabilities; Supervisor routes and synthesizes their structured
+results. Deterministic tools calculate supported values, while RAG retrieves
+contract evidence where needed. Optional LLM interpretation or synthesis is not
+required for complete deterministic paths.
 
-The deterministic path does not require chat generation. Commercial and contract comparison require RAG embeddings; Procurement and Risk can run without RAG.
+The energy/Commercial Business experience includes contract analysis and comparison,
+procurement SHORT/BALANCED/LONG analysis, risk demand and spot-price scenarios,
+Take-or-Pay projections, structured recommendations, decision plans/readiness and
+explicit alternative evaluations. Contractual excess and procurement SHORT remain
+distinct values.
+
+## Industrial Gases capabilities
+
+Industrial Gases is a separate physical-inventory domain. Its deterministic
+Supply Assurance service projects stock continuity to a planned delivery, including
+days of supply, inventory before and after delivery, safety-stock gap, stockout,
+required delivery volume and capacity overflow. Strict unit semantics and
+structured provenance are preserved; no implicit unit conversion is performed.
+
+The current screens and capabilities are:
+
+- **Healthcare Supply Assurance:** structured medical-oxygen inputs and explicit
+  what-if comparisons for earlier delivery, planned delivery quantity and
+  consumption forecast.
+- **Food & Beverage Supply Assurance:** independent CO₂ and N₂ branches with
+  separate installations, units and projections.
+- **Supply Portfolio:** ordered evaluation of independent requests with individual
+  results retained. It does not aggregate physical quantities across gases or
+  select a winner.
+
+## Available modes
+
+Primary business-facing modes are **Business**, **Healthcare Supply Assurance**,
+**Food & Beverage Supply Assurance** and **Supply Portfolio**. Advanced / technical
+modes also include Chat, Gas B2B Portfolio Analysis, ProcurementAgent,
+CommercialAgent, RiskAgent, Multi-Agent Supervisor and Evaluation.
 
 ## Architecture at a glance
 
+Energy / Commercial analysis:
+
 ```text
 Business question → Supervisor → specialist agents → RAG/tools → Executive Result
+```
+
+Industrial Gases assurance:
+
+```text
+Structured installation data → SupplyAssuranceService → deterministic projection
+                                      ↑
+                      Healthcare / Food & Beverage / Portfolio
 ```
 
 See [ARCHITECTURE.md](docs/ARCHITECTURE.md), [DECISIONS.md](docs/DECISIONS.md), [PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md), and [V1_MVP_SPEC.md](docs/V1_MVP_SPEC.md).
@@ -47,11 +94,17 @@ If PowerShell blocks activation, either run `Set-ExecutionPolicy -Scope Process 
 
 ## LM Studio setup
 
-Start the local server at `http://localhost:1234/v1`. Load and serve the embedding model identified by `RAG_EMBEDDING_MODEL`, currently `text-embedding-nomic-embed-text-v1.5`. Model identifiers must match LM Studio. `LMSTUDIO_MODEL` is optional for deterministic demos and is only needed when a generation model is used.
+For the energy/Commercial contract-RAG flow, start the local server at
+`http://localhost:1234/v1` and serve the embedding model identified by
+`RAG_EMBEDDING_MODEL`, currently `text-embedding-nomic-embed-text-v1.5`. Model
+identifiers must match LM Studio. `LMSTUDIO_MODEL` is optional for deterministic
+flows and is only needed when a generation model is used. Healthcare,
+Food & Beverage and Supply Portfolio use deterministic supply-assurance paths and
+do not require LLM generation or RAG.
 
 ## Environment configuration
 
-Copy `.env.example` to `.env`. The deterministic local RAG demo needs:
+Copy `.env.example` to `.env`. The energy/Commercial contract-RAG demo needs:
 
 ```env
 LLM_PROVIDER=lmstudio
@@ -63,7 +116,7 @@ RAG_INDEX_PATH=.indai_ma/rag_index
 
 `OPENAI_API_KEY` and `OPENAI_MODEL` are OpenAI-only and optional. Never commit `.env` or API keys. Runtime limits are optional and default to the values shown in `.env.example`.
 
-## Prepare the RAG index
+## Prepare the energy / Commercial RAG index
 
 1. Start LM Studio and serve the embedding model.
 2. Start the app with `streamlit run app.py`.
@@ -80,7 +133,11 @@ The persisted index is local under `.indai_ma/` and is never committed. If it is
 streamlit run app.py
 ```
 
-The application opens in Business mode. Select an example or write a question, review it, and press **Analizar**. Advanced modes, configuration, RAG administration, Evaluation and Pipeline Inspector remain available under **Advanced / Technical**.
+The application opens in Business mode. Select an example or write a question,
+review it, and press **Analizar**. Healthcare Supply Assurance, Food & Beverage
+Supply Assurance and Supply Portfolio are available as separate modes. Advanced
+configuration, RAG administration, Evaluation and Pipeline Inspector remain under
+**Advanced / Technical**.
 
 ## Demo scenarios
 
@@ -115,7 +172,7 @@ See [ARCHITECTURE.md](docs/ARCHITECTURE.md), [DECISIONS.md](docs/DECISIONS.md), 
 
 ## Roadmap
 
-The repository currently contains the v0.9 evaluation/guardrails baseline and the v1.0 Commercial MVP increments. Enterprise API, persistence, integrations, SSO/RBAC and cloud packaging remain future roadmap work.
+See [ROADMAP.md](docs/ROADMAP.md) for completed releases and future candidates.
 
 ## HTTP API (v1.1 Increment B)
 

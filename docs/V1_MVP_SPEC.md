@@ -1,7 +1,8 @@
 # indAI MA v1.0 Commercial MVP specification
 
-**Status:** implemented and validated release specification for the v1.0 Commercial
-MVP. The final v1.0.0 release tag has not yet been created.
+**Status:** historical release specification for the v1.0 Commercial MVP. The
+release was tagged `v1.0.0`; current product status is documented in
+[ROADMAP.md](ROADMAP.md).
 
 ## Objective and positioning
 
@@ -245,5 +246,7 @@ scenarios were manually validated during release-candidate review:
 - Procurement 120/95/42;
 - Risk +10% stress scenario.
 
-The final v1.0.0 release tag has not yet been created. Capabilities listed as out
-of scope remain intentionally unimplemented.
+The v1.0.0 release tag is present in Git. Capabilities listed as out of scope
+describe the v1.0 boundary and may have been implemented by later releases; consult
+the current [README](../README.md) and [roadmap](ROADMAP.md) before treating them as
+current product limitations.
