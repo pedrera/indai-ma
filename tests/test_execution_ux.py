@@ -139,9 +139,10 @@ class ExecutionUXTests(unittest.TestCase):
         with patch('llm_client.get_available_models', return_value=[]):
             app = AppTest.from_file(APP, default_timeout=20).run()
             modes = app.radio(key='selected_mode').options
-            self.assertEqual(len(modes), 10)
+            self.assertEqual(len(modes), 11)
             self.assertIn('Healthcare Supply Assurance', modes)
             self.assertIn('Food & Beverage Supply Assurance', modes)
+            self.assertIn('Supply Portfolio', modes)
             self.assertEqual(app.radio(key='selected_mode').value, 'Business')
             self.assertTrue(any('¿Qué quieres analizar?' in item.label for item in app.text_area))
             for mode in modes:

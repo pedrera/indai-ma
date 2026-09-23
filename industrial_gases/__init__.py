@@ -23,6 +23,13 @@ from .models import (
 )
 from .provenance import Provenance
 from .service import Finding, SupplyAssuranceRequest, SupplyAssuranceResult, SupplyAssuranceService
+from .portfolio import (
+    SupplyPortfolioItem,
+    SupplyPortfolioItemResult,
+    SupplyPortfolioRequest,
+    SupplyPortfolioResult,
+    SupplyPortfolioService,
+)
 from .supply_scenarios import (
     SupplyAssuranceAlternative,
     SupplyAssuranceScenarioResult,
@@ -48,6 +55,8 @@ __all__ = [
     "calculate_days_of_supply", "calculate_required_delivery_volume",
     "project_inventory",
     "Finding", "SupplyAssuranceRequest", "SupplyAssuranceResult", "SupplyAssuranceService",
+    "SupplyPortfolioItem", "SupplyPortfolioItemResult", "SupplyPortfolioRequest",
+    "SupplyPortfolioResult", "SupplyPortfolioService",
     "SupplyAssuranceAlternative", "SupplyAssuranceScenarioResult",
     "evaluate_supply_assurance_alternative",
     "ExtractedSupplyFacts", "ExtractionIssue", "ExtractionProvenance", "IdentityReference", "ResolvedSupplyIdentity",
