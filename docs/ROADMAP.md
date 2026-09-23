@@ -2,8 +2,9 @@
 
 ## Current status
 
-The latest released version is **v1.8.0**. The current `main` commit contains the
-completed **v1.9.0 release candidate**, which has not yet been tagged or published.
+The latest released version is **v1.9.0**. The current `main` commit contains the
+**v1.10.0 Operational Intelligence release candidate**, which has not yet been
+tagged or published.
 This roadmap distinguishes shipped capabilities from future candidates; candidate
 items are not commitments or claims about the current implementation.
 
@@ -26,28 +27,25 @@ items are not commitments or claims about the current implementation.
 - **v1.7 — Alternative evaluation:** deterministic evaluation inputs/results.
 - **v1.8 — Scenario transport and isolation:** LONG and TOP evaluation paths,
   revised TOP forecast inputs, API/UI transport and SHORT/TOP input isolation.
-- **v1.9.0 release candidate — Industrial Gases Supply Assurance:** domain and
+- **v1.9.0 — Industrial Gases Supply Assurance:** domain and
   deterministic calculations, structured and grounded interpretation, Healthcare
   screen and explicit what-if, isolated CO₂/N₂ Food & Beverage flows, and ordered
-  independent Supply Portfolio evaluation.
+  independent Supply Portfolio evaluation. Published release.
+- **v1.10.0 release candidate — Operational Intelligence:** operational attention
+  facts and evaluation issues per position, filtered Supply Portfolio UI, explicit
+  deterministic what-if comparisons and a structural Decision Model foundation.
 
-## Next candidates
+## Future direction
 
-These areas are under consideration and are **not implemented as product
-capabilities** unless described in the current release above:
+Candidate capabilities are not commitments or claims about the current
+implementation unless described in the completed releases above:
 
-- Operational Attention.
-- Portfolio What-if.
-- Decision Model.
-- Industrial Knowledge / RAG.
-- Supply Agent.
-- Multi-Agent and cross-agent integration.
+- **v1.11.0 — Industrial AI:** Industrial Knowledge / RAG, Supply Agent and
+  grounded explanation or reasoning.
+- **v1.12.0 — Multi-Agent Industrial Intelligence:** additional industrial agents,
+  coordination and cross-agent workflows.
+- **v2.0.0 — Industrial Decision Intelligence:** longer-term direction, not a
+  commitment or an existing capability.
 
-Their boundaries, data authority and customer value should be validated before
-implementation. No release numbers are assigned to these candidates yet.
-
-## Longer term
-
-- **v2.0 Industrial Decision Intelligence:** a possible broader product milestone
-  after the preceding capabilities and their integration are deliberately scoped.
-  This is a direction, not a commitment or an existing capability.
+These are future candidates; details and boundaries require validation before
+implementation.

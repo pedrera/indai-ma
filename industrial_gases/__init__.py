@@ -30,6 +30,18 @@ from .portfolio import (
     SupplyPortfolioResult,
     SupplyPortfolioService,
 )
+from .operational_attention import (
+    OperationalAttentionFact,
+    OperationalAttentionItem,
+    OperationalAttentionResult,
+    OperationalAttentionService,
+)
+from .decision_models import (
+    DecisionAlternative,
+    DecisionAnalysis,
+    DecisionContext,
+    ExplicitChange,
+)
 from .supply_scenarios import (
     SupplyAssuranceAlternative,
     SupplyAssuranceScenarioResult,
@@ -57,6 +69,9 @@ __all__ = [
     "Finding", "SupplyAssuranceRequest", "SupplyAssuranceResult", "SupplyAssuranceService",
     "SupplyPortfolioItem", "SupplyPortfolioItemResult", "SupplyPortfolioRequest",
     "SupplyPortfolioResult", "SupplyPortfolioService",
+    "OperationalAttentionFact", "OperationalAttentionItem",
+    "OperationalAttentionResult", "OperationalAttentionService",
+    "DecisionAlternative", "DecisionAnalysis", "DecisionContext", "ExplicitChange",
     "SupplyAssuranceAlternative", "SupplyAssuranceScenarioResult",
     "evaluate_supply_assurance_alternative",
     "ExtractedSupplyFacts", "ExtractionIssue", "ExtractionProvenance", "IdentityReference", "ResolvedSupplyIdentity",

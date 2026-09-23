@@ -4,7 +4,39 @@ This maintained changelog begins with v1.9.0. Earlier release history is recorde
 in annotated Git tags and selected historical release notes; the repository does
 not reconstruct every development milestone as a release.
 
-## v1.9.0 — Release candidate
+## v1.10.0 — Operational Intelligence (release candidate)
+
+### Operational Attention
+
+- Project existing Supply Assurance findings into ordered, position-level
+  operational facts. `INVALID` and `MISSING_INPUTS` remain separate evaluation
+  issues; positions without findings are labeled “No attention facts.”
+- Add a Supply Portfolio summary and presentation-only filters without creating
+  portfolio health, risk or status.
+
+### Explicit Portfolio What-if
+
+- Evaluate one user-selected delivery timing, planned delivery quantity or
+  consumption-rate hypothesis at a time against a baseline using the existing
+  deterministic Supply Assurance service.
+- Preserve baseline and alternative results, the declared input change and
+  position identity. No alternative is selected automatically.
+
+### Decision Model foundation
+
+- Add small structured records for the source position, baseline and ordered
+  explicit alternatives. These records preserve existing service results and do
+  not evaluate, rank or recommend decisions.
+
+### Boundaries
+
+- Supply Portfolio Operational Intelligence is deterministic and requires no
+  LLM, RAG, Agent, Supervisor or Business API.
+- No physical aggregation across gases or positions, unit conversion, scoring,
+  ranking, priority, winner selection, recommendation, optimization or automatic
+  scenario search.
+
+## v1.9.0
 
 ### Industrial Gases Foundation
 

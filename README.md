@@ -10,8 +10,8 @@ for trading, procurement, CRM, contract-management or enterprise systems.
 
 Product principle: **Simple for the business user, traceable for the technical user.**
 
-**Current state: v1.9.0 release candidate.** The latest published tag is v1.8.0;
-the v1.9.0 tag has not yet been created.
+**Current state: v1.10.0 release candidate.** The latest published tag is v1.9.0;
+the v1.10.0 tag has not yet been created.
 
 ## Energy / Commercial capabilities
 
@@ -44,8 +44,10 @@ The current screens and capabilities are:
 - **Food & Beverage Supply Assurance:** independent CO₂ and N₂ branches with
   separate installations, units and projections.
 - **Supply Portfolio:** ordered evaluation of independent requests with individual
-  results retained. It does not aggregate physical quantities across gases or
-  select a winner.
+  results retained, existing operational facts surfaced per position, and explicit
+  one-at-a-time what-if comparisons. It does not aggregate physical quantities
+  across gases or positions, rank positions, or select a winner. Its small Decision
+  Model records a baseline and explicit alternatives; it does not choose among them.
 
 ## Available modes
 
@@ -67,8 +69,15 @@ Industrial Gases assurance:
 ```text
 Structured installation data → SupplyAssuranceService → deterministic projection
                                       ↑
-                      Healthcare / Food & Beverage / Portfolio
+              Healthcare / Food & Beverage / Portfolio
+                                              ↓
+                      Operational Attention → explicit Portfolio what-if
 ```
+
+Supply Portfolio what-if evaluates only a user-selected, explicit change with the
+same deterministic Supply Assurance service. This path requires no generation
+LLM, RAG, agent or Supervisor, and provides no scoring, ranking, recommendation,
+optimization or cross-position physical aggregation.
 
 See [ARCHITECTURE.md](docs/ARCHITECTURE.md), [DECISIONS.md](docs/DECISIONS.md), [PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md), and [V1_MVP_SPEC.md](docs/V1_MVP_SPEC.md).
 
