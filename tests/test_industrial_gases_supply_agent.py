@@ -715,6 +715,7 @@ class SupplyAgentTests(unittest.TestCase):
                         rendered.index("<strong>LLM Call #2</strong>"))
         self.assertEqual(result.knowledge_status, "not_requested")
         self.assertEqual(sum(event.stage == "llm_call" for event in recorder.snapshot().events), 2)
+        self.assertEqual(sum(event.stage == "scenario_execution" for event in recorder.snapshot().events), 1)
 
     def test_pipeline_recorder_tracks_combined_query_rag_and_final_stages(self):
         recorder = PerformanceRecorder("combined", "fake", "fake-model", "supply_agent")

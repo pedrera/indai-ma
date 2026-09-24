@@ -28,6 +28,11 @@ from diagnostics import (
 
 
 STAGE_PRESENTATION = {
+    "portfolio_query": ("⌕", "Portfolio Query / Selection"),
+    "session_reference_resolution": ("↪", "Session Reference Resolution"),
+    "portfolio_knowledge_retrieval": ("📚", "Scoped Portfolio Retrieval"),
+    "scenario_execution": ("Δ", "Explicit Scenario Execution"),
+    "citation_validation": ("✓", "Citation / Scope Validation"),
     "document_parsing": ("📄", "Document Parsing"),
     "chunking": ("✂️", "Chunking"),
     "embedding": ("🧬", "Embedding"),
@@ -515,6 +520,43 @@ def _render_supply_agent_timeline(snapshot: PerformanceSnapshot) -> list[str]:
                 """
             )
         )
+        if event.stage == "portfolio_query":
+            parts.append(
+                '<div class="pi-tools"><div class="pi-tool">'
+                f'<small>Resolved item IDs: {escape(str(event.metadata.get("resolved_item_ids", ())))}</small>'
+                f'<small>Matched by: {escape(str(event.metadata.get("matched_by", {})))}</small>'
+                '</div></div>'
+            )
+        elif event.stage == "session_reference_resolution":
+            parts.append(
+                '<div class="pi-tools"><div class="pi-tool">'
+                f'<small>Resolution: {escape(str(event.metadata.get("resolution", "structured_context")))}</small>'
+                f'<small>Focused item: {escape(str(event.metadata.get("focused_item_id") or "none"))}</small>'
+                f'<small>Selected: {escape(str(event.metadata.get("selected_item_ids", ())))}</small>'
+                '</div></div>'
+            )
+        elif event.stage == "portfolio_knowledge_retrieval":
+            parts.append(
+                '<div class="pi-tools"><div class="pi-tool">'
+                f'<small>Item: {escape(str(event.metadata.get("item_id", "unknown")))}</small>'
+                f'<small>Status: {escape(str(event.metadata.get("knowledge_status", "unknown")))}</small>'
+                f'<small>Retrieved chunk IDs: {escape(str(event.metadata.get("retrieved_chunk_ids", ())))}</small>'
+                '</div></div>'
+            )
+        elif event.stage == "scenario_execution":
+            parts.append(
+                '<div class="pi-tools"><div class="pi-tool">'
+                f'<small>Item: {escape(str(event.metadata.get("item_id", "unknown")))}</small>'
+                f'<small>Alternative: {escape(str(event.metadata.get("alternative_id", "pending")))}</small>'
+                '</div></div>'
+            )
+        elif event.stage == "citation_validation":
+            parts.append(
+                '<div class="pi-tools"><div class="pi-tool">'
+                f'<small>Valid: {escape(str(event.metadata.get("valid", "pending")))}</small>'
+                f'<small>Selected scopes: {escape(str(event.metadata.get("selected_item_ids", ())))}</small>'
+                '</div></div>'
+            )
         if event.stage == "tool_execution":
             parts.append(_render_tool_events([event]))
         elif event.stage == "llm_call":

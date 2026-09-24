@@ -47,6 +47,12 @@ from .supply_scenarios import (
     SupplyAssuranceScenarioResult,
     evaluate_supply_assurance_alternative,
 )
+from .portfolio_query import (
+    PortfolioQuery, PortfolioQueryMatch, PortfolioQueryResult,
+    SupplyPortfolioQueryService, SupplyAgentSessionContext,
+    PortfolioItemEvidence, ScopedKnowledgeSource, PortfolioRetrievalFailure,
+    PortfolioEvidenceBundle,
+)
 from .interpretation_models import (
     ExtractedSupplyFacts, ExtractionIssue, ExtractionProvenance,
     IdentityReference, ResolvedSupplyIdentity,
@@ -79,6 +85,9 @@ __all__ = [
     "Finding", "SupplyAssuranceRequest", "SupplyAssuranceResult", "SupplyAssuranceService",
     "SupplyPortfolioItem", "SupplyPortfolioItemResult", "SupplyPortfolioRequest",
     "SupplyPortfolioResult", "SupplyPortfolioService",
+    "PortfolioQuery", "PortfolioQueryMatch", "PortfolioQueryResult",
+    "SupplyPortfolioQueryService", "SupplyAgentSessionContext", "PortfolioItemEvidence",
+    "ScopedKnowledgeSource", "PortfolioRetrievalFailure", "PortfolioEvidenceBundle",
     "OperationalAttentionFact", "OperationalAttentionItem",
     "OperationalAttentionResult", "OperationalAttentionService",
     "DecisionAlternative", "DecisionAnalysis", "DecisionContext", "ExplicitChange",

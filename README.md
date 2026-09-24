@@ -10,8 +10,8 @@ for trading, procurement, CRM, contract-management or enterprise systems.
 
 Product principle: **Simple for the business user, traceable for the technical user.**
 
-**Current state: v1.11.0 release candidate.** The latest published tag is
-v1.10.0; the v1.11.0 tag has not yet been created.
+**Current state: v1.12.0 release candidate.** The published baseline is
+v1.11.1; v1.12.0 has not been released or tagged.
 
 ## Energy / Commercial capabilities
 
@@ -48,12 +48,19 @@ The current screens and capabilities are:
   one-at-a-time what-if comparisons. It does not aggregate physical quantities
   across gases or positions, rank positions, or select a winner. Its small Decision
   Model records a baseline and explicit alternatives; it does not choose among them.
-- **Industrial Knowledge / Supply Agent (v1.11.0 candidate):** an optional grounded
+- **Industrial Knowledge / Supply Agent (v1.11.1):** an optional grounded
   assistant embedded in Supply Portfolio. It uses a fictional, identity-tagged demo
   corpus with the existing local RAG stack, and can explain an existing position,
   retrieve applicable documents, combine both evidence types, or evaluate one
   explicitly requested what-if through the existing scenario evaluator. Structured
   domain facts, cited document chunks and generated interpretation remain distinct.
+- **Portfolio Intelligence (v1.12.0 release candidate):** deterministic filters
+  select ordered positions from existing portfolio results; bounded structured
+  session context resolves unambiguous follow-ups; each position retains its own
+  domain, attention, scenario and documentary evidence. Documentary retrieval and
+  citation checks remain identity-scoped, with only explicitly applicable global
+  Industrial Gases sources shared. What-if remains explicit and single-target.
+  This does not add portfolio totals, rankings, recommendations or health scores.
 
 ## Available modes
 
@@ -86,11 +93,14 @@ LLM, RAG, agent or Supervisor, and provides no scoring, ranking, recommendation,
 optimization or cross-position physical aggregation.
 
 The optional Supply Agent is a separate path. It requires a configured generation
-provider and local embedding service for documentary retrieval. Its demo corpus is
-fictional and is scoped by customer, site, application, gas product and installation
-metadata before semantic ranking. The Supply Agent explains evidence; it does not
-calculate supply values, recommend actions, rank alternatives or generate scenarios
-automatically. The existing deterministic flows remain usable without it.
+provider for explanations and a local embedding service for documentary retrieval.
+Its demo corpus is fictional and is scoped by customer, site, application, gas
+product and installation metadata before semantic ranking. Portfolio filtering is
+deterministic and authoritative; item evidence remains separate. Session context is
+bounded structured identifiers and filters, not free-form model memory. The agent
+explains evidence; it does not calculate supply values, recommend actions, rank
+alternatives or generate scenarios automatically. The existing deterministic flows
+remain usable without it. v1.12.0 is a release candidate, not a published release.
 
 See [ARCHITECTURE.md](docs/ARCHITECTURE.md), [DECISIONS.md](docs/DECISIONS.md), [PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md), and [V1_MVP_SPEC.md](docs/V1_MVP_SPEC.md).
 

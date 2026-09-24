@@ -73,6 +73,7 @@ from industrial_gases.supply_agent import (
     SupplyAgent,
     SupplyAgentRequest,
 )
+from industrial_gases.portfolio_query import SupplyAgentSessionContext
 
 
 GAS_TYPE_LABELS = {
@@ -132,6 +133,8 @@ if "procurement_agent_metadata" not in st.session_state:
     st.session_state.procurement_agent_metadata = None
 if "supply_agent_result" not in st.session_state:
     st.session_state.supply_agent_result = None
+if "supply_agent_context" not in st.session_state:
+    st.session_state.supply_agent_context = SupplyAgentSessionContext()
 if "generation_job" not in st.session_state:
     st.session_state.generation_job = None
 if "generation_kind" not in st.session_state:
@@ -1080,8 +1083,9 @@ def start_supervisor_analysis(request: str, use_synthesis: bool = False) -> None
     job.start()
 
 
-def start_supply_agent(portfolio, attention, item_id: str, question: str) -> None:
-    """Run the position-bound Industrial Supply Agent through AgentJob."""
+def start_supply_agent(portfolio, attention, item_id: str | None, question: str,
+                       session_context: SupplyAgentSessionContext | None = None) -> None:
+    """Run Supply Agent over the deterministic selected portfolio scope."""
     operation_id = uuid4().hex[:8]
     recorder = PerformanceRecorder(operation_id, selected_provider, selected_model or "none", "supply_agent")
     try:
@@ -1093,7 +1097,7 @@ def start_supply_agent(portfolio, attention, item_id: str, question: str) -> Non
             LMStudioEmbeddingProvider(model=get_embedding_model_name()), recorder,
         )
         runner = SupplyAgent(
-            SupplyAgentRequest(question, item_id), portfolio, attention, knowledge,
+            SupplyAgentRequest(question, item_id, session_context or SupplyAgentSessionContext()), portfolio, attention, knowledge,
             ProviderSupplyDecisionModel(provider), recorder,
         )
         job = AgentJob(
@@ -1298,6 +1302,8 @@ def finish_generation(result: GenerationResult) -> None:
     if result.status == GenerationStatus.COMPLETED:
         if generation_kind == "supply_agent":
             st.session_state.supply_agent_result = result.domain_result
+            if result.domain_result is not None and result.domain_result.session_context is not None:
+                st.session_state.supply_agent_context = result.domain_result.session_context
         elif generation_kind == "supervisor":
             st.session_state.supervisor_result = result.structured_result
         elif generation_kind == "business_api":

@@ -2,9 +2,9 @@
 
 ## Current status
 
-The latest released version is **v1.10.0**. The current working tree contains the
-**v1.11.0 Industrial AI release candidate**, which has not yet been tagged or
-published.
+The latest published baseline is **v1.11.1**. The current working tree contains
+the **v1.12.0 Portfolio Intelligence release candidate**, which has not been
+tagged or published.
 This roadmap distinguishes shipped capabilities from future candidates; candidate
 items are not commitments or claims about the current implementation.
 
@@ -39,15 +39,22 @@ items are not commitments or claims about the current implementation.
   an optional grounded Supply Agent embedded in Supply Portfolio. The agent reads
   existing domain and attention results, retrieves applicable documents, and
   delegates explicit what-if calculations to the existing scenario evaluator.
+- **v1.11.1 — Real-provider corrective release:** grounded extraction corrections
+  and evaluation harness support, preserving strict DTO and grounding behavior.
+- **v1.12.0 release candidate — Portfolio Intelligence:** deterministic ordered
+  portfolio selection, independent multi-position evidence, bounded structured
+  follow-up context, per-item documentary retrieval/citation scopes, explicit
+  single-item what-if and Supply Portfolio / Pipeline Inspector presentation.
+  No cross-position physical aggregation or recommendation is included.
 
 ## Future direction
 
 Candidate capabilities are not commitments or claims about the current
 implementation unless described in the completed releases above:
 
-- **v1.12.0 — Multi-Agent Industrial Intelligence:** candidate direction for
-  additional industrial agents, coordination and cross-agent workflows; scope is
-  not yet designed.
+- **Future industrial decision support:** candidate direction only; no additional
+  agents, coordination, cross-position aggregation or decision automation is
+  implied by the current release candidate.
 - **v2.0.0 — Industrial Decision Intelligence:** longer-term direction, not a
   commitment or an existing capability.
 

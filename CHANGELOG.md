@@ -4,6 +4,43 @@ This maintained changelog begins with v1.9.0. Earlier release history is recorde
 in annotated Git tags and selected historical release notes; the repository does
 not reconstruct every development milestone as a release.
 
+## v1.12.0 — Portfolio Intelligence (release candidate)
+
+### Portfolio-aware Supply Agent
+
+- Add immutable deterministic portfolio query contracts for exact item,
+  customer, site, application, gas product, installation, evaluation-status,
+  finding-code and attention-fact filters. Matching preserves source order and
+  records the structured fields that caused each match.
+- Add independent per-position evidence bundles that retain original assurance
+  results, requests, identities, attention findings, scoped sources, explicit
+  scenarios and per-scope retrieval failures.
+- Add bounded structured session context for selected item IDs, a unique focus,
+  prior filter contract and a single explicit what-if target. Ambiguous and stale
+  follow-ups request clarification; current explicit identity filters supersede
+  prior context.
+- Extend Supply Agent with deterministic attention/evaluation selection, identity
+  questions, multi-position explanations and per-selected-item documentary
+  retrieval. Exact citations are checked against per-item source scopes; approved
+  explicitly global Industrial Gases policy remains separately identified.
+- Keep explicit what-if evaluation limited to one resolved item and the existing
+  deterministic scenario evaluator. Portfolio selection questions can be
+  answered without a generation call.
+- Extend Supply Portfolio UI and Pipeline Inspector to show resolved items,
+  focused session scope, per-item facts and sources, explicit scenario execution,
+  retrieval failures and citation validation.
+
+### Boundaries and limitations
+
+- Portfolio positions remain independent. No physical totals, portfolio status,
+  severity, priority, scoring, ranking, winner, recommendation, optimization,
+  batch what-if, automatic scenarios or unit conversion are introduced.
+- The model explains observed structured and retrieved evidence; it is not
+  authoritative for deterministic selection, calculations, findings, identity,
+  provenance or citation scope. Retrieval or citation failure stays attached to
+  its item and does not erase other items' evidence.
+- This is a release candidate; v1.12.0 has not been tagged or published.
+
 ## v1.11.0 — Industrial AI (release candidate)
 
 ### Industrial Knowledge and Supply Agent
