@@ -114,7 +114,7 @@ PROCUREMENT_DETERMINISTIC_PIPELINE_STAGES = (
 )
 SUPPLY_AGENT_PIPELINE_STAGES = (
     "agent_start", "prompt_build", "provider_start", "http_request",
-    "model_inference", "parse_validation", "agent_decision", "tool_execution",
+    "model_inference", "llm_call", "parse_validation", "agent_decision", "tool_execution",
     "document_parsing", "chunking", "embedding", "index_persistence",
     "query_embedding", "vector_search", "retrieved_context", "final_response",
     "agent_final",

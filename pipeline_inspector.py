@@ -69,6 +69,8 @@ STATUS_LABELS = {
     "running": "En curso",
     "completed": "Completada",
     "failed": "Fallida",
+    "provider_error": "Error del proveedor",
+    "needs_input": "Faltan datos",
     "skipped": "Omitida",
     "cancelled": "Cancelada",
     "timed_out": "Timeout",
@@ -482,6 +484,56 @@ def _render_agent_timeline(snapshot: PerformanceSnapshot) -> list[str]:
     return parts
 
 
+def _render_supply_agent_timeline(snapshot: PerformanceSnapshot) -> list[str]:
+    """Render Supply Agent stages in observed time order, including bounded preflight RAG."""
+    parts: list[str] = []
+    call_metrics = {
+        call.call_number: call for call in build_operation_metrics(snapshot).llm_calls
+    }
+    events = sorted(
+        (event for event in snapshot.events if event.stage in SUPPLY_AGENT_PIPELINE_STAGES),
+        key=lambda event: (event.started_at is None, event.started_at or float("inf")),
+    )
+    for event in events:
+        icon, label = STAGE_PRESENTATION.get(event.stage, ("·", event.stage))
+        if event.stage == "agent_start":
+            label = "SupplyAgent"
+        if event.stage == "llm_call":
+            call_number = int(event.metadata.get("call_number", event.round or 0))
+            label = f"LLM Call #{call_number}"
+        elif event.stage == "tool_execution":
+            label = str(event.metadata.get("tool_name", label))
+        parts.append(
+            dedent(
+                f"""\
+                <div class="pi-stage pi-stage-{event.status.value}">
+                  <div class="pi-dot">{icon}</div>
+                  <div class="pi-stage-copy"><strong>{escape(label)}</strong></div>
+                  <span class="pi-state">{STATUS_LABELS.get(event.status.value, event.status.value)}</span>
+                  <time>{_format_duration(_event_duration(event))}</time>
+                </div>
+                """
+            )
+        )
+        if event.stage == "tool_execution":
+            parts.append(_render_tool_events([event]))
+        elif event.stage == "llm_call":
+            metric = call_metrics.get(int(event.metadata.get("call_number", event.round or 0)))
+            if metric:
+                inference = (
+                    _format_duration(metric.inference_time)
+                    if metric.inference_time is not None else "unavailable"
+                )
+                parts.append(
+                    '<div class="pi-tools"><div class="pi-tool">'
+                    f'<strong>{escape(metric.purpose)}</strong>'
+                    f'<small>Request wall: {_format_duration(metric.request_wall_time)} · '
+                    f'Response stream: {_format_duration(metric.response_stream_time or 0)} · '
+                    f'Server inference: {inference}</small></div></div>'
+                )
+    return parts
+
+
 def _render_risk_timeline(snapshot):
     parts = []
     for event in snapshot.events:
@@ -603,7 +655,10 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
             for stage in pipeline_stages
         }
         timeline_parts = ['<div class="pi-timeline">']
-        if snapshot.mode == "risk_agent":
+        if snapshot.mode == "supply_agent":
+            timeline_parts.extend(_render_supply_agent_timeline(snapshot))
+            pipeline_stages = ()
+        elif snapshot.mode == "risk_agent":
             timeline_parts.extend(_render_risk_timeline(snapshot))
             pipeline_stages = ()
         if snapshot.mode in {

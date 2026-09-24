@@ -1,7 +1,14 @@
+import json
+import time
 import unittest
-from unittest.mock import Mock
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 from streamlit.testing.v1 import AppTest
+from llm_client import LLMResponse
+
+
+APP = Path(__file__).resolve().parents[1] / "app.py"
 
 
 def _render_portfolio_with_agent(callback):
@@ -39,6 +46,66 @@ class SupplyAgentUITests(unittest.TestCase):
         self.assertFalse(app.exception)
         self.assertIn("Supply Agent", "\n".join(item.value for item in app.subheader))
         self.assertTrue(app.button(key="supply_agent_start").disabled)
+
+    def test_app_supply_agent_keeps_the_active_recorder_through_completion(self):
+        class FakeProvider:
+            provider_name = "lmstudio"
+            model = "fixture-model"
+
+            def __init__(self, recorder):
+                self.recorder = recorder
+                self.calls = 0
+
+            def generate_response(self, messages, **kwargs):
+                self.calls += 1
+                time.sleep(0.03)
+                return LLMResponse(json.dumps({
+                    "action": "finish",
+                    "answer": "The existing operational projection remains available.",
+                    "decision_summary": "Report operational result",
+                }))
+
+            def cancel(self):
+                pass
+
+        provider_holder = []
+
+        def provider_factory(*args, recorder=None, **kwargs):
+            provider = FakeProvider(recorder)
+            provider_holder.append(provider)
+            return provider
+
+        with patch("llm_client.get_supported_providers", return_value=["lmstudio"]), \
+             patch("llm_client.get_default_provider_name", return_value="lmstudio"), \
+             patch("llm_client.get_available_models", return_value=["fixture-model"]), \
+             patch("llm_client.get_default_model_name", return_value="fixture-model"), \
+             patch("llm_client.get_llm_provider", side_effect=provider_factory):
+            app = AppTest.from_file(APP, default_timeout=30).run()
+            app.radio(key="selected_mode").set_value("Supply Portfolio").run()
+            app.text_area(key="supply_agent_question").set_value(
+                "What is the existing operational projection?"
+            ).run()
+            app.button(key="supply_agent_start").click().run()
+            for _ in range(12):
+                if app.session_state["supply_agent_result"] is not None:
+                    break
+                time.sleep(0.03)
+                app.run()
+
+        self.assertFalse(app.exception)
+        result = app.session_state["supply_agent_result"]
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status.value, "completed")
+        self.assertEqual(len(provider_holder), 1)
+        operation_id = app.session_state["execution_mode_ids"]["Supply Portfolio"]
+        recorder = app.session_state["pipeline_recorder"]
+        self.assertEqual(recorder.operation_id, operation_id)
+        snapshot = app.session_state["execution_views"][operation_id].snapshot
+        self.assertGreater(snapshot.elapsed_seconds, 0.02)
+        stages = {event.stage for event in snapshot.events}
+        self.assertIn("prompt_build", stages)
+        self.assertIn("parse_validation", stages)
+        self.assertIn("agent_final", stages)
 
 
 if __name__ == "__main__":

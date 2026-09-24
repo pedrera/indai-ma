@@ -18,6 +18,10 @@ not reconstruct every development milestone as a release.
 - Add an optional Supply Agent inside Supply Portfolio. It can read the existing
   position and attention result, search applicable knowledge, and evaluate one
   user-requested what-if through the existing deterministic scenario evaluator.
+- Documentary-intent questions perform identity-scoped retrieval before the
+  answer can be finalized; without retrieved chunks, documentary claims and
+  unverified chunk references are replaced with an explicit evidence-unavailable
+  response while structured operational results remain separate.
 - Keep operational projection, findings, documentary chunks and LLM explanation
   as separate structured evidence with source references and tool trace.
 - Distinguish domain `INVALID` / `MISSING_INPUTS`, no applicable documents,
@@ -31,6 +35,8 @@ not reconstruct every development milestone as a release.
   supply facts, convert units, create thresholds, recommend, rank, optimize,
   aggregate gases or search scenarios automatically.
 - FAST remains offline and does not invoke generation LLMs.
+- Supply Agent diagnostics retain the active operation recorder and distinguish
+  executed stages from stages skipped because no knowledge retrieval occurred.
 
 ## v1.10.0 — Operational Intelligence (release candidate)
 

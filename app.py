@@ -1084,8 +1084,6 @@ def start_supply_agent(portfolio, attention, item_id: str, question: str) -> Non
     """Run the position-bound Industrial Supply Agent through AgentJob."""
     operation_id = uuid4().hex[:8]
     recorder = PerformanceRecorder(operation_id, selected_provider, selected_model or "none", "supply_agent")
-    recorder.record_stage("prompt_build", message_count=1, approximate_prompt_chars=len(question),
-                          item_id=item_id)
     try:
         provider = get_llm_provider(
             selected_provider, selected_model, recorder=recorder,
@@ -1106,6 +1104,7 @@ def start_supply_agent(portfolio, attention, item_id: str, question: str) -> Non
         recorder.finish("failed")
         raise
     st.session_state.supply_agent_result = None
+    st.session_state.pipeline_recorder = recorder
     st.session_state.generation_job = job
     st.session_state.generation_kind = "supply_agent"
     st.session_state.generation_notice = None
