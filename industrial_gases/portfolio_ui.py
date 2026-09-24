@@ -20,6 +20,7 @@ from .models import (
 from .portfolio import (
     SupplyPortfolioItem,
     SupplyPortfolioRequest,
+    SupplyPortfolioResult,
     SupplyPortfolioService,
 )
 from .operational_attention import (
@@ -192,6 +193,12 @@ def _canonical_portfolio_request() -> SupplyPortfolioRequest:
         ),
     )
     return SupplyPortfolioRequest(items)
+
+
+def evaluate_demo_supply_portfolio() -> tuple[SupplyPortfolioResult, OperationalAttentionResult]:
+    """Build the existing independent demo portfolio once through domain services."""
+    portfolio = SupplyPortfolioService().evaluate(_canonical_portfolio_request())
+    return portfolio, OperationalAttentionService().project(portfolio)
 
 
 def _format_number(value: Decimal | int | float) -> str:
@@ -511,9 +518,7 @@ def render_supply_portfolio(on_run_supply_agent=None) -> None:
         "This view surfaces operational facts already produced by each independent supply "
         "assessment. It does not rank positions or recommend actions."
     )
-    request = _canonical_portfolio_request()
-    portfolio = SupplyPortfolioService().evaluate(request)
-    attention: OperationalAttentionResult = OperationalAttentionService().project(portfolio)
+    portfolio, attention = evaluate_demo_supply_portfolio()
 
     completed = tuple(item for item in attention.items if item.evaluation_status == "COMPLETED")
     with_facts = tuple(item for item in completed if item.facts)

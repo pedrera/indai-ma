@@ -139,12 +139,13 @@ class ExecutionUXTests(unittest.TestCase):
         with patch('llm_client.get_available_models', return_value=[]):
             app = AppTest.from_file(APP, default_timeout=20).run()
             modes = app.radio(key='selected_mode').options
-            self.assertEqual(len(modes), 11)
+            self.assertEqual(len(modes), 12)
+            self.assertEqual(modes[0], 'indAI MA')
             self.assertIn('Healthcare Supply Assurance', modes)
             self.assertIn('Food & Beverage Supply Assurance', modes)
             self.assertIn('Supply Portfolio', modes)
-            self.assertEqual(app.radio(key='selected_mode').value, 'Business')
-            self.assertTrue(any('¿Qué quieres analizar?' in item.label for item in app.text_area))
+            self.assertEqual(app.radio(key='selected_mode').value, 'indAI MA')
+            self.assertTrue(any('Pregunta sobre operaciones' in item.placeholder for item in app.chat_input))
             for mode in modes:
                 app.radio(key='selected_mode').set_value(mode).run()
                 self.assertFalse(app.exception, mode)
@@ -160,6 +161,7 @@ class ExecutionUXTests(unittest.TestCase):
     def test_business_demos_populate_editable_request_without_execution(self):
         with patch('llm_client.get_available_models', return_value=[]):
             app = AppTest.from_file(APP, default_timeout=20).run()
+            app.radio(key='selected_mode').set_value('Business').run()
             self.assertEqual(len(DEMO_SCENARIOS), 4)
             self.assertEqual(len({demo.key for demo in DEMO_SCENARIOS}), 4)
             for demo in DEMO_SCENARIOS:
@@ -174,6 +176,7 @@ class ExecutionUXTests(unittest.TestCase):
         with patch('llm_client.get_available_models', return_value=[]), patch(
             'clipboard_ui.render_clipboard_button', side_effect=lambda text, label, **kw: copied.append((label, text))):
             app = AppTest.from_file(APP, default_timeout=20).run()
+            app.radio(key='selected_mode').set_value('Business').run()
             payload = {
                 'operation_id': 'api-op', 'status': 'completed', 'summary': 'SHORT 25 GWh',
                 'metrics': [], 'explanations': [], 'evidence': [], 'provenance': [], 'warnings': [],
@@ -194,6 +197,7 @@ class ExecutionUXTests(unittest.TestCase):
     def test_business_api_renders_recommendation(self):
         with patch('llm_client.get_available_models', return_value=[]):
             app = AppTest.from_file(APP, default_timeout=20).run()
+            app.radio(key='selected_mode').set_value('Business').run()
             payload = {
                 'operation_id': 'api-recommendation', 'status': 'completed', 'summary': 'Resumen',
                 'metrics': [], 'explanations': [], 'evidence': [], 'provenance': [], 'warnings': [],

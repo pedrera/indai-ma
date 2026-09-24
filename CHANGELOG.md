@@ -4,7 +4,42 @@ This maintained changelog begins with v1.9.0. Earlier release history is recorde
 in annotated Git tags and selected historical release notes; the repository does
 not reconstruct every development milestone as a release.
 
-## v1.12.0 — Portfolio Intelligence (release candidate)
+## v1.13.0 — Conversational Workspace (release candidate)
+
+### Conversation-first industrial workspace
+
+- Make **indAI MA** the default application experience. Users can ask about
+  operational positions, applicable documents and explicit what-if scenarios in
+  one conversation; previous specialized demo and technical modes remain under
+  **Developer / Demo views**.
+- Route requests through deterministic portfolio selection and the existing
+  Supply Agent, identity-scoped Industrial Knowledge retrieval and single-item
+  scenario evaluator. Bounded structured session context resolves follow-ups;
+  explicit current identity takes precedence and ambiguous/stale references ask
+  for clarification.
+- Render position-level results, attention facts, evaluation issues, scoped
+  document citations and baseline/alternative projections as structured cards.
+  Keep provenance, tool trace and timings behind expandable diagnostics.
+- Preserve independent evidence per position and avoid repeated domain-read or
+  retrieval tool output in the workspace model context. Provider or retrieval
+  failures do not erase the structured evidence already collected.
+- Guard against unsupported stockout or capacity-overflow claims. A
+  `safety_stock_breach` remains distinct from a physical stockout; structured
+  projections and attention facts remain authoritative.
+
+### Boundaries and limitations
+
+- This is a UX/orchestration layer over existing capabilities. It adds no supply
+  formulas, thresholds, totals, portfolio health state, ranking, priority,
+  recommendation, optimization, logistics planning, unit conversion, automatic
+  scenarios or autonomous agent loop.
+- A configured generation model is used for explanations requiring synthesis;
+  deterministic portfolio lists and explicit scenario calculations remain
+  generation-independent. Documentary responses still require eligible scoped
+  sources and valid citations.
+- v1.13.0 is a release candidate; it has not been released or tagged.
+
+## v1.12.0 — Portfolio Intelligence
 
 ### Portfolio-aware Supply Agent
 
@@ -39,7 +74,7 @@ not reconstruct every development milestone as a release.
   authoritative for deterministic selection, calculations, findings, identity,
   provenance or citation scope. Retrieval or citation failure stays attached to
   its item and does not erase other items' evidence.
-- This is a release candidate; v1.12.0 has not been tagged or published.
+- v1.12.0 is the published baseline for the v1.13.0 release candidate.
 
 ## v1.11.0 — Industrial AI (release candidate)
 

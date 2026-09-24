@@ -2,8 +2,8 @@
 
 ## Current status
 
-The latest published baseline is **v1.11.1**. The current working tree contains
-the **v1.12.0 Portfolio Intelligence release candidate**, which has not been
+The latest published baseline is **v1.12.0**. The current working tree contains
+the **v1.13.0 Conversational Workspace release candidate**, which has not been
 tagged or published.
 This roadmap distinguishes shipped capabilities from future candidates; candidate
 items are not commitments or claims about the current implementation.
@@ -41,11 +41,17 @@ items are not commitments or claims about the current implementation.
   delegates explicit what-if calculations to the existing scenario evaluator.
 - **v1.11.1 — Real-provider corrective release:** grounded extraction corrections
   and evaluation harness support, preserving strict DTO and grounding behavior.
-- **v1.12.0 release candidate — Portfolio Intelligence:** deterministic ordered
+- **v1.12.0 — Portfolio Intelligence:** deterministic ordered
   portfolio selection, independent multi-position evidence, bounded structured
   follow-up context, per-item documentary retrieval/citation scopes, explicit
   single-item what-if and Supply Portfolio / Pipeline Inspector presentation.
   No cross-position physical aggregation or recommendation is included.
+- **v1.13.0 release candidate — Conversational Workspace:** conversation-first
+  default entry point that routes requests over existing deterministic portfolio
+  selection, per-position evidence, identity-scoped documents and explicit
+  single-item scenarios. Bounded follow-up context and structured cards preserve
+  evidence boundaries; specialized demo views remain reachable in secondary
+  navigation. No new calculations, aggregation or recommendations are added.
 
 ## Future direction
 

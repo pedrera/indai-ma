@@ -261,7 +261,11 @@ class PortfolioSupplyAgentTests(unittest.TestCase):
                 return "retrieved", (RetrievedChunk(chunk, 1.0), RetrievedChunk(global_chunk, 0.5))
 
         class ScopedSummaryModel:
+            def __init__(inner):
+                inner.calls = 0
+
             def decide(inner, question, state, tools, timeout_seconds=None):
+                inner.calls += 1
                 items = state["portfolio_items"]
                 sources = {
                     item["identity"]["gas_product_id"]: item["knowledge_sources"]
@@ -280,13 +284,16 @@ class PortfolioSupplyAgentTests(unittest.TestCase):
                 )
 
         question = "¿Qué información documental es relevante para las posiciones con brecha de stock de seguridad?"
+        model = ScopedSummaryModel()
         result = SupplyAgent(
             SupplyAgentRequest(question), self.portfolio, self.attention,
-            ScopedKnowledge(), ScopedSummaryModel(),
+            ScopedKnowledge(), model,
         ).run()
         self.assertEqual(result.portfolio_query.item_ids,
                          ("hospital-costa-sur-o2", "alimentos-sur-malaga-co2"))
-        self.assertEqual(result.status, SupplyAgentStatus.COMPLETED, result.answer)
+        self.assertEqual(result.status, SupplyAgentStatus.COMPLETED)
+        self.assertIsNone(result.answer)
+        self.assertEqual(model.calls, 0)
         by_id = {item.item.item_id: item for item in result.evidence_bundle.items}
         self.assertTrue(by_id["hospital-costa-sur-o2"].knowledge_sources)
         self.assertTrue(by_id["alimentos-sur-malaga-co2"].knowledge_sources)
@@ -295,7 +302,7 @@ class PortfolioSupplyAgentTests(unittest.TestCase):
             for item in result.evidence_bundle.items for source in item.knowledge_sources
         ))
         self.assertEqual(len(result.evidence_bundle.global_sources), 1)
-        self.assertNotIn("N2", result.answer)
+        self.assertNotIn("alimentos-sur-malaga-n2", result.portfolio_query.item_ids)
 
     def test_invented_and_uncited_multi_position_documentary_claims_are_rejected(self):
         result = SupplyPortfolioQueryService().select(

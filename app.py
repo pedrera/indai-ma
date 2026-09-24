@@ -66,7 +66,9 @@ from application_models import AnalysisRequest
 from application_service import AnalysisService
 from industrial_gases.healthcare_ui import render_healthcare_supply_assurance
 from industrial_gases.food_beverage_ui import render_food_beverage_supply_assurance
-from industrial_gases.portfolio_ui import render_supply_portfolio
+from industrial_gases.portfolio_ui import evaluate_demo_supply_portfolio, render_supply_portfolio
+from industrial_gases.conversational_workspace import ConversationalWorkspaceOrchestrator, WorkspaceResponse
+from industrial_gases.conversational_workspace_ui import render_conversational_workspace
 from industrial_gases.industrial_knowledge import demo_knowledge_service
 from industrial_gases.supply_agent import (
     ProviderSupplyDecisionModel,
@@ -135,6 +137,12 @@ if "supply_agent_result" not in st.session_state:
     st.session_state.supply_agent_result = None
 if "supply_agent_context" not in st.session_state:
     st.session_state.supply_agent_context = SupplyAgentSessionContext()
+if "workspace_messages" not in st.session_state:
+    st.session_state.workspace_messages = []
+if "workspace_context" not in st.session_state:
+    st.session_state.workspace_context = SupplyAgentSessionContext()
+if "workspace_pending_prompt" not in st.session_state:
+    st.session_state.workspace_pending_prompt = None
 if "generation_job" not in st.session_state:
     st.session_state.generation_job = None
 if "generation_kind" not in st.session_state:
@@ -181,96 +189,94 @@ default_provider_index = (
 )
 
 with st.sidebar:
-    st.header("Advanced / Technical")
-    selected_mode = st.radio(
-        "Modo",
-        ("Business", "Healthcare Supply Assurance", "Food & Beverage Supply Assurance", "Supply Portfolio", "Chat", "Gas B2B Portfolio Analysis", "ProcurementAgent", "CommercialAgent", "RiskAgent", "Multi-Agent Supervisor", "Evaluation"),
-        key="selected_mode",
-        disabled=generation_active,
-    )
-    selected_provider = st.selectbox(
-        "Proveedor LLM",
-        provider_options,
-        index=default_provider_index,
-        key="selected_provider",
-        disabled=generation_active,
-    )
+    with st.expander("Developer / Demo views", expanded=False):
+        selected_mode = st.radio(
+            "Workspace or specialized view",
+            ("indAI MA", "Business", "Healthcare Supply Assurance", "Food & Beverage Supply Assurance", "Supply Portfolio", "Chat", "Gas B2B Portfolio Analysis", "ProcurementAgent", "CommercialAgent", "RiskAgent", "Multi-Agent Supervisor", "Evaluation"),
+            key="selected_mode",
+            disabled=generation_active,
+        )
+        selected_provider = st.selectbox(
+            "Proveedor LLM",
+            provider_options,
+            index=default_provider_index,
+            key="selected_provider",
+            disabled=generation_active,
+        )
 
-    try:
-        available_models = get_available_models(selected_provider)
-        default_model = get_default_model_name(selected_provider)
-        default_model_index = (
-            available_models.index(default_model)
-            if default_model in available_models
-            else 0
-        )
-        selected_model = st.selectbox(
-            "Modelo",
-            available_models,
-            index=default_model_index,
-            key=f"selected_model_{selected_provider}",
-            disabled=generation_active,
-        )
-    except ValueError as error:
-        st.error(str(error))
-        selected_model = None
+        try:
+            available_models = get_available_models(selected_provider)
+            default_model = get_default_model_name(selected_provider)
+            default_model_index = (
+                available_models.index(default_model)
+                if default_model in available_models
+                else 0
+            )
+            selected_model = st.selectbox(
+                "Modelo",
+                available_models,
+                index=default_model_index,
+                key=f"selected_model_{selected_provider}",
+                disabled=generation_active,
+            )
+        except ValueError as error:
+            st.error(str(error))
+            selected_model = None
 
-    runtime_defaults: LLMRuntimeConfig = st.session_state.llm_runtime_config
-    with st.expander("Configuración avanzada del LLM"):
-        max_output_tokens = st.number_input(
-            "Max output tokens",
-            min_value=32,
-            max_value=8192,
-            value=runtime_defaults.max_output_tokens,
-            step=32,
-            key="llm_max_output_tokens",
-            disabled=generation_active,
-            help=(
-                "Límite de salida utilizado por proveedores que diferencian "
-                "output tokens."
-            ),
+        runtime_defaults: LLMRuntimeConfig = st.session_state.llm_runtime_config
+        with st.expander("Configuración avanzada del LLM"):
+            max_output_tokens = st.number_input(
+                "Max output tokens",
+                min_value=32,
+                max_value=8192,
+                value=runtime_defaults.max_output_tokens,
+                step=32,
+                key="llm_max_output_tokens",
+                disabled=generation_active,
+                help=(
+                    "Límite de salida utilizado por proveedores que diferencian "
+                    "output tokens."
+                ),
+            )
+            max_tokens = st.number_input(
+                "Max tokens",
+                min_value=32,
+                max_value=8192,
+                value=runtime_defaults.max_tokens,
+                step=32,
+                key="llm_max_tokens",
+                disabled=generation_active,
+                help="Límite máximo de tokens generados por el modelo.",
+            )
+            timeout_seconds = st.number_input(
+                "Timeout (segundos)",
+                min_value=10,
+                max_value=900,
+                value=runtime_defaults.timeout_seconds,
+                step=10,
+                key="llm_timeout_seconds",
+                disabled=generation_active,
+                help="Tiempo máximo permitido para completar la operación.",
+            )
+            enable_thinking = st.toggle(
+                "Thinking",
+                value=runtime_defaults.enable_thinking,
+                key="llm_enable_thinking",
+                disabled=generation_active,
+                help=(
+                    "Activa o desactiva el modo de razonamiento en modelos "
+                    "compatibles."
+                ),
+            )
+        st.session_state.llm_runtime_config = LLMRuntimeConfig(
+            max_output_tokens=int(max_output_tokens),
+            max_tokens=int(max_tokens),
+            timeout_seconds=int(timeout_seconds),
+            enable_thinking=enable_thinking,
         )
-        max_tokens = st.number_input(
-            "Max tokens",
-            min_value=32,
-            max_value=8192,
-            value=runtime_defaults.max_tokens,
-            step=32,
-            key="llm_max_tokens",
-            disabled=generation_active,
-            help="Límite máximo de tokens generados por el modelo.",
-        )
-        timeout_seconds = st.number_input(
-            "Timeout (segundos)",
-            min_value=10,
-            max_value=900,
-            value=runtime_defaults.timeout_seconds,
-            step=10,
-            key="llm_timeout_seconds",
-            disabled=generation_active,
-            help="Tiempo máximo permitido para completar la operación.",
-        )
-        enable_thinking = st.toggle(
-            "Thinking",
-            value=runtime_defaults.enable_thinking,
-            key="llm_enable_thinking",
-            disabled=generation_active,
-            help=(
-                "Activa o desactiva el modo de razonamiento en modelos "
-                "compatibles."
-            ),
-        )
-    st.session_state.llm_runtime_config = LLMRuntimeConfig(
-        max_output_tokens=int(max_output_tokens),
-        max_tokens=int(max_tokens),
-        timeout_seconds=int(timeout_seconds),
-        enable_thinking=enable_thinking,
-    )
 
-    if st.button(
-        "Nueva conversación",
-        width="stretch",
-        disabled=generation_active,
+    if selected_mode != "indAI MA" and st.button(
+        "Nueva conversación", width="stretch", disabled=generation_active,
     ):
         st.session_state.messages = []
         st.rerun()
@@ -1118,6 +1124,56 @@ def start_supply_agent(portfolio, attention, item_id: str | None, question: str,
     job.start()
 
 
+def start_conversational_workspace(question: str, session_context: SupplyAgentSessionContext) -> None:
+    """Start a conversation turn over the existing evaluated demo portfolio."""
+    operation_id = uuid4().hex[:8]
+    recorder = PerformanceRecorder(
+        operation_id, selected_provider, selected_model or "none", "conversational_workspace",
+    )
+    try:
+        portfolio, attention = evaluate_demo_supply_portfolio()
+        provider = None
+        if selected_model is not None:
+            try:
+                provider = get_llm_provider(
+                    selected_provider, selected_model, recorder=recorder,
+                    runtime_config=st.session_state.llm_runtime_config,
+                )
+            except ValueError:
+                # Keep deterministic portfolio evidence available when local
+                # provider configuration is missing; generation-required turns
+                # will surface the existing provider-unavailable boundary.
+                provider = None
+        decision_model = ProviderSupplyDecisionModel(provider) if provider is not None else None
+        knowledge = lambda: demo_knowledge_service(
+            LMStudioEmbeddingProvider(model=get_embedding_model_name()), recorder,
+        )
+        orchestrator = ConversationalWorkspaceOrchestrator(
+            portfolio=portfolio,
+            attention=attention,
+            knowledge=knowledge,
+            decision_model=decision_model,
+            session_context=session_context,
+            recorder=recorder,
+        )
+        job = AgentJob(
+            orchestrator, question,
+            st.session_state.llm_runtime_config.timeout_seconds,
+            provider,
+        )
+    except Exception:
+        recorder.finish("failed")
+        raise
+    st.session_state.pipeline_recorder = recorder
+    st.session_state.generation_job = job
+    st.session_state.generation_kind = "conversational_workspace"
+    st.session_state.generation_notice = None
+    st.session_state.operation_started_at = perf_counter()
+    st.session_state.operation_id = operation_id
+    remember_execution_start(recorder)
+    job.start()
+
+
 def start_business_api_analysis(request: str, alternative_evaluation=None) -> None:
     operation_id = uuid4().hex[:8]
     recorder = PerformanceRecorder(operation_id, "api", "remote", "business_api")
@@ -1282,6 +1338,8 @@ def finish_generation(result: GenerationResult) -> None:
                 text = domain.summary
             elif generation_kind == "supply_agent" and domain is not None:
                 text = domain.answer or ""
+            elif generation_kind == "conversational_workspace" and domain is not None:
+                text = domain.explanation or ""
             elif generation_kind in {"gas_analysis", "gas_documentary"}:
                 domain = st.session_state.gas_analysis_result or st.session_state.gas_documentary_result
                 text = build_response_clipboard_text(domain) if domain is not None else text
@@ -1304,6 +1362,21 @@ def finish_generation(result: GenerationResult) -> None:
             st.session_state.supply_agent_result = result.domain_result
             if result.domain_result is not None and result.domain_result.session_context is not None:
                 st.session_state.supply_agent_context = result.domain_result.session_context
+        elif generation_kind == "conversational_workspace":
+            response: WorkspaceResponse = result.domain_result
+            submitted_question = st.session_state.workspace_pending_prompt
+            st.session_state.workspace_messages.append({
+                "role": "assistant",
+                "question": submitted_question or "",
+                "operation_id": operation_id,
+                "content": response.explanation or "",
+                "response": response,
+                "response_time_seconds": result.elapsed_seconds,
+                "provider": result.provider_name,
+                "model": result.model_name,
+            })
+            st.session_state.workspace_context = response.session_context
+            st.session_state.workspace_pending_prompt = None
         elif generation_kind == "supervisor":
             st.session_state.supervisor_result = result.structured_result
         elif generation_kind == "business_api":
@@ -1423,6 +1496,13 @@ def finish_generation(result: GenerationResult) -> None:
                 result,
             ),
         )
+    if generation_kind == "conversational_workspace":
+        st.session_state.workspace_messages.append({
+            "role": "assistant",
+            "operation_id": operation_id,
+            "content": result.error or "The request could not be completed.",
+        })
+        st.session_state.workspace_pending_prompt = None
     log_operation_total()
 
 
@@ -1457,35 +1537,42 @@ def render_pipeline_panel() -> None:
     render_pipeline_inspector(view.snapshot if view else None)
 
 
-render_rag_configuration()
+if selected_mode != "indAI MA":
+    render_rag_configuration()
 inject_pipeline_styles()
-main_column, inspector_column = st.columns([2.15, 1], gap="large", wrap=True)
-with main_column:
-    if selected_mode == "Business":
-        render_business()
-    elif selected_mode == "Healthcare Supply Assurance":
-        render_healthcare_supply_assurance()
-    elif selected_mode == "Food & Beverage Supply Assurance":
-        render_food_beverage_supply_assurance()
-    elif selected_mode == "Supply Portfolio":
-        render_supply_portfolio(start_supply_agent if selected_model is not None else None)
-    elif selected_mode == "Evaluation":
-        from evals.ui import render_evaluation
-        render_evaluation()
-    elif selected_mode == "Chat":
-        render_chat()
-    elif selected_mode == "Gas B2B Portfolio Analysis":
-        render_gas_analysis()
-    elif selected_mode == "CommercialAgent":
-        render_commercial_agent()
-    elif selected_mode == "Multi-Agent Supervisor":
-        render_supervisor()
-    elif selected_mode == "RiskAgent":
-        render_risk_agent()
-    else:
-        render_procurement_agent()
-
+if selected_mode == "indAI MA":
+    render_conversational_workspace(start_conversational_workspace, running=generation_active)
     render_generation_status()
+    with st.expander("Developer diagnostics", expanded=False):
+        render_pipeline_panel()
+else:
+    main_column, inspector_column = st.columns([2.15, 1], gap="large", wrap=True)
+    with main_column:
+        if selected_mode == "Business":
+            render_business()
+        elif selected_mode == "Healthcare Supply Assurance":
+            render_healthcare_supply_assurance()
+        elif selected_mode == "Food & Beverage Supply Assurance":
+            render_food_beverage_supply_assurance()
+        elif selected_mode == "Supply Portfolio":
+            render_supply_portfolio(start_supply_agent if selected_model is not None else None)
+        elif selected_mode == "Evaluation":
+            from evals.ui import render_evaluation
+            render_evaluation()
+        elif selected_mode == "Chat":
+            render_chat()
+        elif selected_mode == "Gas B2B Portfolio Analysis":
+            render_gas_analysis()
+        elif selected_mode == "CommercialAgent":
+            render_commercial_agent()
+        elif selected_mode == "Multi-Agent Supervisor":
+            render_supervisor()
+        elif selected_mode == "RiskAgent":
+            render_risk_agent()
+        else:
+            render_procurement_agent()
 
-with inspector_column:
-    render_pipeline_panel()
+        render_generation_status()
+
+    with inspector_column:
+        render_pipeline_panel()

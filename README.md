@@ -10,8 +10,8 @@ for trading, procurement, CRM, contract-management or enterprise systems.
 
 Product principle: **Simple for the business user, traceable for the technical user.**
 
-**Current state: v1.12.0 release candidate.** The published baseline is
-v1.11.1; v1.12.0 has not been released or tagged.
+**Current state: v1.13.0 release candidate.** The published baseline is
+v1.12.0; v1.13.0 has not been released or tagged.
 
 ## Energy / Commercial capabilities
 
@@ -54,20 +54,32 @@ The current screens and capabilities are:
   retrieve applicable documents, combine both evidence types, or evaluate one
   explicitly requested what-if through the existing scenario evaluator. Structured
   domain facts, cited document chunks and generated interpretation remain distinct.
-- **Portfolio Intelligence (v1.12.0 release candidate):** deterministic filters
+- **Portfolio Intelligence (v1.12.0):** deterministic filters
   select ordered positions from existing portfolio results; bounded structured
   session context resolves unambiguous follow-ups; each position retains its own
   domain, attention, scenario and documentary evidence. Documentary retrieval and
   citation checks remain identity-scoped, with only explicitly applicable global
   Industrial Gases sources shared. What-if remains explicit and single-target.
   This does not add portfolio totals, rankings, recommendations or health scores.
+- **Conversational Workspace (v1.13.0 release candidate):** the default
+  conversation-first entry point routes natural-language questions over the
+  existing portfolio query, per-position operational evidence, identity-scoped
+  Industrial Knowledge and explicit single-position what-if capabilities. A
+  bounded structured session context supports references across turns, while
+  cards keep positions, source citations and baseline/alternative projections
+  separate. Advanced/demo modes remain available under **Developer / Demo views**.
+  Deterministic selection and supply results, operational findings, scenario
+  projections and retrieved sources remain authoritative; generated prose only
+  explains this evidence.
 
 ## Available modes
 
-Primary business-facing modes are **Business**, **Healthcare Supply Assurance**,
-**Food & Beverage Supply Assurance** and **Supply Portfolio**. Advanced / technical
-modes also include Chat, Gas B2B Portfolio Analysis, ProcurementAgent,
-CommercialAgent, RiskAgent, Multi-Agent Supervisor and Evaluation.
+The default mode is **indAI MA**, a conversational workspace for operations,
+documents and explicit scenarios. Existing **Business**, **Healthcare Supply
+Assurance**, **Food & Beverage Supply Assurance** and **Supply Portfolio** modes,
+plus Chat, Gas B2B Portfolio Analysis, ProcurementAgent, CommercialAgent,
+RiskAgent, Multi-Agent Supervisor and Evaluation, remain available under
+**Developer / Demo views**.
 
 ## Architecture at a glance
 
@@ -92,15 +104,20 @@ same deterministic Supply Assurance service. This path requires no generation
 LLM, RAG, agent or Supervisor, and provides no scoring, ranking, recommendation,
 optimization or cross-position physical aggregation.
 
-The optional Supply Agent is a separate path. It requires a configured generation
-provider for explanations and a local embedding service for documentary retrieval.
+The optional Supply Agent is used by the Conversational Workspace and remains
+available in Supply Portfolio. It requires a configured generation provider for
+generated explanations and a local embedding service for documentary retrieval.
 Its demo corpus is fictional and is scoped by customer, site, application, gas
 product and installation metadata before semantic ranking. Portfolio filtering is
 deterministic and authoritative; item evidence remains separate. Session context is
 bounded structured identifiers and filters, not free-form model memory. The agent
 explains evidence; it does not calculate supply values, recommend actions, rank
 alternatives or generate scenarios automatically. The existing deterministic flows
-remain usable without it. v1.12.0 is a release candidate, not a published release.
+remain usable without generation; the workspace can answer deterministic portfolio
+list requests without a model call. A safety-stock breach means projected inventory
+is below the configured safety stock and does not itself mean stockout; only the
+structured projection's `stockout_before_delivery` supports that statement.
+v1.13.0 is a release candidate, not a published release.
 
 See [ARCHITECTURE.md](docs/ARCHITECTURE.md), [DECISIONS.md](docs/DECISIONS.md), [PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md), and [V1_MVP_SPEC.md](docs/V1_MVP_SPEC.md).
 
@@ -168,11 +185,11 @@ The persisted index is local under `.indai_ma/` and is never committed. If it is
 streamlit run app.py
 ```
 
-The application opens in Business mode. Select an example or write a question,
-review it, and press **Analizar**. Healthcare Supply Assurance, Food & Beverage
-Supply Assurance and Supply Portfolio are available as separate modes. Advanced
-configuration, RAG administration, Evaluation and Pipeline Inspector remain under
-**Advanced / Technical**.
+The application opens in the **indAI MA** conversational workspace. Ask a
+question about operations, documents or an explicit scenario and continue with
+follow-up questions without changing modes. Advanced supply-assurance screens,
+the energy Business flow, RAG administration, Evaluation and Pipeline Inspector
+remain available under **Developer / Demo views** or expandable diagnostics.
 
 ## Demo scenarios
 

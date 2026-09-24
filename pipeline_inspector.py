@@ -28,6 +28,9 @@ from diagnostics import (
 
 
 STAGE_PRESENTATION = {
+    "workspace_intent_routing": ("⌖", "Workspace Intent / Routing"),
+    "workspace_structured_evidence": ("▣", "Structured Operational Evidence"),
+    "workspace_response_projection": ("✓", "Workspace Response Projection"),
     "portfolio_query": ("⌕", "Portfolio Query / Selection"),
     "session_reference_resolution": ("↪", "Session Reference Resolution"),
     "portfolio_knowledge_retrieval": ("📚", "Scoped Portfolio Retrieval"),
@@ -658,6 +661,7 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
             return
 
         pipeline_stages = {
+            "conversational_workspace": SUPPLY_AGENT_PIPELINE_STAGES,
             "supply_agent": SUPPLY_AGENT_PIPELINE_STAGES,
             "risk_agent": RISK_AGENT_PIPELINE_STAGES,
             "commercial_agent": COMMERCIAL_AGENT_PIPELINE_STAGES,
