@@ -404,6 +404,272 @@ class ConversationalWorkspaceTests(unittest.TestCase):
         )
         self.assertEqual(knowledge.calls, [])
 
+    def test_v115_multi_scenario_e2e_comparison_and_documentary_continuity(self):
+        from clipboard_text import build_diagnostics_clipboard_text
+        from industrial_gases.conversational_workspace_ui import build_workspace_response_copy_text
+
+        model = CanonicalContinuityDecisionModel()
+        knowledge = ScopedFixtureKnowledge()
+        recorder = PerformanceRecorder("v115-multiscenario", "fixture", "none", "conversational_workspace")
+        conversation = _WorkspaceConversation(model, knowledge, recorder)
+
+        q1 = conversation.ask("¿Qué posiciones requieren atención?")
+        self.assertEqual(q1.selected_item_ids, ("hospital-costa-sur-o2", "alimentos-sur-malaga-co2"))
+        self.assertEqual(model.calls, [])
+        q2 = conversation.ask("Háblame solo de la del hospital.")
+        self.assertEqual(q2.session_context.focused_item_id, "hospital-costa-sur-o2")
+        q3 = conversation.ask("¿Y si la entrega llegara un día antes?")
+        operational_followup = conversation.ask("¿Por qué la del hospital?")
+        self.assertIn("stock de seguridad", operational_followup.explanation.casefold())
+        self.assertEqual(operational_followup.session_context.scenario_history,
+                         q3.session_context.scenario_history)
+        q4 = conversation.ask("¿Y dos días antes?")
+        self.assertEqual(tuple(x.scenario_id for x in q4.session_context.scenario_history), (
+            "baseline", "delivery-offset:-1", "delivery-offset:-2",
+        ))
+        self.assertEqual(len(model.calls), 0)
+        self.assertEqual(knowledge.calls, [])
+
+        q5 = conversation.ask("Compara los tres escenarios.")
+        self.assertEqual(q5.status, SupplyAgentStatus.COMPLETED)
+        self.assertEqual(q5.selected_item_ids, ("hospital-costa-sur-o2",))
+        self.assertEqual(tuple(metric.field for metric in q5.scenario_comparison.metrics), (
+            "consumption_until_delivery", "inventory_immediately_before_delivery",
+            "safety_stock_gap_before_delivery", "stockout_before_delivery",
+            "inventory_immediately_after_delivery", "required_delivery_volume", "capacity_exceeded",
+        ))
+        by_field = {metric.field: metric for metric in q5.scenario_comparison.metrics}
+        self.assertEqual(tuple(v.value for v in by_field["inventory_immediately_before_delivery"].values),
+                         (400, 1100, 1800))
+        self.assertEqual(tuple(v.value for v in by_field["safety_stock_gap_before_delivery"].values),
+                         (-1100, -400, 300))
+        self.assertEqual(tuple(v.value for v in by_field["consumption_until_delivery"].values),
+                         (2800, 2100, 1400))
+        self.assertEqual(tuple(v.value for v in by_field["inventory_immediately_after_delivery"].values),
+                         (4400, 5100, 5800))
+        self.assertEqual(tuple(v.value for v in by_field["required_delivery_volume"].values), (1100, 400, 0))
+        self.assertEqual(tuple(v.value for v in by_field["stockout_before_delivery"].values),
+                         (False, False, False))
+        self.assertEqual(tuple(v.value for v in by_field["capacity_exceeded"].values),
+                         (False, False, False))
+        self.assertEqual(len(model.calls), 0)
+        self.assertEqual(knowledge.calls, [])
+
+        copied = build_workspace_response_copy_text(q5, "Compara los tres escenarios.")
+        self.assertIn("Hospital Costa Sur · Oxígeno medicinal (O₂)", copied)
+        self.assertIn("Actual", copied)
+        self.assertIn("1 día antes", copied)
+        self.assertIn("2 días antes", copied)
+        self.assertIn("-1,100 kg", copied)
+        self.assertIn("+300 kg", copied)
+        self.assertNotIn("Evidence & trace", copied)
+        self.assertNotIn("hospital-costa-sur-o2", copied)
+        self.assertNotIn("prompt", copied.casefold())
+        self.assertNotIn("reasoning", copied.casefold())
+        self.assertNotIn("scenario_id", copied.casefold())
+
+        def render_scenario_comparison(value):
+            from industrial_gases.conversational_workspace_ui import _render_scenario_comparison
+            _render_scenario_comparison(value, "es")
+
+        comparison_app = AppTest.from_function(
+            render_scenario_comparison, args=(q5.scenario_comparison,),
+        ).run()
+        self.assertFalse(comparison_app.exception)
+        table_text = str(comparison_app.table[0].value)
+        for expected in ("Actual", "1 día antes", "2 días antes", "-1,100 kg", "+300 kg", "1,800 kg"):
+            self.assertIn(expected, table_text)
+
+        def render_workspace_comparison(value):
+            from industrial_gases.conversational_workspace_ui import _render_workspace_response
+            _render_workspace_response(value, "Compara los tres escenarios.")
+
+        workspace_app = AppTest.from_function(
+            render_workspace_comparison, args=(q5,), default_timeout=15,
+        ).run()
+        self.assertFalse(workspace_app.exception)
+        visible = "\n".join(str(item.value) for item in workspace_app.markdown)
+        self.assertIn("Hospital Costa Sur · Oxígeno medicinal (O₂)", visible)
+
+        q6 = conversation.ask("¿Cuál tiene mayor inventario antes de la entrega?")
+        self.assertIn("2 días antes", q6.explanation)
+        self.assertIn("1,800 kg", q6.explanation)
+        self.assertNotRegex(q6.explanation.casefold(), r"mejor|recomiendo|óptim|best|recommend")
+        q7 = conversation.ask("¿En cuál se mantiene el stock de seguridad?")
+        self.assertIn("2 días antes", q7.explanation)
+        self.assertIn("300 kg", q7.explanation)
+        self.assertNotIn("Actual:", q7.explanation)
+        q8 = conversation.ask("¿Qué cambia entre un día antes y dos días antes?")
+        compared_ids = tuple(value.scenario_id for value in q8.scenario_comparison.metrics[0].values)
+        self.assertEqual(compared_ids, ("delivery-offset:-1", "delivery-offset:-2"))
+        self.assertEqual(len(model.calls), 0)
+        self.assertEqual(knowledge.calls, [])
+        deterministic_stages = {event.stage for event in recorder.snapshot().events}
+        for forbidden in ("llm_call", "portfolio_knowledge_retrieval", "query_embedding", "vector_search"):
+            self.assertNotIn(forbidden, deterministic_stages)
+
+        q9 = conversation.ask("¿Qué dice el contrato sobre la entrega?")
+        self.assertEqual(q9.status, SupplyAgentStatus.COMPLETED)
+        self.assertEqual(len(model.calls), 1)
+        self.assertEqual(len(knowledge.calls), 1)
+        self.assertEqual(q9.session_context.scenario_history, q8.session_context.scenario_history)
+        self.assertEqual(q9.session_context.last_document_scope_item_ids, ("hospital-costa-sur-o2",))
+        q10 = conversation.ask("Compara otra vez los escenarios.")
+        self.assertEqual(tuple(v.value for v in q10.scenario_comparison.metrics[1].values), (400, 1100, 1800))
+        self.assertEqual(len(model.calls), 1, "deterministic comparisons must not call generation")
+        self.assertEqual(len(knowledge.calls), 1, "deterministic comparisons must not retrieve again")
+        self.assertEqual(q10.session_context.scenario_history, q9.session_context.scenario_history)
+
+        diagnostic_recorder = PerformanceRecorder(
+            "workspace-current-scenario-comparison", "fixture", "none", "conversational_workspace",
+        )
+        diagnostic_response = ConversationalWorkspaceOrchestrator(
+            self.portfolio, self.attention, knowledge, None, q4.session_context,
+            recorder=diagnostic_recorder,
+        ).run("Compara los tres escenarios.")
+        self.assertIsNotNone(diagnostic_response.scenario_comparison)
+        diagnostic_recorder.finish("completed")
+        diagnostic_snapshot = diagnostic_recorder.snapshot()
+        diagnostic_copy = build_diagnostics_clipboard_text(diagnostic_snapshot)
+        self.assertIn("ID: workspace-current-scenario-comparison", diagnostic_copy)
+        self.assertIn("scenario_reference_resolution", diagnostic_copy)
+        self.assertIn("deterministic_scenario_comparison", diagnostic_copy)
+        self.assertIn("inventory_immediately_before_delivery", diagnostic_copy)
+        self.assertIn("LLM calls: 0", diagnostic_copy)
+        self.assertNotIn("portfolio_knowledge_retrieval", diagnostic_copy)
+        self.assertNotIn("raw provider", diagnostic_copy.casefold())
+        self.assertNotIn("chain_of_thought", diagnostic_copy.casefold())
+
+        def render_inspector(snapshot):
+            from pipeline_inspector import render_pipeline_inspector
+            render_pipeline_inspector(snapshot)
+
+        inspector_app = AppTest.from_function(
+            render_inspector, args=(diagnostic_snapshot,), default_timeout=15,
+        ).run()
+        self.assertFalse(inspector_app.exception)
+        inspector_text = "\n".join(
+            str(item.value)
+            for collection in (inspector_app.markdown, inspector_app.caption, inspector_app.text, inspector_app.metric)
+            for item in collection
+        )
+        self.assertIn("Scenario Reference Resolution", inspector_text)
+        self.assertIn("Deterministic Scenario Comparison", inspector_text)
+        self.assertIn("inventory_immediately_before_delivery", inspector_text)
+        self.assertNotIn("Vector Search", inspector_text)
+        self.assertNotIn("LLM Call #", inspector_text)
+
+    def test_scenario_comparison_without_or_with_one_scenario_requests_more_input(self):
+        from industrial_gases.portfolio_query import WorkspaceScenario
+
+        for history in ((), (WorkspaceScenario(
+            "hospital-costa-sur-o2", "baseline", "Baseline", None,
+            self.portfolio.items[0].result,
+        ),)):
+            with self.subTest(history_length=len(history)):
+                context = SupplyAgentSessionContext(
+                    ("hospital-costa-sur-o2",), "hospital-costa-sur-o2",
+                    scenario_history=history,
+                )
+                response = ConversationalWorkspaceOrchestrator(
+                    self.portfolio, self.attention,
+                    lambda: (_ for _ in ()).throw(AssertionError("comparison must not retrieve")),
+                    None, context,
+                ).run("Compara los escenarios.")
+                self.assertEqual(response.status, SupplyAgentStatus.NEEDS_INPUT)
+                self.assertTrue(response.clarification_required)
+                self.assertEqual(response.session_context, context)
+
+    def test_scenario_history_bound_preserves_baseline_and_latest_alternatives(self):
+        from industrial_gases.portfolio_query import WorkspaceScenario
+
+        item_id = "hospital-costa-sur-o2"
+        entries = (
+            WorkspaceScenario(item_id, "baseline", "Baseline", None, self.portfolio.items[0].result),
+            *(WorkspaceScenario(
+                item_id, f"delivery-offset:{offset}", str(offset), offset,
+                self.portfolio.items[0].result,
+            ) for offset in range(-1, -18, -1)),
+        )
+        context = SupplyAgentSessionContext((item_id,), item_id, scenario_history=entries)
+
+        self.assertEqual(len(context.scenario_history), 16)
+        self.assertEqual(context.scenario_history[0].scenario_id, "baseline")
+        self.assertEqual(
+            tuple(entry.scenario_id for entry in context.scenario_history[1:]),
+            tuple(f"delivery-offset:{offset}" for offset in range(-3, -18, -1)),
+        )
+
+    def test_ambiguous_scenario_reference_and_automatic_search_request_are_not_guessed(self):
+        model = CanonicalContinuityDecisionModel()
+        conversation = _WorkspaceConversation(model, ScopedFixtureKnowledge())
+        conversation.context = SupplyAgentSessionContext(("hospital-costa-sur-o2",), "hospital-costa-sur-o2")
+        first = conversation.ask("¿Y si la entrega llegara un día antes?")
+        second = conversation.ask("¿Y dos días antes?")
+        ambiguous = conversation.ask("Compara la otra alternativa.")
+        self.assertEqual(ambiguous.status, SupplyAgentStatus.NEEDS_INPUT)
+        self.assertTrue(ambiguous.clarification_required)
+        self.assertIn("alternativa", ambiguous.explanation.casefold())
+        self.assertEqual(ambiguous.session_context.scenario_history, second.session_context.scenario_history)
+
+        class NeverModel:
+            def decide(self, *args, **kwargs):
+                raise AssertionError("scenario search must be bounded without a provider call")
+
+        search = ConversationalWorkspaceOrchestrator(
+            self.portfolio, self.attention, ScopedFixtureKnowledge(), NeverModel(),
+            second.session_context,
+        ).run("¿Cuándo tendría que llegar para mantener el stock de seguridad?")
+        self.assertEqual(search.status, SupplyAgentStatus.NEEDS_INPUT)
+        self.assertTrue(search.clarification_required)
+        self.assertEqual(search.session_context.scenario_history, second.session_context.scenario_history)
+        self.assertEqual(len(model.calls), 0)
+
+    def test_scenario_history_is_cleared_on_focus_change_and_stale_focus_is_rejected(self):
+        model = CanonicalContinuityDecisionModel()
+        conversation = _WorkspaceConversation(model, ScopedFixtureKnowledge())
+        conversation.context = SupplyAgentSessionContext(
+            ("hospital-costa-sur-o2",), "hospital-costa-sur-o2",
+        )
+        alternative = conversation.ask("¿Y si la entrega llegara un día antes?")
+        self.assertEqual(len(alternative.session_context.scenario_history), 2)
+        changed = conversation.ask("Háblame solo de Alimentos del Sur CO2.")
+        self.assertEqual(changed.session_context.focused_item_id, "alimentos-sur-malaga-co2")
+        self.assertEqual(changed.session_context.scenario_history, ())
+
+        stale_context = SupplyAgentSessionContext(
+            ("hospital-costa-sur-o2",), "hospital-costa-sur-o2",
+            scenario_history=alternative.session_context.scenario_history,
+        )
+        stale_portfolio = replace(self.portfolio, items=tuple(
+            item for item in self.portfolio.items if item.item_id != "hospital-costa-sur-o2"
+        ))
+        stale = ConversationalWorkspaceOrchestrator(
+            stale_portfolio, self.attention, ScopedFixtureKnowledge(), None, stale_context,
+        ).run("Compara los escenarios.")
+        self.assertEqual(stale.status, SupplyAgentStatus.NEEDS_INPUT)
+        self.assertEqual(stale.session_context.scenario_history, ())
+        self.assertIsNone(stale.scenario_comparison)
+
+    def test_provider_or_knowledge_failure_preserves_evaluated_scenario_history(self):
+        context = SupplyAgentSessionContext(("hospital-costa-sur-o2",), "hospital-costa-sur-o2")
+        scenario = ConversationalWorkspaceOrchestrator(
+            self.portfolio, self.attention, ScopedFixtureKnowledge(),
+            CanonicalContinuityDecisionModel(), context,
+        ).run("¿Y si la entrega llegara un día antes?")
+        history = scenario.session_context.scenario_history
+
+        class FailingModel:
+            def decide(self, *args, **kwargs):
+                raise SupplyAgentProviderError("fixture provider failure")
+
+        for knowledge, model in ((ScopedFixtureKnowledge(fail=True), CanonicalContinuityDecisionModel()),
+                                 (ScopedFixtureKnowledge(), FailingModel())):
+            failed = ConversationalWorkspaceOrchestrator(
+                self.portfolio, self.attention, knowledge, model, scenario.session_context,
+            ).run("¿Qué dice el contrato sobre la entrega?")
+            self.assertEqual(failed.session_context.scenario_history, history)
+
     def test_documentary_followup_then_two_day_scenario_keeps_document_scope_but_runs_no_rag(self):
         class DocumentaryModel:
             def __init__(self):
@@ -734,13 +1000,23 @@ class ConversationalWorkspaceTests(unittest.TestCase):
                     answer="The CO2 contract sets the applicable supply terms. [chunk_id:hospital-contract]",
                 )
 
+        wrong_scope_recorder = PerformanceRecorder(
+            "wrong-scope-citation", "fixture", "model", "conversational_workspace",
+        )
         response = ConversationalWorkspaceOrchestrator(
             self.portfolio, self.attention, ScopedFixtureKnowledge(), WrongScopeCitationModel(),
+            recorder=wrong_scope_recorder,
         ).run("¿Qué dice el contrato de CO2 para Alimentos del Sur?")
         self.assertEqual(response.selected_item_ids, ("alimentos-sur-malaga-co2",))
         self.assertEqual(response.status, SupplyAgentStatus.NEEDS_INPUT)
         self.assertNotIn("[chunk_id:hospital-contract]", response.explanation)
         self.assertNotIn("sets the applicable supply terms", response.explanation)
+        wrong_scope_event = next(
+            event for event in wrong_scope_recorder.snapshot().events
+            if event.stage == "citation_validation"
+        )
+        self.assertEqual(wrong_scope_event.metadata["failure_category"], "unknown_chunk_id")
+        self.assertEqual(wrong_scope_event.metadata["unknown_chunk_ids"], ("hospital-contract",))
 
         class InventedCitationModel:
             def decide(self, question, state, tools, timeout_seconds=None):
@@ -748,11 +1024,43 @@ class ConversationalWorkspaceTests(unittest.TestCase):
                     "finish", "finish", answer="The contract confirms delivery terms. [chunk_id:invented]",
                 )
 
+        invented_recorder = PerformanceRecorder(
+            "invented-citation", "fixture", "model", "conversational_workspace",
+        )
         invented = ConversationalWorkspaceOrchestrator(
             self.portfolio, self.attention, ScopedFixtureKnowledge(), InventedCitationModel(),
+            recorder=invented_recorder,
         ).run("¿Qué dice el contrato del Hospital Costa Sur?")
         self.assertEqual(invented.status, SupplyAgentStatus.NEEDS_INPUT)
         self.assertNotIn("[chunk_id:invented]", invented.explanation)
+        invented_event = next(
+            event for event in invented_recorder.snapshot().events
+            if event.stage == "citation_validation"
+        )
+        self.assertEqual(invented_event.metadata["failure_category"], "unknown_chunk_id")
+        self.assertEqual(invented_event.metadata["unknown_chunk_ids"], ("invented",))
+
+    def test_malformed_citation_is_classified_without_recording_answer_text(self):
+        class MalformedCitationModel:
+            def decide(self, question, state, tools, timeout_seconds=None):
+                return AgentDecision(
+                    "finish", "finish",
+                    answer="The contract confirms delivery terms. [chunk_id hospital-contract]",
+                )
+
+        recorder = PerformanceRecorder(
+            "malformed-citation", "fixture", "model", "conversational_workspace",
+        )
+        response = ConversationalWorkspaceOrchestrator(
+            self.portfolio, self.attention, ScopedFixtureKnowledge(), MalformedCitationModel(),
+            recorder=recorder,
+        ).run("¿Qué dice el contrato del Hospital Costa Sur?")
+        self.assertEqual(response.status, SupplyAgentStatus.NEEDS_INPUT)
+        event = next(event for event in recorder.snapshot().events if event.stage == "citation_validation")
+        self.assertEqual(event.metadata["failure_category"], "malformed_citation")
+        self.assertTrue(event.metadata["malformed_citation"])
+        self.assertEqual(event.metadata["cited_chunk_ids"], ())
+        self.assertNotIn("delivery terms", str(event.metadata))
 
     def test_documentary_claim_without_citation_is_blocked(self):
         class UncitedDocumentaryClaimModel:
@@ -767,6 +1075,140 @@ class ConversationalWorkspaceTests(unittest.TestCase):
         self.assertEqual(response.status, SupplyAgentStatus.NEEDS_INPUT)
         self.assertNotIn("confirms the next delivery terms", response.explanation)
         self.assertTrue(response.evidence.items[0].knowledge_sources)
+
+    def test_q8_hospital_delivery_without_citation_has_safe_structured_diagnostics(self):
+        class HospitalDeliveryKnowledge:
+            def search(inner, *, identity, query, top_k=4):
+                source = _chunk(
+                    "hospital-delivery-contract", "hospital_o2_supply_contract.txt",
+                    "The planned delivery record is 4,000 kg, scheduled four days after the reference time.",
+                    {
+                        "customer_id": "hospital-costa-sur", "site_id": "hospital-costa-sur-site",
+                        "application_id": "hospital-costa-sur-medical-oxygen",
+                        "gas_product_id": "medical-oxygen",
+                        "installation_id": "hospital-costa-sur-bulk-cryogenic-o2",
+                        "document_type": "supply_contract",
+                    },
+                )
+                return "retrieved", (RetrievedChunk(source, 1.0),)
+
+        class NoCitationProvider:
+            def generate_response(inner, messages, *, timeout_seconds=None, options=None):
+                inner.prompt = messages[0]["content"]
+                return LLMResponse(content=json.dumps({
+                    "action": "finish", "answer":
+                        "El contrato prevé una entrega de 4.000 kg cuatro días después de la referencia.",
+                }))
+
+        provider = NoCitationProvider()
+        recorder = PerformanceRecorder(
+            "q8-missing-citation", "fixture", "fixture-model", "conversational_workspace",
+        )
+        response = ConversationalWorkspaceOrchestrator(
+            self.portfolio, self.attention, HospitalDeliveryKnowledge(),
+            ProviderSupplyDecisionModel(provider),
+            SupplyAgentSessionContext(("hospital-costa-sur-o2",), "hospital-costa-sur-o2"),
+            recorder=recorder,
+        ).run("¿Qué dice el contrato sobre la entrega?")
+
+        self.assertEqual(response.status, SupplyAgentStatus.NEEDS_INPUT)
+        self.assertIn("no se pudo verificar", response.explanation.casefold())
+        self.assertIn("[chunk_id:hospital-delivery-contract]", provider.prompt)
+        self.assertIn("immediately after each supported documentary statement", provider.prompt)
+        citation_event = next(
+            event for event in recorder.snapshot().events if event.stage == "citation_validation"
+        )
+        self.assertFalse(citation_event.metadata["valid"])
+        self.assertEqual(citation_event.metadata["citation_validation_status"], "failed")
+        self.assertEqual(citation_event.metadata["failure_category"], "missing_citation")
+        self.assertEqual(citation_event.metadata["citation_count"], 0)
+        self.assertEqual(citation_event.metadata["cited_chunk_ids"], ())
+        self.assertEqual(citation_event.metadata["eligible_chunk_ids"], ("hospital-delivery-contract",))
+        self.assertTrue(citation_event.metadata["missing_citation"])
+        self.assertFalse(citation_event.metadata["scope_mismatch"])
+        self.assertNotIn("4.000 kg", str(citation_event.metadata))
+
+    def test_q8_hospital_delivery_with_allowed_contract_citation_is_accepted(self):
+        class HospitalDeliveryKnowledge:
+            def search(inner, *, identity, query, top_k=4):
+                source = _chunk(
+                    "hospital-delivery-contract", "hospital_o2_supply_contract.txt",
+                    "The planned delivery record is 4,000 kg, scheduled four days after the reference time.",
+                    {
+                        "customer_id": "hospital-costa-sur", "site_id": "hospital-costa-sur-site",
+                        "application_id": "hospital-costa-sur-medical-oxygen",
+                        "gas_product_id": "medical-oxygen",
+                        "installation_id": "hospital-costa-sur-bulk-cryogenic-o2",
+                        "document_type": "supply_contract",
+                    },
+                )
+                return "retrieved", (RetrievedChunk(source, 1.0),)
+
+        class CitedProvider:
+            def generate_response(inner, messages, *, timeout_seconds=None, options=None):
+                inner.prompt = messages[0]["content"]
+                return LLMResponse(content=json.dumps({
+                    "action": "finish",
+                    "answer": "El contrato prevé una entrega de 4.000 kg cuatro días después de la referencia. "
+                              "[chunk_id:hospital-delivery-contract]",
+                }))
+
+        provider = CitedProvider()
+        recorder = PerformanceRecorder(
+            "q8-cited-contract", "fixture", "fixture-model", "conversational_workspace",
+        )
+        response = ConversationalWorkspaceOrchestrator(
+            self.portfolio, self.attention, HospitalDeliveryKnowledge(),
+            ProviderSupplyDecisionModel(provider),
+            SupplyAgentSessionContext(("hospital-costa-sur-o2",), "hospital-costa-sur-o2"),
+            recorder=recorder,
+        ).run("¿Qué dice el contrato sobre la entrega?")
+
+        self.assertEqual(response.status, SupplyAgentStatus.COMPLETED)
+        self.assertIn("[chunk_id:hospital-delivery-contract]", response.explanation)
+        self.assertIn("- [chunk_id:hospital-delivery-contract]", provider.prompt)
+        event = next(event for event in recorder.snapshot().events if event.stage == "citation_validation")
+        self.assertTrue(event.metadata["valid"])
+        self.assertEqual(event.metadata["citation_validation_status"], "passed")
+        self.assertEqual(event.metadata["citation_count"], 1)
+        self.assertEqual(event.metadata["cited_chunk_ids"], ("hospital-delivery-contract",))
+
+    def test_retrieved_but_wrong_scope_citation_is_classified_separately(self):
+        class WrongScopeKnowledge:
+            def search(inner, *, identity, query, top_k=4):
+                source = _chunk(
+                    "wrong-scope-contract", "other_customer_contract.txt",
+                    "The planned delivery is 4,000 kg.",
+                    {
+                        "customer_id": "another-customer", "site_id": "another-site",
+                        "gas_product_id": "medical-oxygen", "document_type": "supply_contract",
+                    },
+                )
+                return "retrieved", (RetrievedChunk(source, 1.0),)
+
+        class WrongScopeProvider:
+            def generate_response(inner, messages, *, timeout_seconds=None, options=None):
+                return LLMResponse(content=json.dumps({
+                    "action": "finish",
+                    "answer": "The contract confirms the delivery. [chunk_id:wrong-scope-contract]",
+                }))
+
+        recorder = PerformanceRecorder(
+            "q8-wrong-scope-citation", "fixture", "fixture-model", "conversational_workspace",
+        )
+        response = ConversationalWorkspaceOrchestrator(
+            self.portfolio, self.attention, WrongScopeKnowledge(),
+            ProviderSupplyDecisionModel(WrongScopeProvider()),
+            SupplyAgentSessionContext(("hospital-costa-sur-o2",), "hospital-costa-sur-o2"),
+            recorder=recorder,
+        ).run("¿Qué dice el contrato sobre la entrega?")
+
+        self.assertEqual(response.status, SupplyAgentStatus.NEEDS_INPUT)
+        event = next(event for event in recorder.snapshot().events if event.stage == "citation_validation")
+        self.assertEqual(event.metadata["failure_category"], "citation_scope_mismatch")
+        self.assertTrue(event.metadata["scope_mismatch"])
+        self.assertEqual(event.metadata["cited_chunk_ids"], ("wrong-scope-contract",))
+        self.assertEqual(event.metadata["eligible_chunk_ids"], ())
 
     def test_documentary_citations_cannot_cross_position_in_either_direction(self):
         class CrossPositionCitationModel:
@@ -952,7 +1394,8 @@ class ConversationalWorkspaceTests(unittest.TestCase):
         for expected in (
             "Workspace Intent / Routing", "Workspace Reference Resolution",
             "Scoped Portfolio Retrieval", "LLM Call #1", "Citation / Scope Validation",
-            "Valid: True", "Structured Operational Evidence", "Workspace Response Projection",
+            "Valid: True", "Status: passed", "Citations: 1", "Eligible chunk IDs:",
+            "Structured Operational Evidence", "Workspace Response Projection",
             "Semantic guard applied: False",
         ):
             self.assertIn(expected, timeline)
@@ -1693,9 +2136,14 @@ class ConversationalWorkspaceTests(unittest.TestCase):
         def page():
             import streamlit as st
             from industrial_gases.portfolio_query import SupplyAgentSessionContext
+            from execution_view import WorkspaceExecutionReference
             from industrial_gases.conversational_workspace_ui import render_conversational_workspace
             if "workspace_context" not in st.session_state:
                 from industrial_gases.portfolio_query import PortfolioQuery
+                from industrial_gases.portfolio_query import WorkspaceScenario
+                from industrial_gases.portfolio_ui import evaluate_demo_supply_portfolio
+                demo_portfolio, _ = evaluate_demo_supply_portfolio()
+                baseline_result = demo_portfolio.items[0].result
                 st.session_state.workspace_context = SupplyAgentSessionContext(
                     ("hospital-costa-sur-o2",), "hospital-costa-sur-o2",
                     last_query=PortfolioQuery(item_id="hospital-costa-sur-o2"),
@@ -1703,8 +2151,22 @@ class ConversationalWorkspaceTests(unittest.TestCase):
                     last_intent="scenario",
                     last_document_scope_item_ids=("hospital-costa-sur-o2",),
                     last_scenario_change=("delivery_plan.planned_delivery_at", "2030-01-03T00:00:00+00:00"),
+                    scenario_history=(
+                        WorkspaceScenario(
+                            "hospital-costa-sur-o2", "baseline", "Baseline", None, baseline_result,
+                        ),
+                        WorkspaceScenario(
+                            "hospital-costa-sur-o2", "delivery-offset:-1", "1 day earlier", -1,
+                            baseline_result,
+                        ),
+                    ),
                 )
                 st.session_state.workspace_messages = [{"role": "user", "content": "old turn"}]
+                st.session_state.workspace_execution_history = (
+                    WorkspaceExecutionReference("old-op", "old query"),
+                )
+                st.session_state.workspace_pipeline_selected_operation_id = "old-op"
+                st.session_state.execution_views = {"old-op": object()}
             render_conversational_workspace(lambda *_: None)
 
         app = AppTest.from_function(page, default_timeout=15).run()
@@ -1713,6 +2175,9 @@ class ConversationalWorkspaceTests(unittest.TestCase):
         self.assertFalse(app.exception)
         self.assertEqual(app.session_state["workspace_messages"], [])
         self.assertEqual(app.session_state["workspace_context"], SupplyAgentSessionContext())
+        self.assertEqual(app.session_state["workspace_execution_history"], ())
+        self.assertIsNone(app.session_state["workspace_pipeline_selected_operation_id"])
+        self.assertNotIn("old-op", app.session_state["execution_views"])
 
     def test_pipeline_inspector_shows_actual_workspace_stages_without_synthetic_skips(self):
         from pipeline_inspector import render_pipeline_inspector

@@ -20,6 +20,7 @@ from industrial_gases.supply_agent import (
     SupplyAgentRequest,
     SupplyAgentStatus,
     SupplyAgentTools,
+    _documentary_citation_guidance,
 )
 from llm_client import LLMResponse
 from rag_service import RAGService
@@ -277,12 +278,16 @@ class SupplyAgentTests(unittest.TestCase):
                 sequence.append("generate")
                 prompt = messages[0]["content"]
                 self.assertIn('"available_citations"', prompt)
+                self.assertIn("MANDATORY DOCUMENTARY CITATION CONTRACT", prompt)
+                self.assertIn("Allowed citation tokens (copy verbatim):", prompt)
                 self.assertIn('"inventory_immediately_before_delivery"', prompt)
                 self.assertIn('"safety_stock_breach"', prompt)
                 self.assertIn("hospital_o2_supply_contract.txt", prompt)
                 match = re.search(r'\[chunk_id:([^\]\r\n]+)\]', prompt)
                 self.assertIsNotNone(match)
                 inner_self.cited = match.group(1)
+                self.assertIn(f"- [chunk_id:{inner_self.cited}]", prompt)
+                self.assertIn("Never invent, alter, shorten, or omit a token", prompt)
                 answer = (
                     "La proyección registra una brecha de stock; la fuente contractual aplicable "
                     f"describe las condiciones pertinentes. [chunk_id:{inner_self.cited}]"
@@ -306,6 +311,13 @@ class SupplyAgentTests(unittest.TestCase):
         self.assertEqual(result.position.result.findings[0].code, "safety_stock_breach")
         self.assertEqual(result.position.result.projection.inventory_immediately_before_delivery.value, 400)
         self.assertTrue(result.attention_item.facts)
+
+    def test_documentary_citation_allowlist_is_not_added_to_non_documentary_turns(self):
+        state = {
+            "documentary_evidence_required": False,
+            "available_citations": ({"citation": "[chunk_id:should-not-appear]"},),
+        }
+        self.assertEqual(_documentary_citation_guidance(state), "")
 
     def test_documentary_claim_without_citation_is_rejected_even_with_retrieval(self):
         model = QueueDecisionModel(AgentDecision(
