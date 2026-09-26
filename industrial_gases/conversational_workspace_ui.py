@@ -5,6 +5,7 @@ import re
 
 import streamlit as st
 
+from clipboard_ui import render_clipboard_button
 from .conversational_workspace import WorkspaceResponse
 from .portfolio_query import SupplyAgentSessionContext
 from .portfolio_ui import _CUSTOMER_LABELS, _FINDING_LABELS, _quantity_text
@@ -23,6 +24,7 @@ _TEXT = {
         "subtitle": "Ask about industrial operations, documents or an explicit scenario.",
         "ask": "Ask about operations, documents or a scenario...",
         "try": "**Try asking:**",
+        "copy": "Copy",
         "new": "New conversation",
         "scope": "Conversation scope",
         "focus": "focused position",
@@ -80,6 +82,7 @@ _TEXT = {
         "subtitle": "Pregunta sobre operaciones industriales, documentos o un escenario explícito.",
         "ask": "Pregunta sobre operaciones, documentos o un escenario...",
         "try": "**Prueba con una pregunta:**",
+        "copy": "Copiar",
         "new": "Nueva conversación",
         "scope": "Ámbito de la conversación",
         "focus": "posición enfocada",
@@ -189,13 +192,16 @@ def render_conversational_workspace(on_submit=None, *, running: bool = False) ->
             st.session_state.supply_agent_result = None
             st.rerun()
 
-    for message in st.session_state.workspace_messages:
+    for message_index, message in enumerate(st.session_state.workspace_messages):
         role = message["role"]
         with st.chat_message(role):
             if role == "user":
                 st.markdown(message["content"])
             elif isinstance(message.get("response"), WorkspaceResponse):
-                _render_workspace_response(message["response"], message.get("question", ""))
+                copy_key = message.get("operation_id") or f"message-{message_index}"
+                _render_workspace_response(
+                    message["response"], message.get("question", ""), copy_key=str(copy_key),
+                )
             else:
                 st.markdown(message.get("content", ""))
 
@@ -236,7 +242,9 @@ def _submit_prompt(prompt: str, on_submit) -> None:
     st.rerun()
 
 
-def _render_workspace_response(response: WorkspaceResponse, question: str = "") -> None:
+def _render_workspace_response(
+    response: WorkspaceResponse, question: str = "", *, copy_key: str = "workspace-response",
+) -> None:
     lang = _language(question)
     text = _TEXT[lang]
     if response.status.value == "provider_error":
@@ -263,10 +271,24 @@ def _render_workspace_response(response: WorkspaceResponse, question: str = "") 
         for source in response.evidence.global_sources:
             _render_source(source.source, source.item_ids, response, lang, global_scope=True)
 
+    render_clipboard_button(
+        build_workspace_response_copy_text(response, question),
+        text["copy"], key=f"workspace-response-{copy_key}",
+    )
+
     with st.expander(text["trace"]):
         st.write(f"{text['intent']}: {response.route.intent.value}")
         st.write(f"{text['capabilities']}: " + ", ".join(response.route.capabilities))
         st.write(f"{text['selected']}: " + (", ".join(response.selected_item_ids) or "none"))
+        st.write(f"{text['focus']}: " + (response.session_context.focused_item_id or "none"))
+        st.write("Previous structured intent: " + (response.session_context.last_intent or "none"))
+        st.write("Document scope: " + (", ".join(response.session_context.last_document_scope_item_ids) or "none"))
+        st.write("Scenario target: " + (response.session_context.last_scenario_target_id or "none"))
+        if response.session_context.last_scenario_change:
+            st.write("Last explicit scenario change:", response.session_context.last_scenario_change)
+        if response.comparison is not None:
+            st.markdown("**Structured comparison**")
+            st.json(_jsonable(response.comparison))
         if response.semantic_guard_applied:
             st.warning(text["guardrail"])
         if response.documentary_sources:
@@ -314,12 +336,137 @@ def _render_workspace_response(response: WorkspaceResponse, question: str = "") 
             )
         if response.operational_errors:
             st.warning("Operational errors: " + "; ".join(response.operational_errors))
+            categories = _operational_error_categories(response.operational_errors)
+            if categories:
+                st.caption("Failure category: " + ", ".join(categories))
         if response.unsupported_questions:
             st.caption("Clarification required for: " + ", ".join(response.unsupported_questions))
         if response.evidence.retrieval_failures:
             st.caption("Retrieval failures: " + ", ".join(
                 failure.item_id for failure in response.evidence.retrieval_failures
             ))
+
+
+def build_workspace_response_copy_text(response: WorkspaceResponse, question: str = "") -> str:
+    """Copy only the answer and structured facts presented in the Workspace response."""
+    lang = _language(question)
+    text = _TEXT[lang]
+    sections: list[str] = []
+    if response.status.value == "provider_error":
+        sections.append(text["provider_error"])
+    elif response.status.value == "needs_input":
+        answer = _primary_answer(response, question, lang) or text["clarify"]
+        sections.append(answer)
+    elif response.semantic_guard_applied:
+        sections.append(_safe_grounded_answer(response, lang))
+    elif (_is_document_list_request(question)
+          and (response.documentary_sources or response.evidence.global_sources)):
+        sections.append(_document_inventory_answer(response, lang))
+    elif response.explanation:
+        sections.append(_primary_answer(response, question, lang))
+
+    position_lines: list[str] = []
+    for item in response.positions:
+        result = item.result
+        label = _position_label(item, lang)
+        position_lines.append(label)
+        projection = result.projection
+        if result.status == "COMPLETED" and projection is not None:
+            position_lines.extend((
+                f"- {text['inventory']}: {_quantity_text(projection.inventory_immediately_before_delivery)}",
+                f"- {text['safety_gap']}: {_quantity_text(projection.safety_stock_gap_before_delivery)}",
+                f"- {text['stockout']}: {_yes_no(projection.stockout_before_delivery, lang)}",
+            ))
+            finding_labels = [
+                _FINDINGS.get(fact.source_finding.code, {}).get(lang)
+                or _FINDING_LABELS.get(fact.source_finding.code)
+                for fact in item.attention.facts
+            ]
+            finding_labels = [value for value in finding_labels if value]
+            position_lines.append(
+                ("Attention: " if lang == "en" else "Atención: ")
+                + ("; ".join(finding_labels) if finding_labels else text["no_attention"])
+            )
+        else:
+            position_lines.append(f"{text['status']}: {result.status}")
+            if result.status == "MISSING_INPUTS":
+                missing_labels = [
+                    _MISSING.get(key, {}).get(lang) or _humanize_key(key)
+                    for key in result.missing_inputs
+                ]
+                position_lines.append(text["missing"] + ": " + ", ".join(missing_labels))
+            elif result.status == "INVALID":
+                position_lines.append(text["invalid"])
+    if position_lines:
+        sections.append("\n".join(position_lines))
+
+    if response.documentary_sources:
+        source_lines = [text["sources"]]
+        for item in response.evidence.items:
+            for source in item.knowledge_sources:
+                source_lines.append(_workspace_source_caption(
+                    source, _position_label(item, lang), lang,
+                ))
+        sections.append("\n".join(source_lines))
+
+    for item in response.positions:
+        if item.scenario is not None:
+            sections.append(_workspace_scenario_copy_text(item, lang))
+
+    if response.evidence.global_sources:
+        source_lines = [text["global_sources"]]
+        for scoped in response.evidence.global_sources:
+            source_lines.append(_workspace_source_caption(scoped.source, text["global"], lang))
+        sections.append("\n".join(source_lines))
+    return "\n\n".join(section for section in sections if section.strip()).strip()
+
+
+def _workspace_source_caption(source, identity: str, lang: str) -> str:
+    chunk = source.chunk
+    details = [identity, _document_type_label(chunk.metadata.get("document_type"), lang)]
+    if chunk.page_start is not None:
+        page = chunk.page_start if chunk.page_end in (None, chunk.page_start) else f"{chunk.page_start}–{chunk.page_end}"
+        details.append(f"{_TEXT[lang]['page']} {page}")
+    return " · ".join(details)
+
+
+def _workspace_scenario_copy_text(item, lang: str) -> str:
+    scenario = item.scenario
+    text = _TEXT[lang]
+    lines = [f"{_scenario_title(item, lang)} · {_position_label(item, lang)}"]
+    change_label = _scenario_change_label(item, lang)
+    if change_label:
+        lines.append(change_label)
+    for label, result_name in (("Current", scenario.baseline_result), ("Alternative", scenario.alternative_result)):
+        if result_name.projection is None:
+            if result_name.status == "MISSING_INPUTS":
+                missing = ", ".join(
+                    _MISSING.get(key, {}).get(lang) or _humanize_key(key)
+                    for key in result_name.missing_inputs
+                )
+                lines.append(f"{label}: {_TEXT[lang]['missing']}: {missing}")
+            elif result_name.status == "INVALID":
+                lines.append(f"{label}: {_TEXT[lang]['invalid']}")
+    current = scenario.baseline_result.projection
+    alternative = scenario.alternative_result.projection
+    if current is None or alternative is None:
+        return "\n".join(lines)
+    metrics = (
+        (text["consumption"], current.consumption_until_delivery, alternative.consumption_until_delivery),
+        (text["inventory"], current.inventory_immediately_before_delivery, alternative.inventory_immediately_before_delivery),
+        (text["safety_gap"], current.safety_stock_gap_before_delivery, alternative.safety_stock_gap_before_delivery),
+        (text["stockout"], current.stockout_before_delivery, alternative.stockout_before_delivery),
+        (text["inventory_after"], current.inventory_immediately_after_delivery, alternative.inventory_immediately_after_delivery),
+        (text["required_delivery"], current.required_delivery_volume, alternative.required_delivery_volume),
+        (text["capacity"], current.capacity_exceeded, alternative.capacity_exceeded),
+    )
+    lines.extend((text["metrics"][0] + " | " + text["metrics"][1] + " | " + text["metrics"][2],))
+    for label, baseline, alternative_value in metrics:
+        format_value = _yes_no if isinstance(baseline, bool) else _quantity_text
+        current_text = format_value(baseline, lang) if isinstance(baseline, bool) else format_value(baseline)
+        alternative_text = format_value(alternative_value, lang) if isinstance(alternative_value, bool) else format_value(alternative_value)
+        lines.append(f"{label} | {current_text} | {alternative_text}")
+    return "\n".join(lines)
 
 
 def _position_label(item, lang: str) -> str:
@@ -338,6 +485,16 @@ def _position_label(item, lang: str) -> str:
     if not product_label:
         product_label = product_id
     return " · ".join(value for value in (site, product_label) if value) or item.item.item_id
+
+
+def _operational_error_categories(errors: tuple[str, ...]) -> tuple[str, ...]:
+    """Expose stable error classes separately from provider-specific messages."""
+    categories = []
+    for error in errors:
+        prefix = error.split(":", 1)[0].strip()
+        if prefix.endswith("Error") and prefix not in categories:
+            categories.append(prefix)
+    return tuple(categories)
 
 
 def _render_position_card(item, lang: str = "en") -> None:
@@ -572,7 +729,9 @@ def _primary_answer(response: WorkspaceResponse, question: str, lang: str) -> st
     answer = re.sub(r":\s*[,;]+(?=\s*[.!?]|$)", "", answer)
     answer = re.sub(r",\s*(?=[.!?])", "", answer)
     answer = re.sub(r"\s+([.,;:!?])", r"\1", answer)
-    answer = re.sub(r"([,;:])(?=\S)", r"\1 ", answer)
+    # Add missing punctuation spacing without splitting grouped numbers such
+    # as "-1,100" into the misleading "-1, 100".
+    answer = re.sub(r"([,;:])(?=[^\s\d])", r"\1 ", answer)
     answer = re.sub(r"[ \t]{2,}", " ", answer)
     return answer.strip()
 

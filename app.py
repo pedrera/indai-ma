@@ -153,6 +153,8 @@ if "operation_started_at" not in st.session_state:
     st.session_state.operation_started_at = None
 if "operation_id" not in st.session_state:
     st.session_state.operation_id = None
+if "workspace_operation_id" not in st.session_state:
+    st.session_state.workspace_operation_id = None
 if "pipeline_recorder" not in st.session_state:
     st.session_state.pipeline_recorder = None
 if "gas_precomputed_tool_executions" not in st.session_state:
@@ -1165,6 +1167,7 @@ def start_conversational_workspace(question: str, session_context: SupplyAgentSe
         recorder.finish("failed")
         raise
     st.session_state.pipeline_recorder = recorder
+    st.session_state.workspace_operation_id = operation_id
     st.session_state.generation_job = job
     st.session_state.generation_kind = "conversational_workspace"
     st.session_state.generation_notice = None
@@ -1533,8 +1536,18 @@ def render_generation_status() -> None:
 
 @st.fragment(run_every=0.5)
 def render_pipeline_panel() -> None:
-    view = visible_execution()
-    render_pipeline_inspector(view.snapshot if view else None)
+    if selected_mode == "indAI MA":
+        operation_id = st.session_state.get("workspace_operation_id")
+        recorder = st.session_state.get("pipeline_recorder")
+        if recorder is not None and recorder.operation_id == operation_id:
+            snapshot = recorder.snapshot()
+        else:
+            view = find_execution(st.session_state.execution_views, operation_id)
+            snapshot = view.snapshot if view else None
+    else:
+        view = visible_execution()
+        snapshot = view.snapshot if view else None
+    render_pipeline_inspector(snapshot)
 
 
 if selected_mode != "indAI MA":

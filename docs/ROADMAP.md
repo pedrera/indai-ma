@@ -2,8 +2,8 @@
 
 ## Current status
 
-The latest published baseline is **v1.12.0**. The current working tree contains
-the **v1.13.0 Conversational Workspace release candidate**, which has not been
+The latest published baseline is **v1.13.0**. The current working tree contains
+the **v1.14.0 Conversational Intelligence release candidate**, which has not been
 tagged or published.
 This roadmap distinguishes shipped capabilities from future candidates; candidate
 items are not commitments or claims about the current implementation.
@@ -46,12 +46,18 @@ items are not commitments or claims about the current implementation.
   follow-up context, per-item documentary retrieval/citation scopes, explicit
   single-item what-if and Supply Portfolio / Pipeline Inspector presentation.
   No cross-position physical aggregation or recommendation is included.
-- **v1.13.0 release candidate — Conversational Workspace:** conversation-first
+- **v1.13.0 — Conversational Workspace:** conversation-first
   default entry point that routes requests over existing deterministic portfolio
   selection, per-position evidence, identity-scoped documents and explicit
   single-item scenarios. Bounded follow-up context and structured cards preserve
   evidence boundaries; specialized demo views remain reachable in secondary
   navigation. No new calculations, aggregation or recommendations are added.
+- **v1.14.0 release candidate — Conversational Intelligence:** bounded current-set,
+  focus, documentary and scenario continuity; deterministic structured reference
+  resolution; unit-safe factual comparisons over existing projections; scoped
+  documentary follow-ups; original-baseline scenario follow-ups; and progressive
+  conversational presentation. v1.13.0 is the published baseline; v1.14.0 is
+  not yet released.
 
 ## Future direction
 
@@ -61,6 +67,9 @@ implementation unless described in the completed releases above:
 - **Future industrial decision support:** candidate direction only; no additional
   agents, coordination, cross-position aggregation or decision automation is
   implied by the current release candidate.
+- **v1.15 — Decision Support:** future candidate for explicit multi-alternative
+  comparison, subject to separate design and validation; it is not implemented in
+  v1.14.0.
 - **v2.0.0 — Industrial Decision Intelligence:** longer-term direction, not a
   commitment or an existing capability.
 

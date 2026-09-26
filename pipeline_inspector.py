@@ -29,6 +29,9 @@ from diagnostics import (
 
 STAGE_PRESENTATION = {
     "workspace_intent_routing": ("⌖", "Workspace Intent / Routing"),
+    "workspace_reference_resolution": ("↪", "Workspace Reference Resolution"),
+    "deterministic_comparison": ("⇄", "Deterministic Factual Comparison"),
+    "scenario_clarification": ("?", "Scenario Clarification"),
     "workspace_structured_evidence": ("▣", "Structured Operational Evidence"),
     "workspace_response_projection": ("✓", "Workspace Response Projection"),
     "portfolio_query": ("⌕", "Portfolio Query / Selection"),
@@ -523,7 +526,14 @@ def _render_supply_agent_timeline(snapshot: PerformanceSnapshot) -> list[str]:
                 """
             )
         )
-        if event.stage == "portfolio_query":
+        if event.stage == "workspace_intent_routing":
+            parts.append(
+                '<div class="pi-tools"><div class="pi-tool">'
+                f'<small>Intent: {escape(str(event.metadata.get("intent", "unknown")))}</small>'
+                f'<small>Capabilities: {escape(str(event.metadata.get("capabilities", ())))}</small>'
+                '</div></div>'
+            )
+        elif event.stage == "portfolio_query":
             parts.append(
                 '<div class="pi-tools"><div class="pi-tool">'
                 f'<small>Resolved item IDs: {escape(str(event.metadata.get("resolved_item_ids", ())))}</small>'
@@ -536,6 +546,37 @@ def _render_supply_agent_timeline(snapshot: PerformanceSnapshot) -> list[str]:
                 f'<small>Resolution: {escape(str(event.metadata.get("resolution", "structured_context")))}</small>'
                 f'<small>Focused item: {escape(str(event.metadata.get("focused_item_id") or "none"))}</small>'
                 f'<small>Selected: {escape(str(event.metadata.get("selected_item_ids", ())))}</small>'
+                '</div></div>'
+            )
+        elif event.stage == "workspace_reference_resolution":
+            parts.append(
+                '<div class="pi-tools"><div class="pi-tool">'
+                f'<small>Previous selection: {escape(str(event.metadata.get("previous_selected_item_ids", ())))}</small>'
+                f'<small>Resolved selection: {escape(str(event.metadata.get("selected_item_ids", ())))}</small>'
+                f'<small>Focus: {escape(str(event.metadata.get("focused_item_id") or "none"))}</small>'
+                f'<small>Intent: {escape(str(event.metadata.get("resolved_intent", "reference")))}</small>'
+                f'<small>Clarification required: {escape(str(event.metadata.get("clarification_required", False)))}</small>'
+                '</div></div>'
+            )
+        elif event.stage == "deterministic_comparison":
+            values = event.metadata.get("values", ())
+            formatted = "; ".join(
+                f'{item.get("item_id", "unknown")}: {item.get("value")} {item.get("unit") or ""}'.strip()
+                for item in values if isinstance(item, dict)
+            )
+            parts.append(
+                '<div class="pi-tools"><div class="pi-tool">'
+                f'<small>Field: {escape(str(event.metadata.get("field", "unknown")))}</small>'
+                f'<small>Selected items: {escape(str(event.metadata.get("selected_item_ids", ())))}</small>'
+                f'<small>Comparable: {escape(str(event.metadata.get("comparable", "pending")))}</small>'
+                f'<small>Values: {escape(formatted or "none")}</small>'
+                '</div></div>'
+            )
+        elif event.stage == "scenario_clarification":
+            parts.append(
+                '<div class="pi-tools"><div class="pi-tool">'
+                f'<small>Target item: {escape(str(event.metadata.get("target_item_id") or "none"))}</small>'
+                f'<small>Explicit day change supported: {escape(str(event.metadata.get("supported_day_change", False)))}</small>'
                 '</div></div>'
             )
         elif event.stage == "portfolio_knowledge_retrieval":
@@ -553,6 +594,33 @@ def _render_supply_agent_timeline(snapshot: PerformanceSnapshot) -> list[str]:
                 f'<small>Alternative: {escape(str(event.metadata.get("alternative_id", "pending")))}</small>'
                 '</div></div>'
             )
+        elif event.stage == "workspace_structured_evidence":
+            parts.append(
+                '<div class="pi-tools"><div class="pi-tool">'
+                f'<small>Position: {escape(str(event.metadata.get("item_id", "unknown")))}</small>'
+                f'<small>Evaluation: {escape(str(event.metadata.get("domain_status", "unknown")))}</small>'
+                f'<small>Finding codes: {escape(str(event.metadata.get("finding_codes", ())))}</small>'
+                f'<small>Projection available: {escape(str(event.metadata.get("has_projection", "unknown")))}</small>'
+                f'<small>Missing inputs: {escape(str(event.metadata.get("missing_input_count", "unknown")))}</small>'
+                '</div></div>'
+            )
+        elif event.stage == "workspace_response_projection":
+            guard_applied = bool(event.metadata.get("semantic_guard_applied", False))
+            guard_diagnostics = ""
+            if guard_applied:
+                guard_diagnostics = (
+                    f'<small>Semantic guard reason: {escape(str(event.metadata.get("semantic_guard_reason") or "unknown"))}</small>'
+                    f'<small>Rule: {escape(str(event.metadata.get("semantic_guard_rule") or "unknown"))}</small>'
+                    f'<small>Pattern: {escape(str(event.metadata.get("semantic_guard_pattern_id") or "unknown"))}</small>'
+                    f'<small>Matched phrase: {escape(str(event.metadata.get("semantic_guard_matched_phrase") or "unknown"))}</small>'
+                )
+            parts.append(
+                '<div class="pi-tools"><div class="pi-tool">'
+                f'<small>Selected item IDs: {escape(str(event.metadata.get("selected_item_ids", ())))}</small>'
+                f'<small>Semantic guard applied: {escape(str(event.metadata.get("semantic_guard_applied", "unknown")))}</small>'
+                f'{guard_diagnostics}'
+                '</div></div>'
+            )
         elif event.stage == "citation_validation":
             parts.append(
                 '<div class="pi-tools"><div class="pi-tool">'
@@ -562,6 +630,12 @@ def _render_supply_agent_timeline(snapshot: PerformanceSnapshot) -> list[str]:
             )
         if event.stage == "tool_execution":
             parts.append(_render_tool_events([event]))
+        elif event.stage == "agent_decision" and event.status == PerformanceStatus.FAILED:
+            error_type = escape(str(event.metadata.get("error_type", "ExecutionError")))
+            parts.append(
+                '<div class="pi-tools"><div class="pi-tool">'
+                f'<strong>Decision failed</strong><small>{error_type}</small></div></div>'
+            )
         elif event.stage == "llm_call":
             metric = call_metrics.get(int(event.metadata.get("call_number", event.round or 0)))
             if metric:
@@ -629,6 +703,7 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
             "rag_chat": "RAG Chat",
             "rag_index": "RAG Indexing",
             "gas_analysis": "Gas Analysis",
+            "conversational_workspace": "Conversational Workspace",
             "procurement_agent": "ProcurementAgent",
             "procurement_planner": "Planner Agent",
             "procurement_deterministic": "Deterministic Procurement",
@@ -701,7 +776,7 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
             for stage in pipeline_stages
         }
         timeline_parts = ['<div class="pi-timeline">']
-        if snapshot.mode == "supply_agent":
+        if snapshot.mode in {"supply_agent", "conversational_workspace"}:
             timeline_parts.extend(_render_supply_agent_timeline(snapshot))
             pipeline_stages = ()
         elif snapshot.mode == "risk_agent":

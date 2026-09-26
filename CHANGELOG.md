@@ -4,7 +4,35 @@ This maintained changelog begins with v1.9.0. Earlier release history is recorde
 in annotated Git tags and selected historical release notes; the repository does
 not reconstruct every development milestone as a release.
 
-## v1.13.0 — Conversational Workspace (release candidate)
+## v1.14.0 — Conversational Intelligence (release candidate)
+
+### Continuous conversational workspace
+
+- Extend the bounded structured session context with current-set and focused-item
+  semantics, prior structured intent/query, documentary scope and explicit
+  scenario target/change. References are validated against the current portfolio;
+  New conversation clears the full context.
+- Resolve practical Spanish/English references such as the focused position,
+  the other position, the current set and business identities deterministically.
+  Ambiguous and stale references request clarification instead of selecting an
+  arbitrary item. Explicit identity in the current turn takes precedence.
+- Add deterministic factual comparisons for safety-stock shortfall magnitude,
+  inventory before delivery, stockout and capacity-exceeded facts. Signed gaps
+  remain visible, physical values require matching operational units, and no
+  cross-position quantities are aggregated.
+- Allow a clear documentary-content question to retrieve from a unique focused
+  position without requiring a prior document turn. Keep retrieval identity-scoped,
+  update document scope after usable retrieval, and preserve citation validation.
+- Keep explicit operational metric follow-ups deterministic after documentary
+  turns, and tie each explicit delivery-time scenario to the original baseline.
+- Present compact comparisons and business-readable position references in the
+  existing conversational workspace without adding a top-level mode or controls.
+
+The published baseline is v1.13.0. v1.14.0 is a release candidate, not a
+published release. Decision Support and batch alternative comparison remain
+future v1.15 scope and are not implemented here.
+
+## v1.13.0 — Conversational Workspace
 
 ### Conversation-first industrial workspace
 
@@ -37,7 +65,7 @@ not reconstruct every development milestone as a release.
   deterministic portfolio lists and explicit scenario calculations remain
   generation-independent. Documentary responses still require eligible scoped
   sources and valid citations.
-- v1.13.0 is a release candidate; it has not been released or tagged.
+- v1.13.0 is the published baseline for v1.14.0.
 
 ## v1.12.0 — Portfolio Intelligence
 

@@ -137,6 +137,9 @@ class SupplyAgentSessionContext:
     focused_item_id: str | None = None
     last_query: PortfolioQuery | None = None
     last_scenario_target_id: str | None = None
+    last_intent: str | None = None
+    last_document_scope_item_ids: tuple[str, ...] = ()
+    last_scenario_change: tuple[str, str] | None = None
 
     def __post_init__(self) -> None:
         ids = tuple(dict.fromkeys(item_id for item_id in self.selected_item_ids if item_id))[:32]
@@ -144,7 +147,16 @@ class SupplyAgentSessionContext:
             raise ValueError("focused item must be in the bounded selected item IDs")
         if self.last_scenario_target_id and self.last_scenario_target_id not in ids:
             raise ValueError("scenario target must be in the bounded selected item IDs")
+        document_scope = tuple(dict.fromkeys(
+            item_id for item_id in self.last_document_scope_item_ids if item_id in ids
+        ))[:32]
+        if self.last_scenario_change is not None:
+            if len(self.last_scenario_change) != 2:
+                raise ValueError("last scenario change must contain a field and explicit value")
+            change = tuple(str(value) for value in self.last_scenario_change)
+            object.__setattr__(self, "last_scenario_change", change)
         object.__setattr__(self, "selected_item_ids", ids)
+        object.__setattr__(self, "last_document_scope_item_ids", document_scope)
 
 
 @dataclass(frozen=True)

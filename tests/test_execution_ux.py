@@ -158,6 +158,121 @@ class ExecutionUXTests(unittest.TestCase):
                 if mode == 'RiskAgent':
                     self.assertFalse(app.checkbox(key='risk_use_llm').value)
 
+    def test_default_workspace_diagnostics_uses_its_own_current_execution(self):
+        from generation import GenerationResult, GenerationStatus
+        copied_diagnostics = []
+
+        class ImmediateAgentJob:
+            def __init__(self, agent, request, timeout_seconds, provider=None):
+                self.agent = agent
+                self.request = request
+                self.timeout_seconds = timeout_seconds
+                self.result = None
+                self.cancel_requested = False
+
+            def start(self):
+                result = self.agent.run(self.request, self.timeout_seconds)
+                self.result = GenerationResult(
+                    status=GenerationStatus.COMPLETED,
+                    content=result.explanation,
+                    execution_status=result.status.value,
+                    domain_result=result,
+                )
+
+            def poll(self):
+                return self.result
+
+            def cancel(self):
+                self.cancel_requested = True
+
+        stale_recorder = PerformanceRecorder('older-operation', 'fixture', 'old', 'rag_chat')
+        stale_recorder.record_stage('vector_search', query='unrelated previous operation')
+        stale_recorder.finish('completed')
+
+        with patch('llm_client.get_available_models', return_value=[]), patch(
+            'generation.AgentJob', ImmediateAgentJob,
+        ), patch(
+            'pipeline_inspector.render_clipboard_button',
+            side_effect=lambda text, label, **kwargs: copied_diagnostics.append((text, label, kwargs)),
+        ):
+            app = AppTest.from_file(APP, default_timeout=20).run()
+            self.assertFalse(app.exception)
+            self.assertEqual(app.radio(key='selected_mode').value, 'indAI MA')
+            developer_diagnostics = next(
+                item for item in app.expander if item.label == 'Developer diagnostics'
+            )
+            self.assertFalse(developer_diagnostics.proto.expanded)
+            self.assertIn(
+                'Pipeline Inspector',
+                [item.label for item in developer_diagnostics.expander],
+            )
+
+            app.button(key='workspace_starter_0').click().run()
+            self.assertFalse(app.exception)
+            operation_id = app.session_state['workspace_operation_id']
+            self.assertTrue(operation_id)
+            workspace_recorder = app.session_state['pipeline_recorder']
+            self.assertEqual(workspace_recorder.operation_id, operation_id)
+            self.assertEqual(workspace_recorder.mode, 'conversational_workspace')
+            self.assertEqual(app.session_state['execution_views'][operation_id].snapshot.operation_id, operation_id)
+
+            developer_diagnostics = next(
+                item for item in app.expander if item.label == 'Developer diagnostics'
+            )
+            self.assertFalse(developer_diagnostics.proto.expanded)
+            pipeline_inspector = next(
+                item for item in app.expander if item.label == 'Pipeline Inspector'
+            )
+            self.assertFalse(pipeline_inspector.proto.expanded)
+            self.assertIn('Métricas avanzadas', [item.label for item in app.expander])
+            self.assertIn(
+                'Métricas avanzadas',
+                [item.label for item in pipeline_inspector.expander],
+            )
+            app.run()
+            self.assertFalse(app.exception)
+
+            self.assertTrue(any(operation_id in str(item.value) for item in app.caption))
+            inspector_text = '\n'.join(
+                str(item.value)
+                for collection in (app.markdown, app.caption, app.text, app.info)
+                for item in collection
+            )
+            self.assertIn('Conversational Workspace', inspector_text)
+            self.assertIn('Workspace Intent / Routing', inspector_text)
+            self.assertIn('Workspace Response Projection', inspector_text)
+            self.assertNotIn('older-operation', inspector_text)
+            self.assertNotIn('Query Embedding', inspector_text)
+            self.assertNotIn('Vector Search', inspector_text)
+            self.assertNotIn('Retrieved Context', inspector_text)
+            self.assertNotIn('LLM Call', inspector_text)
+            selected_copy = next(
+                item for item in copied_diagnostics
+                if item[1] == 'Copiar diagnóstico' and f"ID: {operation_id}" in item[0]
+            )
+            self.assertIn('workspace_intent_routing', selected_copy[0])
+            self.assertEqual(selected_copy[2]['key'], f'diagnostics-{operation_id}')
+            self.assertNotIn('older-operation', selected_copy[0])
+            self.assertNotIn('"query"', selected_copy[0])
+            self.assertNotIn('unrelated previous operation', selected_copy[0])
+
+            app.session_state['pipeline_recorder'] = stale_recorder
+            app.run()
+            self.assertFalse(app.exception)
+            self.assertTrue(any(operation_id in str(item.value) for item in app.caption))
+            retained_text = '\n'.join(
+                str(item.value)
+                for collection in (app.markdown, app.caption, app.text, app.info)
+                for item in collection
+            )
+            self.assertNotIn('older-operation', retained_text)
+            refreshed_copy = next(
+                item for item in reversed(copied_diagnostics)
+                if item[1] == 'Copiar diagnóstico'
+            )
+            self.assertIn(f"ID: {operation_id}", refreshed_copy[0])
+            self.assertNotIn('older-operation', refreshed_copy[0])
+
     def test_business_demos_populate_editable_request_without_execution(self):
         with patch('llm_client.get_available_models', return_value=[]):
             app = AppTest.from_file(APP, default_timeout=20).run()

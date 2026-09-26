@@ -53,6 +53,6 @@ class LLMRuntimeConfig:
                 "LLM_MAX_OUTPUT_TOKENS", max_tokens
             ),
             max_tokens=max_tokens,
-            timeout_seconds=_read_integer("LLM_TIMEOUT_SECONDS", 300),
+            timeout_seconds=_read_integer("LLM_TIMEOUT_SECONDS", 640),
             enable_thinking=_read_boolean("LLM_ENABLE_THINKING", False),
         )

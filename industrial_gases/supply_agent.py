@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, is_dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from enum import Enum
@@ -31,6 +31,7 @@ from .portfolio_query import (
 )
 from .service import SupplyAssuranceService
 from .supply_scenarios import SupplyAssuranceAlternative, SupplyAssuranceScenarioResult, evaluate_supply_assurance_alternative
+from .factual_comparison import is_factual_comparison_question
 
 
 class SupplyAgentStatus(str, Enum):
@@ -448,7 +449,9 @@ class SupplyAgent:
                  if tool["name"] not in excluded_tools]
         if len(selected_matches) != 1:
             tools = [tool for tool in tools if tool["name"] != "evaluate_supply_what_if"]
-        documentary_required = _requires_documentary_evidence(question)
+        documentary_required = _requires_documentary_evidence(question) or _is_documentary_followup(
+            question, self.request.session_context,
+        )
         operational_context_required = _requires_operational_context(question)
         deterministic_portfolio_selection = (
             not documentary_required
@@ -460,13 +463,41 @@ class SupplyAgent:
                 "get_supply_position", "get_operational_attention",
             }]
         position_identity = _identity(self.position) if self.position else None
+        retained_scope = tuple(
+            item_id for item_id in self.request.session_context.selected_item_ids
+            if used_context and any(item.item_id == item_id for item in self.portfolio.items)
+        )
+        valid_previous_scope = tuple(
+            item_id for item_id in self.request.session_context.selected_item_ids
+            if any(item.item_id == item_id for item in self.portfolio.items)
+        )
+        context_ids = retained_scope or (
+            valid_previous_scope if clarification else selected_ids
+        )
+        next_focus = focused_item_id
+        if clarification and self.request.session_context.focused_item_id in context_ids:
+            next_focus = self.request.session_context.focused_item_id
+        focus_changed = next_focus != self.request.session_context.focused_item_id
         selected_context = SupplyAgentSessionContext(
-            selected_item_ids=selected_ids,
-            focused_item_id=focused_item_id,
-            last_query=query_result.query,
+            selected_item_ids=context_ids,
+            focused_item_id=next_focus,
+            last_query=(self.request.session_context.last_query if used_context and self.request.session_context.last_query
+                        else query_result.query),
             last_scenario_target_id=(focused_item_id if _has_explicit_what_if(question) else
                                      self.request.session_context.last_scenario_target_id
-                                     if self.request.session_context.last_scenario_target_id in selected_ids else None),
+                                     if (not focus_changed
+                                         and self.request.session_context.last_scenario_target_id in context_ids)
+                                     else None),
+            last_intent=("documentary" if documentary_required else "scenario" if _has_explicit_what_if(question)
+                         else "comparison" if is_factual_comparison_question(question) else "operational"),
+            last_document_scope_item_ids=(
+                ((next_focus,) if focus_changed and self.request.session_context.last_document_scope_item_ids
+                  and next_focus else
+                 () if focus_changed else tuple(
+                     item_id for item_id in self.request.session_context.last_document_scope_item_ids
+                     if item_id in context_ids
+                 ))),
+            last_scenario_change=(None if focus_changed else self.request.session_context.last_scenario_change),
         )
         state: dict[str, Any] = {
             "question": question,
@@ -585,7 +616,7 @@ class SupplyAgent:
                 if final_response_event:
                     self.recorder.complete_stage(final_response_event, response_chars=len(answer),
                                                  resolved_item_ids=selected_ids)
-            elif documentary_required:
+            elif documentary_required and not clarification:
                 for match in selected_matches:
                     retrieval_event = self.recorder.start_stage(
                         "portfolio_knowledge_retrieval", item_id=match.item_id,
@@ -683,6 +714,30 @@ class SupplyAgent:
                     self.recorder.complete_stage(
                         final_response_event, response_chars=0,
                         knowledge_status=self.tools._knowledge_status,
+                    )
+            elif (not documentary_required and len(selected_matches) == 1
+                  and _parse_explicit_day_offset(question) is not None):
+                # An explicit relative delivery-day change is already a
+                # structured instruction. Evaluate it through the existing
+                # deterministic scenario tool instead of asking generation to
+                # decide whether to call that tool.
+                execute_tool("evaluate_supply_what_if", {
+                    "item_id": focused_item_id,
+                    "change_type": "delivery_offset_days",
+                    "value": _parse_explicit_day_offset(question),
+                }, None)
+                answer = (
+                    "El escenario explícito de fecha de entrega se ha evaluado sobre la posición seleccionada."
+                    if re.search(r"[¿ñáéíóú]", question, re.IGNORECASE)
+                    else "The explicit delivery-timing scenario was evaluated for the selected position."
+                )
+                status = (SupplyAgentStatus.COMPLETED if self.tools._scenario is not None
+                          else SupplyAgentStatus.FAILED)
+                final_response_event = self.recorder.start_stage("final_response") if self.recorder else None
+                if final_response_event:
+                    self.recorder.complete_stage(
+                        final_response_event, response_chars=len(answer),
+                        scenario_evaluated=self.tools._scenario is not None,
                     )
             else:
                 for decision_count in range(1, self.MAX_DECISIONS + 1):
@@ -793,6 +848,18 @@ class SupplyAgent:
             self.tools._knowledge_status_by_item, self.tools._scenario,
             focused_item_id, refs,
         )
+        if self.tools._scenario is not None:
+            selected_context = replace(
+                selected_context,
+                last_scenario_change=_scenario_change_reference(self.tools._scenario),
+            )
+        if documentary_required and self.tools._knowledge_sources:
+            # A documentary scope represents a successfully retrieved evidence
+            # scope, not merely the position requested by the user.
+            selected_context = replace(
+                selected_context,
+                last_document_scope_item_ids=selected_ids,
+            )
         final_event = self.recorder.start_stage("agent_final", agent_name=self.name) if self.recorder else None
         result = SupplyAgentResponse(
             status=status, answer=answer, portfolio_item_id=focused_item_id,
@@ -822,24 +889,110 @@ class SupplyAgent:
 
 def _resolve_portfolio_scope(question, portfolio, attention, request):
     explicit = _identity_filters_from_question(question, portfolio)
-    query = _intent_filters(question, portfolio)
-    query = PortfolioQuery(**{**asdict(query), **explicit})
+    new_portfolio_query = _is_portfolio_query(question)
     context = request.session_context
+    query = _intent_filters(question, portfolio)
+    # A selected position's operational question refers to its projection;
+    # finding/status words must not turn it into a portfolio-list filter.
+    if context.selected_item_ids and not new_portfolio_query and _requires_operational_context(question):
+        query = PortfolioQuery()
+    query = PortfolioQuery(**{**asdict(query), **explicit})
     context_used = False
     clarification = None
-    new_portfolio_query = _is_portfolio_query(question)
     has_explicit_identity = bool(explicit)
 
-    if request.portfolio_item_id and not has_explicit_identity and not new_portfolio_query and not _has_portfolio_filter(query):
+    unresolved_reference = (
+        _is_other_reference(question) or _is_focus_reference(question)
+        or _is_current_set_reference(question)
+        or bool(re.search(r"\b(?:la del hospital|el del hospital|la de (?:co2|n2|ox[ií]geno)|the hospital one)\b", question, re.I))
+    )
+    bare_documentary_followup = re.search(
+        r"\bqu[eé]\s+(?:dice|indica|establece)\s+(?:sobre|acerca\s+de)\b|"
+        r"\bwhat\s+does\s+it\s+say\s+about\b",
+        question, re.IGNORECASE,
+    )
+    if (unresolved_reference or bare_documentary_followup) \
+            and not context.selected_item_ids and not has_explicit_identity:
+        clarification = "Which position do you mean? There is no current position selection to resolve that reference."
+        query = PortfolioQuery(**{**asdict(query), "item_id": "__unavailable_context__"})
+    elif request.portfolio_item_id and not has_explicit_identity and not new_portfolio_query and not _has_portfolio_filter(query):
         query = PortfolioQuery(**{**asdict(query), "item_id": request.portfolio_item_id})
     elif not has_explicit_identity and not new_portfolio_query and context.selected_item_ids:
         available = {item.item_id for item in portfolio.items}
         valid_context_ids = tuple(item_id for item_id in context.selected_item_ids if item_id in available)
         refers_to_context = _has_context_reference(question)
         context_used = True
-        if refers_to_context and not valid_context_ids:
+        if refers_to_context and context.focused_item_id and context.focused_item_id not in available:
             clarification = "The previous position reference is no longer available. Please identify the position again."
             query = PortfolioQuery(**{**asdict(query), "item_id": "__unavailable_context__"})
+        elif refers_to_context and not valid_context_ids:
+            clarification = "The previous position reference is no longer available. Please identify the position again."
+            query = PortfolioQuery(**{**asdict(query), "item_id": "__unavailable_context__"})
+        elif is_factual_comparison_question(question):
+            if len(valid_context_ids) < 2:
+                clarification = "Which selected positions should I compare?"
+            else:
+                query = PortfolioQuery(**{**asdict(query), "item_ids": valid_context_ids})
+        elif _has_explicit_what_if(question):
+            # Current-turn scenario intent outranks a retained documentary
+            # scope. Reuse a valid scenario target, otherwise the focused or
+            # unique current position; never pick arbitrarily from a set.
+            scenario_target = (
+                context.last_scenario_target_id
+                if context.last_scenario_target_id in valid_context_ids
+                else context.focused_item_id
+                if context.focused_item_id in valid_context_ids
+                else valid_context_ids[0]
+                if len(valid_context_ids) == 1
+                else None
+            )
+            if scenario_target:
+                query = PortfolioQuery(**{**asdict(query), "item_id": scenario_target})
+            elif len(valid_context_ids) > 1:
+                clarification = "Which single selected position should the what-if scenario target?"
+                query = PortfolioQuery(**{**asdict(query), "item_ids": valid_context_ids})
+            else:
+                clarification = "The previous position reference is no longer available. Please identify the position again."
+                query = PortfolioQuery(**{**asdict(query), "item_id": "__unavailable_context__"})
+        elif _is_other_reference(question):
+            if len(valid_context_ids) != 2 or context.focused_item_id not in valid_context_ids:
+                clarification = "I can resolve “the other position” only when exactly two positions are selected and one is focused."
+                query = PortfolioQuery(**{**asdict(query), "item_ids": valid_context_ids})
+            else:
+                other_id = next(item_id for item_id in valid_context_ids if item_id != context.focused_item_id)
+                query = PortfolioQuery(**{**asdict(query), "item_id": other_id})
+        elif _is_current_set_reference(question):
+            if len(valid_context_ids) < 2:
+                clarification = "There are not two current positions to refer to as a set."
+            else:
+                query = PortfolioQuery(**{**asdict(query), "item_ids": valid_context_ids})
+        elif _is_focus_reference(question):
+            if context.focused_item_id in valid_context_ids:
+                query = PortfolioQuery(**{**asdict(query), "item_id": context.focused_item_id})
+            elif len(valid_context_ids) == 1:
+                query = PortfolioQuery(**{**asdict(query), "item_id": valid_context_ids[0]})
+            else:
+                clarification = "Which of the previously selected positions do you mean?"
+                query = PortfolioQuery(**{**asdict(query), "item_ids": valid_context_ids})
+        elif _resolve_named_context_reference(question, portfolio, valid_context_ids):
+            named = _resolve_named_context_reference(question, portfolio, valid_context_ids)
+            if len(named) == 1:
+                query = PortfolioQuery(**{**asdict(query), "item_id": named[0]})
+            else:
+                clarification = "Which selected position do you mean?"
+                query = PortfolioQuery(**{**asdict(query), "item_ids": valid_context_ids})
+        elif ((_requires_documentary_evidence(question) or _is_documentary_followup(question, context))
+              and not context.focused_item_id and context.last_document_scope_item_ids):
+            document_ids = tuple(
+                item_id for item_id in context.last_document_scope_item_ids
+                if item_id in valid_context_ids
+            )
+            if len(document_ids) == 1:
+                query = PortfolioQuery(**{**asdict(query), "item_id": document_ids[0]})
+            elif document_ids:
+                query = PortfolioQuery(**{**asdict(query), "item_ids": document_ids})
+            else:
+                clarification = "The previous document scope is no longer available. Please identify the position again."
         elif refers_to_context and len(valid_context_ids) > 1 and context.focused_item_id not in valid_context_ids:
             query = PortfolioQuery(**{**asdict(query), "item_ids": valid_context_ids})
             context_matches = _resolve_named_context_reference(question, portfolio, valid_context_ids)
@@ -859,6 +1012,9 @@ def _resolve_portfolio_scope(question, portfolio, attention, request):
 
     selected = SupplyPortfolioQueryService().select(portfolio, attention, query)
     ids = selected.item_ids
+    if (not clarification and len(ids) > 1 and has_explicit_identity
+            and _is_ambiguous_product_reference(question, explicit)):
+        clarification = "Which position do you mean? More than one selected position matches that gas product."
     if not clarification and _has_explicit_what_if(question) and len(ids) > 1:
         clarification = "Which single portfolio position should the what-if scenario target?"
     focused = ids[0] if len(ids) == 1 else None
@@ -927,7 +1083,7 @@ def _is_portfolio_query(question: str) -> bool:
     return bool(re.search(
         r"\b(?:which positions?|what positions?|show positions?|positions? with|positions? without|"
         r"evaluation issues|posiciones? que|posiciones? con|posiciones? sin|qu[eé] posiciones|"
-        r"cu[aá]les posiciones|estas posiciones|esas posiciones)\b",
+        r"cu[aá]les posiciones)\b",
         question, re.IGNORECASE,
     ))
 
@@ -939,8 +1095,32 @@ def _has_portfolio_filter(query: PortfolioQuery) -> bool:
 def _has_context_reference(question: str) -> bool:
     return bool(re.search(
         r"\b(?:it|its|they|their|that one|the .* one|those|these|that position|"
-        r"su entrega|su posici[oó]n|esa|ese|la del|el del|y si)\b", question, re.IGNORECASE,
+        r"su entrega|su posici[oó]n|esa|ese|la del|el del|la otra|el otro|ambas?|las dos|"
+        r"both|la de |el de |el contrato|sobre la entrega|el procedimiento|el hospital|the hospital|"
+        r"the co2 one|the oxygen one|y si|two days? earlier)\b", question, re.IGNORECASE,
     )) or _has_explicit_what_if(question)
+
+
+def _is_other_reference(question: str) -> bool:
+    return bool(re.search(r"\b(?:la otra|el otro|the other one|the other position)\b", question, re.IGNORECASE))
+
+
+def _is_current_set_reference(question: str) -> bool:
+    return bool(re.search(r"\b(?:ambas|los dos|las dos|esas posiciones|esas dos posiciones|both|both positions)\b", question, re.IGNORECASE))
+
+
+def _is_focus_reference(question: str) -> bool:
+    return bool(re.search(r"\b(?:esa|ese|esa posici[oó]n|that one|that position)\b", question, re.IGNORECASE))
+
+
+def _is_ambiguous_product_reference(question: str, explicit: dict[str, str]) -> bool:
+    if set(explicit) != {"gas_product"}:
+        return False
+    return bool(re.search(
+        r"\b(?:la|el)\s+(?:de|del)\s+(?:co2|n2|ox[ií]geno|oxygen|nitrogen|nitr[oó]geno)\b|"
+        r"\b(?:co2|n2)\b(?!\s+(?:de|del)\s+[\wáéíóúñ-]+)",
+        question, re.IGNORECASE,
+    ))
 
 
 def _resolve_named_context_reference(question: str, portfolio, selected_ids: tuple[str, ...]) -> tuple[str, ...]:
@@ -974,7 +1154,7 @@ def _resolve_named_context_reference(question: str, portfolio, selected_ids: tup
 
 
 def _refers_to_multiple_context_items(question: str) -> bool:
-    return bool(re.search(r"\b(?:those|these|both|ambas?|esas posiciones|estas posiciones)\b", question, re.IGNORECASE))
+    return _is_current_set_reference(question)
 
 
 def _normalize_query_text(value: str) -> str:
@@ -1142,14 +1322,14 @@ def _decision_prompt(question: str, state: dict[str, Any], tools: list[dict[str,
 
 _DOCUMENTARY_INTENT = re.compile(
     r"\b(?:contrat\w*|contract\w*|procedim\w*|procedur\w*|"
-    r"especificaci\w*|specification\w*|pol[ií]tic\w*|policy|"
+    r"especificaci\w*|specification\w*|instalaci\w*|installation\w*|pol[ií]tic\w*|policy|"
     r"document\w*|cl[aá]usul\w*|clause\w*|manual\w*|protocol\w*|"
     r"garant[ií]a\w*|warrant\w*|terms?|condiciones\s+de\s+suministro)\b",
     re.IGNORECASE,
 )
 _DOCUMENTARY_CLAIM = re.compile(
     r"\b(?:contrat\w*|contract\w*|procedim\w*|procedur\w*|"
-    r"especificaci\w*|specification\w*|pol[ií]tic\w*|policy|"
+    r"especificaci\w*|specification\w*|instalaci\w*|installation\w*|pol[ií]tic\w*|policy|"
     r"document\w*|cl[aá]usul\w*|clause\w*|manual\w*|protocol\w*|"
     r"garant[ií]a\w*|warrant\w*|terms?)\b",
     re.IGNORECASE,
@@ -1166,10 +1346,24 @@ def _requires_documentary_evidence(question: str) -> bool:
     return bool(_DOCUMENTARY_INTENT.search(question))
 
 
+def _is_documentary_followup(question: str, context: SupplyAgentSessionContext) -> bool:
+    """Recognize direct documentary-content questions, with or without prior document scope."""
+    direct_content_question = re.search(
+        r"\b(?:qu[eé]\s+(?:dice|indica|establece)\b.*\b(?:sobre|acerca\s+de)\b|"
+        r"qu[eé]\s+(?:dice|indica|establece)\s+(?:el\s+)?(?:contrato|documentaci[oó]n|procedimiento)\b|"
+        r"what\s+does\s+it\s+say\b.*\babout\b|"
+        r"what\s+does\s+(?:the\s+)?(?:documentation|contract|procedure)\s+(?:say|establish|indicate)\b)",
+        question, re.IGNORECASE,
+    )
+    return bool(direct_content_question)
+
+
 _DOCUMENT_LIST_INTENT = re.compile(
     r"\b(?:what|which)\s+(?:documents?|documentation|sources?)\b|"
+    r"\bwhat\s+(?:contract|procedure|operating\s+procedure)\s+(?:does\s+it\s+have|is\s+there)\b|"
     r"\bqu[eé]\s+(?:(?:informaci[oó]n|documentaci[oó]n)\s+)?"
-    r"(?:document(?:o|os|al|aci[oó]n)|fuentes?)\b",
+    r"(?:document(?:o|os|al|aci[oó]n)|fuentes?)\b|"
+    r"\bqu[eé]\s+(?:contrato|procedimiento|protocolo)\s+(?:tiene|hay|aplica)\b",
     re.IGNORECASE,
 )
 
@@ -1181,7 +1375,8 @@ def _is_document_list_request(question: str) -> bool:
 
 _OPERATIONAL_CONTEXT_INTENT = re.compile(
     r"\b(?:atenci[oó]n|attention|posici[oó]n|position|inventario|inventory|"
-    r"stock|brecha|gap|agotamiento|stockout)\b",
+    r"stock|brecha|gap|agotamiento|stockout|consumo|consume|consumption|volumen\s+requerido|"
+    r"required\s+volume)\b",
     re.IGNORECASE,
 )
 
@@ -1589,9 +1784,14 @@ def _workspace_answer_guidance(state: dict[str, Any]) -> str:
 
 def _parse_explicit_day_offset(question: str) -> int | None:
     folded = question.casefold()
-    direct = re.search(r"(?P<n>\d+)\s*(?:day|days|d[ií]a|d[ií]as)\s*(?P<direction>earlier|before|sooner|antes|adelantad[oa]s?|later|after|despu[eé]s)", folded)
+    number_words = {
+        "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+        "un": 1, "una": 1, "uno": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5,
+    }
+    direct = re.search(r"(?P<n>\d+|one|two|three|four|five|un|una|uno|dos|tres|cuatro|cinco)\s*(?:day|days|d[ií]a|d[ií]as)\s*(?P<direction>earlier|before|sooner|antes|adelantad[oa]s?|later|after|despu[eé]s)", folded)
     if direct:
-        number = int(direct.group("n"))
+        token = direct.group("n")
+        number = int(token) if token.isdigit() else number_words[token]
         return -number if direct.group("direction") in {"earlier", "before", "sooner", "antes", "adelantado", "adelantada", "adelantados", "adelantadas"} else number
     if re.search(r"\b(?:un|una)\s+d[ií]a\s+antes\b", folded):
         return -1
@@ -1604,6 +1804,38 @@ def _parse_explicit_day_offset(question: str) -> int | None:
     if re.search(r"\badelanta\s+(?:la\s+)?entrega\s+(?:un|una|1)\s+d[ií]a\b", folded):
         return -1
     return None
+
+
+def _unsupported_vague_delivery_scenario(question: str) -> bool:
+    """Identify delivery-time what-ifs that lack the supported explicit day value."""
+    if not _has_explicit_what_if(question):
+        return False
+    delivery_time = re.search(
+        r"\b(?:delivery|entrega|arriv\w*|lleg\w*|earlier|later|before|after|"
+        r"antes|despu[eé]s|adelantad\w*|mañana|manana|tomorrow|sooner)\b",
+        question, re.IGNORECASE,
+    )
+    if not delivery_time:
+        return False
+    return (
+        _parse_explicit_day_offset(question) is None
+        and _parse_explicit_delivery_horizon(question) is None
+    )
+
+
+def _scenario_change_reference(scenario: SupplyAssuranceScenarioResult) -> tuple[str, str]:
+    """Retain only the explicit structured alternative value in bounded context."""
+    request = scenario.alternative.alternative_request
+    if scenario.alternative.id == "planned-delivery-time":
+        value = request.delivery_plan.planned_delivery_at.isoformat()
+        field = "delivery_plan.planned_delivery_at"
+    elif scenario.alternative.id == "planned-delivery-quantity":
+        value = f"{request.delivery_plan.planned_quantity.value} {request.delivery_plan.planned_quantity.unit}"
+        field = "delivery_plan.planned_quantity"
+    else:
+        value = f"{request.consumption_forecast.rate.value} {request.consumption_forecast.rate.quantity_unit}/{request.consumption_forecast.rate.time_unit}"
+        field = "consumption_forecast.rate"
+    return field, value
 
 
 def _parse_explicit_delivery_horizon(question: str) -> tuple[int, int | None] | None:

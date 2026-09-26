@@ -211,6 +211,55 @@ class ClipboardResponseTests(unittest.TestCase):
 
 
 class ClipboardDiagnosticsTests(unittest.TestCase):
+    def test_workspace_inspector_copy_includes_safe_trace_and_excludes_private_fields(self):
+        text = build_diagnostics_clipboard_text(snapshot([
+            event("workspace_intent_routing", {"intent": "operational", "capabilities": ("portfolio_query",)}),
+            event("portfolio_query", {
+                "query": {"raw_text": "private search query"},
+                "resolved_item_ids": ("position-1",),
+                "matched_by": {"position-1": "site"},
+            }),
+            event("workspace_structured_evidence", {
+                "item_id": "position-1", "domain_status": "COMPLETED",
+                "finding_codes": ("safety_stock_breach",), "has_projection": True,
+                "missing_input_count": 0,
+            }),
+            event("portfolio_knowledge_retrieval", {
+                "item_id": "position-1", "knowledge_status": "retrieved",
+                "retrieved_chunk_ids": ("source-1",),
+            }),
+            event("workspace_response_projection", {
+                "selected_item_ids": ("position-1",), "semantic_guard_applied": True,
+                "semantic_guard_reason": "unsupported_stockout_claim",
+                "semantic_guard_rule": "physical_stockout_claim",
+                "semantic_guard_pattern_id": "stockout-phrase",
+                "semantic_guard_matched_phrase": "stockout",
+                "answer": "private generated answer",
+            }),
+            event("tool_execution", {
+                "tool_name": "evaluate_supply_what_if",
+                "tool_arguments": {"item_id": "position-1", "change_type": "delivery_offset_days",
+                                   "value": -1, "query": "private tool prompt"},
+                "tool_result": {"status": "completed", "alternative_id": "planned-delivery-time",
+                                "answer": "private tool response"},
+            }),
+            event("llm_call", {"call_number": 1, "purpose": "generation"}, 1.2),
+        ], mode="conversational_workspace"))
+
+        self.assertIn("Mode: Conversational Workspace", text)
+        self.assertIn("workspace_intent_routing: completed", text)
+        self.assertIn("finding_codes", text)
+        self.assertIn("source-1", text)
+        self.assertIn("semantic_guard_applied", text)
+        self.assertIn("unsupported_stockout_claim", text)
+        self.assertIn("stockout-phrase", text)
+        self.assertIn("tool_name", text)
+        self.assertIn("delivery_offset_days", text)
+        self.assertIn("Server inference time total", text)
+        for private in ("private search query", "private tool prompt", "private tool response",
+                        "private generated answer", '"query":'):
+            self.assertNotIn(private, text)
+
     def test_provider_model_configuration_and_timings(self):
         text = build_diagnostics_clipboard_text(
             snapshot(

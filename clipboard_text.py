@@ -310,6 +310,8 @@ def build_diagnostics_clipboard_text(
     _append_optional(lines, "Max output tokens", _latest(events, "max_output_tokens"))
     _append_optional(lines, "Timeout", _latest(events, "timeout_seconds"), lambda x: f"{x} s")
     metrics = build_operation_metrics(snapshot)
+    if snapshot.mode == "conversational_workspace":
+        _append_workspace_execution_copy(lines, events)
     if snapshot.mode == "supervisor":
         from supervisor_ui import supervisor_diagnostics
         lines.extend(["", supervisor_diagnostics(snapshot)])
@@ -409,7 +411,7 @@ def build_diagnostics_clipboard_text(
                 f"Deterministic fallback: {'yes' if fallback_used else 'no'}",
             ]
         )
-        if reasons:
+        if reasons and snapshot.mode != "conversational_workspace":
             lines.append("Reasons:")
             lines.extend(f"- {_redact_text(str(reason))}" for reason in reasons)
 
@@ -485,7 +487,7 @@ def build_diagnostics_clipboard_text(
         for index, label in enumerate(action_names, 1):
             lines.append(f"{index}. {label}")
 
-    parsing = _latest_event(events, "input_parsing")
+    parsing = _latest_event(events, "input_parsing") if snapshot.mode != "conversational_workspace" else None
     if parsing:
         parsed = parsing.metadata.get("parsing_result", {})
         if isinstance(parsed, dict):
@@ -545,22 +547,26 @@ def build_diagnostics_clipboard_text(
             name = event.metadata.get("tool_name", "tool")
             lines.append(str(name))
             lines.append(f"  status: {event.status.value}")
-            if event.metadata.get("tool_arguments") is not None:
-                lines.append(f"  arguments: {_readable(event.metadata['tool_arguments'])}")
-            if event.metadata.get("tool_result") is not None:
-                lines.append(f"  result: {_readable(event.metadata['tool_result'])}")
+            if snapshot.mode == "conversational_workspace":
+                _append_workspace_tool_copy(lines, event)
+            else:
+                if event.metadata.get("tool_arguments") is not None:
+                    lines.append(f"  arguments: {_readable(event.metadata['tool_arguments'])}")
+                if event.metadata.get("tool_result") is not None:
+                    lines.append(f"  result: {_readable(event.metadata['tool_result'])}")
             missing = event.metadata.get("missing_inputs")
             if missing:
                 lines.append(f"  skipped inputs: {_readable(missing)}")
             reason = event.metadata.get("skip_reason")
-            if reason:
+            if reason and snapshot.mode != "conversational_workspace":
                 lines.append(f"  reason: {_redact_text(str(reason))}")
             lines.append(f"  duration: {_duration(_event_duration(event))}")
         for event in skipped_tool_events:
             lines.append(str(event.metadata.get("tool_name", "tool")))
             lines.append("  status: skipped")
-            message = event.metadata.get("message") or "No reason recorded."
-            lines.append(f"  reason: {_redact_text(str(message))}")
+            if snapshot.mode != "conversational_workspace":
+                message = event.metadata.get("message") or "No reason recorded."
+                lines.append(f"  reason: {_redact_text(str(message))}")
             lines.append(f"  duration: {_duration(_event_duration(event))}")
 
     lines.extend(["", "Pipeline", "--------"])
@@ -590,11 +596,116 @@ def build_diagnostics_clipboard_text(
         if snapshot.status not in {"running", "completed"}:
             lines.append(f"Operation status: {snapshot.status}")
         for event in problems:
+            if snapshot.mode == "conversational_workspace":
+                error_type = event.metadata.get("error_type")
+                lines.append(f"- {event.stage}: {error_type or event.status.value}")
+                continue
             detail = event.metadata.get("error") or event.metadata.get("warning") or event.metadata.get("warnings") or event.metadata.get("fallback")
             reason = event.metadata.get("skip_reason")
             text = detail or reason or event.status.value
             lines.append(f"- {event.stage}: {_redact_text(str(text))}")
     return _redact_text("\n".join(lines))
+
+
+_WORKSPACE_EVENT_FIELDS = {
+    "workspace_intent_routing": ("intent", "capabilities"),
+    "workspace_reference_resolution": (
+        "previous_selected_item_ids", "selected_item_ids", "previous_focused_item_id",
+        "focused_item_id", "previous_intent", "resolved_intent", "document_scope_item_ids",
+        "scenario_target_id",
+    ),
+    "deterministic_comparison": ("comparison_type", "comparable", "selected_item_ids"),
+    "scenario_clarification": ("target_item_id", "supported_day_change"),
+    "workspace_structured_evidence": (
+        "item_id", "domain_status", "finding_codes", "has_projection", "missing_input_count",
+    ),
+    "portfolio_query": ("resolved_item_ids", "matched_by"),
+    "session_reference_resolution": ("resolved_item_ids", "matched_by"),
+    "agent_start": ("agent_name", "item_id", "selected_item_ids"),
+    "portfolio_knowledge_retrieval": ("item_id", "knowledge_status", "retrieved_chunk_ids"),
+    "citation_validation": ("valid", "selected_item_ids", "source_count"),
+    "scenario_execution": ("item_id", "alternative_id", "change_type"),
+    "workspace_response_projection": (
+        "selected_item_ids", "status", "semantic_guard_applied", "semantic_guard_reason",
+        "semantic_guard_rule", "semantic_guard_pattern_id", "semantic_guard_matched_phrase",
+    ),
+    "provider_start": (
+        "provider", "model", "timeout_seconds", "max_tokens", "max_output_tokens",
+        "thinking_enabled",
+    ),
+}
+_WORKSPACE_SAFE_TOOL_FIELDS = {
+    "item_id", "change_type", "value", "alternative_id", "status", "source_ids",
+    "missing_inputs", "metric", "unit", "capacity_exceeded", "stockout_before_delivery",
+}
+_WORKSPACE_PRIVATE_FIELD_PARTS = (
+    "prompt", "answer", "response", "content", "reasoning", "chain_of_thought",
+    "decision_summary", "query", "raw",
+)
+
+
+def _append_workspace_execution_copy(lines: list[str], events: tuple[PerformanceEvent, ...]) -> None:
+    """Append allowlisted Workspace execution facts, never arbitrary event payloads."""
+    lines.extend(["", "Workspace execution", "--------------------"])
+    for event in events:
+        lines.append(
+            f"{event.stage}: {event.status.value} · {_duration(_event_duration(event))}"
+        )
+        fields = _WORKSPACE_EVENT_FIELDS.get(event.stage, ())
+        safe = {key: event.metadata[key] for key in fields if key in event.metadata}
+        if event.stage == "workspace_response_projection":
+            safe.setdefault("semantic_guard_applied", bool(event.metadata.get("semantic_guard_applied", False)))
+            if not safe["semantic_guard_applied"]:
+                for key in (
+                    "semantic_guard_reason", "semantic_guard_rule", "semantic_guard_pattern_id",
+                    "semantic_guard_matched_phrase",
+                ):
+                    safe.pop(key, None)
+            else:
+                phrase = safe.get("semantic_guard_matched_phrase")
+                if phrase is not None:
+                    safe["semantic_guard_matched_phrase"] = str(phrase)[:120]
+        if event.stage == "tool_execution":
+            args = _workspace_safe_mapping(event.metadata.get("tool_arguments"))
+            result = _workspace_safe_mapping(event.metadata.get("tool_result"))
+            safe = {"tool_name": event.metadata.get("tool_name", "tool")}
+            if args:
+                safe["parameters"] = args
+            if result:
+                safe["result"] = result
+        if safe:
+            lines.append("  " + _readable(safe))
+
+
+def _append_workspace_tool_copy(lines: list[str], event: PerformanceEvent) -> None:
+    # The detailed allowlisted tool summary is emitted with its pipeline event.
+    # This section repeats only the already visible tool name/status/timing.
+    name = event.metadata.get("tool_name", "tool")
+    lines.append(f"  name: {_redact_text(str(name))}")
+
+
+def _workspace_safe_mapping(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    safe = {}
+    for key, item in value.items():
+        normalized = str(key).casefold()
+        if any(part in normalized for part in _WORKSPACE_PRIVATE_FIELD_PARTS):
+            continue
+        if key not in _WORKSPACE_SAFE_TOOL_FIELDS:
+            continue
+        if isinstance(item, dict):
+            nested = _workspace_safe_mapping(item)
+            if nested:
+                safe[key] = nested
+        elif isinstance(item, (list, tuple)):
+            safe[key] = [
+                _workspace_safe_mapping(entry) if isinstance(entry, dict) else entry
+                for entry in item
+            ]
+        elif isinstance(item, (str, int, float, bool)) or item is None:
+            safe[key] = item
+    return safe
 
 
 def _latest(events: tuple[PerformanceEvent, ...], key: str) -> Any:
@@ -686,4 +797,5 @@ def _mode_label(mode: str) -> str:
         "procurement_planner": "Planner Agent",
         "procurement_deterministic": "Deterministic",
         "rag_index": "RAG Indexing",
+        "conversational_workspace": "Conversational Workspace",
     }.get(mode, mode)

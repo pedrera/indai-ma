@@ -10,8 +10,8 @@ for trading, procurement, CRM, contract-management or enterprise systems.
 
 Product principle: **Simple for the business user, traceable for the technical user.**
 
-**Current state: v1.13.0 release candidate.** The published baseline is
-v1.12.0; v1.13.0 has not been released or tagged.
+**Current state: v1.14.0 release candidate.** The published baseline is
+v1.13.0; v1.14.0 has not been released or tagged.
 
 ## Energy / Commercial capabilities
 
@@ -61,13 +61,15 @@ The current screens and capabilities are:
   citation checks remain identity-scoped, with only explicitly applicable global
   Industrial Gases sources shared. What-if remains explicit and single-target.
   This does not add portfolio totals, rankings, recommendations or health scores.
-- **Conversational Workspace (v1.13.0 release candidate):** the default
+- **Conversational Workspace (v1.14.0 release candidate):** the default
   conversation-first entry point routes natural-language questions over the
   existing portfolio query, per-position operational evidence, identity-scoped
-  Industrial Knowledge and explicit single-position what-if capabilities. A
-  bounded structured session context supports references across turns, while
-  cards keep positions, source citations and baseline/alternative projections
-  separate. Advanced/demo modes remain available under **Developer / Demo views**.
+  Industrial Knowledge and explicit single-position what-if capabilities. Bounded
+  structured context preserves current-set, focus, documentary scope and scenario
+  continuity. Deterministic reference resolution and unit-safe factual comparisons
+  operate on current structured results. Cards keep positions, sources, comparisons
+  and scenario projections separate. Advanced/demo modes remain under
+  **Developer / Demo views**.
   Deterministic selection and supply results, operational findings, scenario
   projections and retrieved sources remain authoritative; generated prose only
   explains this evidence.
@@ -110,14 +112,15 @@ generated explanations and a local embedding service for documentary retrieval.
 Its demo corpus is fictional and is scoped by customer, site, application, gas
 product and installation metadata before semantic ranking. Portfolio filtering is
 deterministic and authoritative; item evidence remains separate. Session context is
-bounded structured identifiers and filters, not free-form model memory. The agent
+bounded structured references, scopes and explicit scenario changes, not free-form
+model memory. The agent
 explains evidence; it does not calculate supply values, recommend actions, rank
 alternatives or generate scenarios automatically. The existing deterministic flows
 remain usable without generation; the workspace can answer deterministic portfolio
 list requests without a model call. A safety-stock breach means projected inventory
 is below the configured safety stock and does not itself mean stockout; only the
 structured projection's `stockout_before_delivery` supports that statement.
-v1.13.0 is a release candidate, not a published release.
+v1.14.0 is a release candidate based on published v1.13.0; it is not yet a published release.
 
 See [ARCHITECTURE.md](docs/ARCHITECTURE.md), [DECISIONS.md](docs/DECISIONS.md), [PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md), and [V1_MVP_SPEC.md](docs/V1_MVP_SPEC.md).
 
