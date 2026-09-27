@@ -140,6 +140,7 @@ class SupplyAgentSessionContext:
     last_intent: str | None = None
     last_document_scope_item_ids: tuple[str, ...] = ()
     last_scenario_change: tuple[str, str] | None = None
+    scenario_history: tuple["WorkspaceScenario", ...] = ()
 
     def __post_init__(self) -> None:
         ids = tuple(dict.fromkeys(item_id for item_id in self.selected_item_ids if item_id))[:32]
@@ -150,6 +151,17 @@ class SupplyAgentSessionContext:
         document_scope = tuple(dict.fromkeys(
             item_id for item_id in self.last_document_scope_item_ids if item_id in ids
         ))[:32]
+        history = tuple(self.scenario_history)
+        if history and not self.focused_item_id:
+            raise ValueError("scenario history requires a focused position")
+        if any(entry.item_id != self.focused_item_id for entry in history):
+            raise ValueError("scenario history must belong to the focused position")
+        if len({entry.scenario_id for entry in history}) != len(history):
+            raise ValueError("scenario history identities must be unique")
+        if len(history) > 16:
+            baseline = tuple(entry for entry in history if entry.scenario_id == "baseline")[:1]
+            alternatives = tuple(entry for entry in history if entry.scenario_id != "baseline")
+            history = baseline + alternatives[-(16 - len(baseline)):]
         if self.last_scenario_change is not None:
             if len(self.last_scenario_change) != 2:
                 raise ValueError("last scenario change must contain a field and explicit value")
@@ -157,6 +169,26 @@ class SupplyAgentSessionContext:
             object.__setattr__(self, "last_scenario_change", change)
         object.__setattr__(self, "selected_item_ids", ids)
         object.__setattr__(self, "last_document_scope_item_ids", document_scope)
+        object.__setattr__(self, "scenario_history", history)
+
+
+@dataclass(frozen=True)
+class WorkspaceScenario:
+    """A retained deterministic result, scoped to one portfolio item."""
+
+    item_id: str
+    scenario_id: str
+    label: str
+    offset_days: int | None
+    result: SupplyAssuranceResult
+
+    def __post_init__(self) -> None:
+        if not self.item_id or not self.scenario_id or not self.label.strip():
+            raise ValueError("scenario identity fields must be non-empty")
+        if self.scenario_id == "baseline" and self.offset_days is not None:
+            raise ValueError("baseline cannot have a relative day offset")
+        if self.scenario_id != "baseline" and self.offset_days is None:
+            raise ValueError("an alternative requires a structured identity")
 
 
 @dataclass(frozen=True)

@@ -1,7 +1,6 @@
 # indAI MA v1.14.0 — Conversational Intelligence
 
-**Release candidate.** The published baseline is v1.13.0. v1.14.0 has not yet
-been released or tagged.
+**Published release.** v1.14.0 is the baseline for v1.15.0.
 
 ## Overview
 
@@ -49,5 +48,5 @@ conversion, severity, priority, ranking, winner, recommendation, optimization,
 logistics planning, automatic scenario search or batch alternatives. Existing
 Supply Assurance, Operational Attention, Portfolio, Industrial Knowledge,
 citation-validation and scenario-calculation services remain authoritative.
-Decision Support / explicit multi-alternative comparison is future v1.15 scope,
-not an implemented v1.14 capability.
+Multi-scenario comparison is added in v1.15.0. Recommendation, ranking and
+optimization remain future work.

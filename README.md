@@ -10,8 +10,8 @@ for trading, procurement, CRM, contract-management or enterprise systems.
 
 Product principle: **Simple for the business user, traceable for the technical user.**
 
-**Current state: v1.14.0 release candidate.** The published baseline is
-v1.13.0; v1.14.0 has not been released or tagged.
+**Current state: v1.15.0 release candidate.** v1.14.0 is the published baseline;
+v1.15.0 adds deterministic comparisons across explicitly evaluated scenarios.
 
 ## Energy / Commercial capabilities
 
@@ -61,7 +61,7 @@ The current screens and capabilities are:
   citation checks remain identity-scoped, with only explicitly applicable global
   Industrial Gases sources shared. What-if remains explicit and single-target.
   This does not add portfolio totals, rankings, recommendations or health scores.
-- **Conversational Workspace (v1.14.0 release candidate):** the default
+- **Conversational Workspace (v1.15.0 release candidate):** the default
   conversation-first entry point routes natural-language questions over the
   existing portfolio query, per-position operational evidence, identity-scoped
   Industrial Knowledge and explicit single-position what-if capabilities. Bounded
@@ -72,7 +72,20 @@ The current screens and capabilities are:
   **Developer / Demo views**.
   Deterministic selection and supply results, operational findings, scenario
   projections and retrieved sources remain authoritative; generated prose only
-  explains this evidence.
+  explains this evidence. Explicitly evaluated alternatives are retained against
+  the original baseline and compared from structured SupplyProjection facts.
+  Documentary turns preserve that history; comparison tables appear in Workspace
+  Copy and safe Pipeline Inspector diagnostics. The Workspace keeps a persistent
+  right-side Inspector with selectable history for the latest 50 turns in the
+  current conversation; failed executions remain inspectable and diagnostic Copy
+  follows the selected operation. New conversation clears that history.
+  Comparisons remain factual and do not recommend or optimize a choice.
+
+To run the v1.15 release acceptance conversation against the configured real
+provider, use `python scripts/run_workspace_acceptance.py`. The configured
+provider and its dependencies (including LM Studio embeddings for documentary
+retrieval) must be available. This release check may take several minutes when
+the documentary turn uses a local model; regular pytest and FAST stay offline.
 
 ## Available modes
 
@@ -120,7 +133,7 @@ remain usable without generation; the workspace can answer deterministic portfol
 list requests without a model call. A safety-stock breach means projected inventory
 is below the configured safety stock and does not itself mean stockout; only the
 structured projection's `stockout_before_delivery` supports that statement.
-v1.14.0 is a release candidate based on published v1.13.0; it is not yet a published release.
+v1.14.0 is published. v1.15.0 is a release candidate and is not yet published.
 
 See [ARCHITECTURE.md](docs/ARCHITECTURE.md), [DECISIONS.md](docs/DECISIONS.md), [PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md), and [V1_MVP_SPEC.md](docs/V1_MVP_SPEC.md).
 

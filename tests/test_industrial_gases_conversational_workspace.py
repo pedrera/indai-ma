@@ -1114,7 +1114,7 @@ class ConversationalWorkspaceTests(unittest.TestCase):
         self.assertEqual(response.status, SupplyAgentStatus.NEEDS_INPUT)
         self.assertIn("no se pudo verificar", response.explanation.casefold())
         self.assertIn("[chunk_id:hospital-delivery-contract]", provider.prompt)
-        self.assertIn("immediately after each supported documentary statement", provider.prompt)
+        self.assertIn("supporting citation immediately after that statement", provider.prompt)
         citation_event = next(
             event for event in recorder.snapshot().events if event.stage == "citation_validation"
         )
@@ -1693,11 +1693,18 @@ class ConversationalWorkspaceTests(unittest.TestCase):
         co2 = by_id["alimentos-sur-malaga-co2"]
         self.assertIn("Hospital Costa Sur", hospital["display_identity"])
         self.assertIn("O2 / Medicinal oxygen", hospital["display_identity"])
-        self.assertIn(hospital_citation, [s["citation"] for s in hospital["knowledge_sources"]])
-        self.assertIn(co2_citation, [s["citation"] for s in co2["knowledge_sources"]])
-        self.assertNotIn(co2_citation, [s["citation"] for s in hospital["knowledge_sources"]])
-        self.assertNotIn(hospital_citation, [s["citation"] for s in co2["knowledge_sources"]])
-        self.assertIn(global_citation, [s["citation"] for s in state["global_knowledge_sources"]])
+        hospital_chunk_ids = {source["chunk_id"] for source in hospital["knowledge_sources"]}
+        co2_chunk_ids = {source["chunk_id"] for source in co2["knowledge_sources"]}
+        global_chunk_ids = {source["chunk_id"] for source in state["global_knowledge_sources"]}
+        self.assertIn("hospital-contract", hospital_chunk_ids)
+        self.assertIn("co2-contract", co2_chunk_ids)
+        self.assertNotIn("co2-contract", hospital_chunk_ids)
+        self.assertNotIn("hospital-contract", co2_chunk_ids)
+        self.assertEqual(global_chunk_ids, {"global-policy"})
+        self.assertIn(hospital_citation, provider.prompt)
+        self.assertIn(co2_citation, provider.prompt)
+        self.assertIn(global_citation, provider.prompt)
+        self.assertNotIn('"available_citations"', provider.prompt)
         self.assertIn("Do not mention internal item selection", provider.prompt)
         self.assertIn("Do not restate every metric already shown in the position cards", provider.prompt)
 

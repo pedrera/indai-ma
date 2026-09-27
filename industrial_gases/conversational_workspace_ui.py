@@ -8,7 +8,7 @@ import streamlit as st
 from clipboard_ui import render_clipboard_button
 from .conversational_workspace import WorkspaceResponse
 from .portfolio_query import SupplyAgentSessionContext
-from .portfolio_ui import _CUSTOMER_LABELS, _FINDING_LABELS, _quantity_text
+from .portfolio_ui import _CUSTOMER_LABELS, _FINDING_LABELS, _format_number, _quantity_text
 from .supply_agent import _is_document_list_request, _jsonable
 
 
@@ -66,6 +66,9 @@ _TEXT = {
         "inventory_after": "Inventory after delivery",
         "required_delivery": "Required delivery volume",
         "capacity": "Capacity exceeded",
+        "scenario_comparison": "Scenario comparison",
+        "scenario_measure": "Measure",
+        "not_available": "Not available",
         "delivery_timing": "Delivery timing",
         "quantity_change": "Planned delivery quantity changed",
         "consumption_change": "Consumption forecast changed",
@@ -124,6 +127,9 @@ _TEXT = {
         "inventory_after": "Inventario después de la entrega",
         "required_delivery": "Volumen de entrega requerido",
         "capacity": "Capacidad superada",
+        "scenario_comparison": "Comparación de escenarios",
+        "scenario_measure": "Medida",
+        "not_available": "No disponible",
         "delivery_timing": "Fecha de entrega",
         "quantity_change": "Cambio de cantidad de entrega",
         "consumption_change": "Cambio de previsión de consumo",
@@ -161,7 +167,8 @@ def _language(text: str) -> str:
     folded = text.casefold()
     if any(mark in folded for mark in ("¿", "¡", "á", "é", "í", "ó", "ú", "ñ")):
         return "es"
-    if re.search(r"\b(?:que|posiciones|atencion|contrato|entrega|hospital|documentacion|prevision)\b", folded):
+    if re.search(r"\b(?:que|posiciones|atencion|contrato|entrega|hospital|documentacion|prevision|"
+                 r"compara|comparar|escenarios?|inventario|dias|antes|despues|diferencia)\b", folded):
         return "es"
     return "en"
 
@@ -187,6 +194,11 @@ def render_conversational_workspace(on_submit=None, *, running: bool = False) ->
         if st.button(text["new"], key="workspace_new_conversation", disabled=running):
             st.session_state.workspace_messages = []
             st.session_state.workspace_context = SupplyAgentSessionContext()
+            for entry in st.session_state.get("workspace_execution_history", ()):
+                st.session_state.get("execution_views", {}).pop(entry.operation_id, None)
+            st.session_state.workspace_execution_history = ()
+            st.session_state.workspace_pipeline_selected_operation_id = None
+            st.session_state.workspace_operation_id = None
             st.session_state.workspace_pending_prompt = None
             st.session_state.supply_agent_context = SupplyAgentSessionContext()
             st.session_state.supply_agent_result = None
@@ -259,13 +271,18 @@ def _render_workspace_response(
     elif response.explanation:
         st.markdown(_primary_answer(response, question, lang))
 
-    for position in response.positions:
-        _render_position_card(position, lang)
+    if response.scenario_comparison is None:
+        for position in response.positions:
+            _render_position_card(position, lang)
     if response.documentary_sources:
         _render_document_sources(response, lang)
     for position in response.positions:
         if position.scenario is not None:
             _render_scenario_card(position, lang)
+    if response.scenario_comparison is not None:
+        if response.positions:
+            st.markdown(f"**{_position_label(response.positions[0], lang)}**")
+        _render_scenario_comparison(response.scenario_comparison, lang)
     if response.evidence.global_sources:
         st.markdown(f"**{text['global_sources']}**")
         for source in response.evidence.global_sources:
@@ -370,6 +387,8 @@ def build_workspace_response_copy_text(response: WorkspaceResponse, question: st
         result = item.result
         label = _position_label(item, lang)
         position_lines.append(label)
+        if response.scenario_comparison is not None:
+            continue
         projection = result.projection
         if result.status == "COMPLETED" and projection is not None:
             position_lines.extend((
@@ -412,6 +431,9 @@ def build_workspace_response_copy_text(response: WorkspaceResponse, question: st
     for item in response.positions:
         if item.scenario is not None:
             sections.append(_workspace_scenario_copy_text(item, lang))
+
+    if response.scenario_comparison is not None:
+        sections.append(_scenario_comparison_copy_text(response.scenario_comparison, lang))
 
     if response.evidence.global_sources:
         source_lines = [text["global_sources"]]
@@ -467,6 +489,70 @@ def _workspace_scenario_copy_text(item, lang: str) -> str:
         alternative_text = format_value(alternative_value, lang) if isinstance(alternative_value, bool) else format_value(alternative_value)
         lines.append(f"{label} | {current_text} | {alternative_text}")
     return "\n".join(lines)
+
+
+def _scenario_comparison_rows(comparison, lang: str):
+    text = _TEXT[lang]
+    rows = []
+    for metric in comparison.metrics:
+        row = {text["scenario_measure"]: metric.label}
+        for value in metric.values:
+            if value.value is None:
+                rendered = _scenario_unavailable_label(value.unavailable_reason, lang)
+            elif isinstance(value.value, bool):
+                rendered = _yes_no(value.value, lang)
+            else:
+                rendered = f"{_format_decimal(value.value)} {value.unit or ''}".strip()
+                if metric.field == "safety_stock_gap_before_delivery" and value.value > 0:
+                    rendered = "+" + rendered
+            row[value.label] = rendered
+        rows.append(row)
+    return rows
+
+
+def _render_scenario_comparison(comparison, lang: str) -> None:
+    st.markdown(f"**{_TEXT[lang]['scenario_comparison']}**")
+    for metric in comparison.metrics:
+        if not metric.comparable:
+            reason = (
+                "Unidades operativas incompatibles; se muestran los valores sin compararlos."
+                if metric.reason == "incompatible_operational_units" and lang == "es" else
+                "Incompatible operational units; values are shown without ordering."
+                if metric.reason == "incompatible_operational_units" else
+                "Falta una proyección válida para uno o más escenarios."
+                if lang == "es" else "A valid projection is missing for one or more scenarios."
+            )
+            st.caption(f"{metric.label}: {reason}")
+    st.table(_scenario_comparison_rows(comparison, lang))
+
+
+def _scenario_comparison_copy_text(comparison, lang: str) -> str:
+    rows = _scenario_comparison_rows(comparison, lang)
+    if not rows:
+        return ""
+    columns = tuple(rows[0])
+    lines = [_TEXT[lang]["scenario_comparison"], " | ".join(columns)]
+    lines.extend(" | ".join(str(row.get(column, _TEXT[lang]["not_available"])) for column in columns)
+                 for row in rows)
+    for metric in comparison.metrics:
+        if not metric.comparable:
+            reason = ("Unidades operativas incompatibles" if lang == "es" else "Incompatible operational units") if metric.reason == "incompatible_operational_units" else (
+                "Proyección no disponible" if lang == "es" else "Projection unavailable"
+            )
+            lines.append(f"{metric.label}: {reason}")
+    return "\n".join(lines)
+
+
+def _format_decimal(value):
+    return _format_number(value)
+
+
+def _scenario_unavailable_label(reason: str | None, lang: str) -> str:
+    if reason == "evaluation_invalid":
+        return "Evaluación inválida" if lang == "es" else "Invalid evaluation"
+    if reason == "evaluation_missing_inputs":
+        return "Faltan datos" if lang == "es" else "Missing inputs"
+    return _TEXT[lang]["not_available"]
 
 
 def _position_label(item, lang: str) -> str:

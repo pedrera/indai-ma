@@ -277,6 +277,35 @@ class ClipboardDiagnosticsTests(unittest.TestCase):
         self.assertIn("Request wall time: 8.30 s", text)
         self.assertIn("Server inference time: unavailable", text)
 
+    def test_lmstudio_telemetry_is_copied_with_local_and_provider_sources(self):
+        text = build_diagnostics_clipboard_text(
+            snapshot([
+                event("llm_call", {
+                    "call_number": 1,
+                    "purpose": "generation",
+                    "request_setup_seconds": 0.15,
+                    "request_to_stream_seconds": 1.2,
+                    "response_stream_seconds": 10.5,
+                    "time_to_first_token_seconds": 4.0,
+                    "stream_initial_wait_seconds": 2.8,
+                    "stream_generation_seconds": 7.7,
+                    "input_tokens": 1200,
+                    "output_tokens": 77,
+                    "total_tokens": 1277,
+                    "tokens_per_second": 10.0,
+                    "tokens_per_second_source": "provider_usage_and_local_stream_timer",
+                    "token_usage_source": "provider_usage",
+                }, 12.0),
+            ])
+        )
+        self.assertIn("Local request preparation: 150.0 ms", text)
+        self.assertIn("Request to stream open: 1.20 s", text)
+        self.assertIn("Time to first token (local): 4.00 s", text)
+        self.assertIn("Stream generation after first token (local): 7.70 s", text)
+        self.assertIn("Input tokens: 1200", text)
+        self.assertIn("Output tokens/second (local): 10.0", text)
+        self.assertIn("Token usage source: provider_usage", text)
+
     def test_tool_execution_and_skipped_tool(self):
         text = build_diagnostics_clipboard_text(
             snapshot(

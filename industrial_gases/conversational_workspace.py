@@ -1,7 +1,7 @@
 """Conversation-first orchestration over existing Industrial Gases capabilities."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 import re
 from typing import Any, Callable
@@ -11,10 +11,12 @@ from .industrial_knowledge import IndustrialKnowledgeService
 from .operational_attention import OperationalAttentionResult
 from .portfolio import SupplyPortfolioResult
 from .portfolio_query import PortfolioEvidenceBundle, PortfolioItemEvidence, PortfolioQueryResult, ScopedKnowledgeSource, SupplyAgentSessionContext
+from .portfolio_query import WorkspaceScenario
 from .portfolio_query import PortfolioQuery, SupplyPortfolioQueryService
 from .factual_comparison import (
     FactualComparison, comparison_answer, comparison_field_for_question,
     compare_portfolio_facts, is_factual_comparison_question,
+    ScenarioSetComparison, compare_scenarios, scenario_comparison_answer,
 )
 from .service import SupplyAssuranceService
 from .supply_agent import (
@@ -78,6 +80,7 @@ class WorkspaceResponse:
     clarification_required: bool = False
     semantic_guard_applied: bool = False
     comparison: FactualComparison | None = None
+    scenario_comparison: ScenarioSetComparison | None = None
 
     @property
     def content(self) -> str | None:
@@ -148,9 +151,15 @@ def route_workspace_intent(
     operational = _requires_operational_context(question)
     follow_up = bool(context.selected_item_ids and _has_context_reference(question))
     comparison = is_factual_comparison_question(question)
+    scenario_comparison = not _requests_scenario_search(question) and (
+        _is_scenario_comparison_request(question)
+        or (bool(context.scenario_history) and _scenario_question_semantics(question)[0] is not None)
+    )
 
     if documentary and (scenario or operational):
         intent = WorkspaceIntent.COMBINED
+    elif scenario_comparison:
+        intent = WorkspaceIntent.FOLLOW_UP
     elif comparison:
         intent = WorkspaceIntent.FOLLOW_UP if follow_up else WorkspaceIntent.OPERATIONAL
     elif scenario:
@@ -171,6 +180,8 @@ def route_workspace_intent(
         capabilities.append("scenario_evaluation")
     if comparison:
         capabilities.append("deterministic_comparison")
+    if scenario_comparison:
+        capabilities.append("deterministic_scenario_comparison")
     return WorkspaceRoute(intent, tuple(capabilities))
 
 
@@ -207,8 +218,15 @@ class ConversationalWorkspaceOrchestrator:
             )
             self.recorder.complete_stage(event)
 
+        if _requests_scenario_search(question):
+            return self._run_scenario_clarification(question, route)
         if is_factual_comparison_question(question):
+            if _is_scenario_comparison_question(question, self.session_context):
+                return self._run_scenario_comparison(question, route)
             return self._run_comparison(question, route)
+        if (_is_scenario_comparison_request(question)
+                or _is_scenario_comparison_question(question, self.session_context)):
+            return self._run_scenario_comparison(question, route)
         from .supply_agent import _unsupported_vague_delivery_scenario
         if _unsupported_vague_delivery_scenario(question):
             return self._run_scenario_clarification(question, route)
@@ -231,6 +249,21 @@ class ConversationalWorkspaceOrchestrator:
             recorder=self.recorder, service=self.service, workspace_mode=True,
         )
         result = agent.run(question, timeout_seconds)
+        result_context = result.session_context
+        scenario = result.scenario_analysis
+        if scenario is not None and result.evidence_bundle and len(result.evidence_bundle.items) == 1:
+            target_item = result.evidence_bundle.items[0].item
+            result_context = _retain_scenario_history(
+                result_context, target_item.item_id, target_item.request, scenario, question,
+            )
+            result = replace(result, session_context=result_context)
+            if self.recorder:
+                history_event = self.recorder.start_stage("scenario_history_resolution")
+                self.recorder.complete_stage(
+                    history_event, focused_item_id=target_item.item_id,
+                    scenario_ids=tuple(entry.scenario_id for entry in result_context.scenario_history),
+                    scenario_labels=tuple(entry.label for entry in result_context.scenario_history),
+                )
         evidence = result.evidence_bundle or PortfolioEvidenceBundle(())
         if self.recorder and result.session_context != self.session_context:
             event = self.recorder.start_stage("workspace_reference_resolution")
@@ -289,13 +322,115 @@ class ConversationalWorkspaceOrchestrator:
             semantic_guard_applied=guarded,
         )
 
+    def _run_scenario_comparison(self, question: str, route: WorkspaceRoute) -> WorkspaceResponse:
+        spanish = _is_spanish_workspace_text(question)
+        context = self.session_context
+        portfolio_ids = {item.item_id for item in self.portfolio.items}
+        attention_ids = {item.item_id for item in self.attention.items}
+        if context.scenario_history and (
+            not context.focused_item_id or context.focused_item_id not in portfolio_ids
+            or context.focused_item_id not in attention_ids
+            or any(item.item_id != context.focused_item_id for item in context.scenario_history)
+        ):
+            clarification = (
+                "La posición asociada a estos escenarios ya no está disponible. Vuelve a seleccionar una posición."
+                if spanish else
+                "The position associated with these scenarios is no longer available. Select a position again."
+            )
+            if self.recorder:
+                event = self.recorder.start_stage("scenario_reference_resolution")
+                self.recorder.complete_stage(
+                    event, focused_item_id=context.focused_item_id,
+                    scenario_ids=tuple(item.scenario_id for item in context.scenario_history),
+                    clarification_required=True, reason="stale_scenario_focus",
+                )
+            return WorkspaceResponse(
+                status=SupplyAgentStatus.NEEDS_INPUT,
+                route=WorkspaceRoute(WorkspaceIntent.FOLLOW_UP, route.capabilities),
+                explanation=clarification,
+                portfolio_query=None,
+                evidence=PortfolioEvidenceBundle(()),
+                session_context=SupplyAgentSessionContext(),
+                clarification_required=True,
+                unsupported_questions=("current_scenario_focus",),
+            )
+        entries, clarification = _resolve_scenario_references(question, context.scenario_history)
+        if clarification is None and len(entries) < 2:
+            clarification = (
+                "Evalúa al menos una alternativa explícita antes de comparar escenarios."
+                if spanish else "Evaluate at least one explicit alternative before comparing scenarios."
+            )
+        if clarification:
+            if self.recorder:
+                event = self.recorder.start_stage("scenario_reference_resolution")
+                self.recorder.complete_stage(
+                    event, focused_item_id=context.focused_item_id,
+                    scenario_ids=tuple(item.scenario_id for item in entries),
+                    clarification_required=True,
+                )
+            return WorkspaceResponse(
+                status=SupplyAgentStatus.NEEDS_INPUT,
+                route=WorkspaceRoute(WorkspaceIntent.FOLLOW_UP, route.capabilities),
+                explanation=clarification,
+                portfolio_query=None,
+                evidence=PortfolioEvidenceBundle(()),
+                session_context=context,
+                clarification_required=True,
+                unsupported_questions=("evaluated_scenario_history",),
+            )
+
+        field, question_kind = _scenario_question_semantics(question)
+        entries = tuple(_localized_scenario(entry, spanish) for entry in entries)
+        comparison = compare_scenarios(
+            entries, fields=None if field is None else (field,), spanish=spanish,
+        )
+        answer = scenario_comparison_answer(
+            comparison, question_kind=question_kind, spanish=spanish,
+        )
+        if self.recorder:
+            event = self.recorder.start_stage("scenario_reference_resolution")
+            self.recorder.complete_stage(
+                event, focused_item_id=context.focused_item_id,
+                scenario_ids=tuple(item.scenario_id for item in entries),
+                scenario_labels=tuple(item.label for item in entries),
+                clarification_required=False,
+            )
+            event = self.recorder.start_stage("deterministic_scenario_comparison")
+            self.recorder.complete_stage(
+                event, focused_item_id=context.focused_item_id,
+                scenario_labels=tuple(item.label for item in entries),
+                compared_fields=tuple(metric.field for metric in comparison.metrics),
+                units=tuple(tuple(value.unit for value in metric.values) for metric in comparison.metrics),
+                comparability=tuple(metric.comparable for metric in comparison.metrics),
+                reasons=tuple(metric.reason for metric in comparison.metrics),
+                values=tuple(tuple({
+                    "scenario_id": value.scenario_id, "label": value.label,
+                    "value": str(value.value), "unit": value.unit,
+                } for value in metric.values) for metric in comparison.metrics),
+            )
+        by_id = {item.item_id: item for item in self.portfolio.items}
+        attention_by_id = {item.item_id: item for item in self.attention.items}
+        focused = context.focused_item_id
+        subject_evidence = ()
+        if focused in by_id and focused in attention_by_id:
+            subject_evidence = (PortfolioItemEvidence(by_id[focused], attention_by_id[focused]),)
+        return WorkspaceResponse(
+            status=SupplyAgentStatus.COMPLETED,
+            route=WorkspaceRoute(WorkspaceIntent.FOLLOW_UP, route.capabilities),
+            explanation=answer,
+            portfolio_query=None,
+            evidence=PortfolioEvidenceBundle(subject_evidence),
+            session_context=context,
+            scenario_comparison=comparison,
+        )
+
     def _run_comparison(self, question: str, route: WorkspaceRoute) -> WorkspaceResponse:
         from .supply_agent import (
             _identity_filters_from_question, _resolve_portfolio_scope,
         )
         field = comparison_field_for_question(question)
         context = self.session_context
-        spanish = bool(re.search(r"[¿ñáéíóú]", question, re.IGNORECASE))
+        spanish = _is_spanish_workspace_text(question)
         has_explicit_identity = bool(_identity_filters_from_question(question, self.portfolio))
         if not context.selected_item_ids and not has_explicit_identity:
             query_result = SupplyPortfolioQueryService().select(
@@ -357,6 +492,9 @@ class ConversationalWorkspaceOrchestrator:
                     if item_id in retained_ids
                 ),
                 last_scenario_change=context.last_scenario_change,
+                scenario_history=(
+                    context.scenario_history if focus_id == context.focused_item_id else ()
+                ),
             )
             if self.recorder:
                 event = self.recorder.start_stage("workspace_reference_resolution")
@@ -405,7 +543,7 @@ class ConversationalWorkspaceOrchestrator:
         if target_id in by_id and target_id in attention_by_id:
             selected.append(PortfolioItemEvidence(by_id[target_id], attention_by_id[target_id]))
         evidence = PortfolioEvidenceBundle(tuple(selected))
-        spanish = bool(re.search(r"[¿ñáéíóú]", question, re.IGNORECASE))
+        spanish = _is_spanish_workspace_text(question)
         explanation = (
             "Indica un adelanto o retraso explícito en días para evaluar el escenario."
             if spanish else
@@ -467,8 +605,14 @@ class ConversationalWorkspaceOrchestrator:
                 )
             ),
             last_scenario_change=self.session_context.last_scenario_change,
+            scenario_history=(
+                () if focus_changed else tuple(
+                    entry for entry in self.session_context.scenario_history
+                    if entry.item_id == next_focus and entry.item_id in next_ids
+                )
+            ),
         )
-        spanish = bool(re.search(r"[¿ñáéíóú]", question, re.IGNORECASE))
+        spanish = _is_spanish_workspace_text(question)
         if clarification:
             explanation = clarification
             candidate_labels = tuple(_portfolio_match_label(match) for match in query_result.matches)
@@ -498,6 +642,178 @@ class ConversationalWorkspaceOrchestrator:
             unsupported_questions=("unambiguous_portfolio_reference",) if clarification else (),
             clarification_required=bool(clarification),
         )
+
+
+def _is_scenario_comparison_request(question: str) -> bool:
+    return bool(re.search(
+        r"\b(?:compare|comparar|compara|comparison|comparing)\b.{0,50}\b(?:scenarios?|escenarios?)\b|"
+        r"\b(?:scenarios?|escenarios?)\b.{0,50}\b(?:compare|comparar|compara)\b|"
+        r"\b(?:ambas\s+alternativas|both\s+alternatives|los\s+tres\s+escenarios|three\s+scenarios)\b",
+        question, re.IGNORECASE,
+    ))
+
+
+def _requests_scenario_search(question: str) -> bool:
+    """Block implicit date/threshold searches; only explicit alternatives are supported."""
+    return bool(
+        re.search(r"\b(?:cu[aá]ndo|when|what date|qu[eé] fecha)\b", question, re.I)
+        and re.search(r"\b(?:entrega|delivery|llegar|llegue|arrive|arrives)\b", question, re.I)
+        and re.search(r"\b(?:stock de seguridad|safety stock|mantener|mantiene|keep|maintain)\b", question, re.I)
+        and not re.search(r"\b(?:contrato|contract|contractual|documentaci[oó]n|documentation)\b", question, re.I)
+    )
+
+
+def _is_spanish_workspace_text(question: str) -> bool:
+    return bool(re.search(
+        r"[¿¡ñáéíóú]"
+        r"|\b(?:compara|comparar|escenarios?|entrega|inventario|d[ií]as?|antes|despu[eé]s|"
+        r"posiciones?|atenci[oó]n|h[aá]blame|solo|contrato|alternativas?|"
+        r"stock de seguridad|agotamiento)\b",
+        question, re.IGNORECASE,
+    ))
+
+
+def _scenario_question_semantics(question: str) -> tuple[str | None, str]:
+    folded = question.casefold()
+    if re.search(r"\b(?:mantiene|mantener|meets?|keeps?|maintains?)\b.{0,35}\b(?:stock de seguridad|safety stock)\b|\b(?:stock de seguridad|safety stock)\b.{0,35}\b(?:mantiene|maintained|cumple)\b", folded):
+        return "safety_stock_gap_before_delivery", "safety_maintained"
+    if re.search(r"\b(?:agotamiento|stockout|sin stock|quedarse sin)\b", folded):
+        return "stockout_before_delivery", "stockout"
+    if re.search(r"\b(?:capacidad|capacity)\b", folded) and re.search(r"\b(?:supera|excede|exceeded|exceeds|overflow)\b", folded):
+        return "capacity_exceeded", "capacity"
+    if re.search(r"\b(?:mayor|m[aá]s|higher|highest|greatest|maximum)\b", folded) and re.search(r"\b(?:inventario|inventory)\b", folded):
+        return "inventory_immediately_before_delivery", "highest"
+    if re.search(r"\b(?:menor|menos|lower|lowest|least|minimum)\b", folded) and re.search(r"\b(?:consumo|consumption)\b", folded):
+        return "consumption_until_delivery", "lowest"
+    metric = comparison_field_for_question(question)
+    if metric in {
+        "inventory_immediately_before_delivery", "safety_stock_gap_before_delivery",
+        "stockout_before_delivery", "capacity_exceeded",
+    }:
+        return metric, "values"
+    if re.search(r"\b(?:qu[eé]\s+cambia|what\s+changes?)\b", folded):
+        return None, "values"
+    return None, "values"
+
+
+def _is_scenario_comparison_question(
+    question: str, context: SupplyAgentSessionContext,
+) -> bool:
+    field, _ = _scenario_question_semantics(question)
+    return bool(context.scenario_history) and (
+        _is_scenario_comparison_request(question)
+        or field is not None
+        or bool(re.search(r"\b(?:what\s+changes?|qu[eé]\s+cambia|between|entre)\b", question, re.I))
+        or re.search(r"\b(?:baseline|el actual|la otra alternativa|the other alternative|both alternatives|ambas alternativas)\b", question, re.I)
+    )
+
+
+def _explicit_scenario_reference_offsets(question: str) -> tuple[int, ...]:
+    words = {
+        "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+        "un": 1, "una": 1, "uno": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5,
+    }
+    offsets = []
+    pattern = re.compile(
+        r"\b(?P<n>\d+|one|two|three|four|five|un|una|uno|dos|tres|cuatro|cinco)\s*"
+        r"(?P<unit>days?|d[ií]as?)\s*(?P<direction>earlier|before|sooner|antes|adelantad[oa]s?|later|after|despu[eé]s)?\b",
+        re.I,
+    )
+    for match in pattern.finditer(question):
+        direction = (match.group("direction") or "").casefold()
+        # Bare "dos días" is accepted only in the named reference "la de dos días".
+        if not direction and not re.search(r"\bla\s+de\s+$", question[max(0, match.start() - 12):match.start()], re.I):
+            continue
+        token = match.group("n").casefold()
+        number = int(token) if token.isdigit() else words[token]
+        offsets.append(number if direction in {"later", "after", "después"} else -number)
+    return tuple(dict.fromkeys(offsets))
+
+
+def _resolve_scenario_references(
+    question: str, history: tuple[WorkspaceScenario, ...],
+) -> tuple[tuple[WorkspaceScenario, ...], str | None]:
+    if not history:
+        return (), "Evalúa primero al menos una alternativa explícita para poder comparar escenarios." if _is_spanish_workspace_text(question) else "Evaluate at least one explicit alternative before comparing scenarios."
+    if re.search(r"\b(?:los tres escenarios|three scenarios)\b", question, re.I) and len(history) != 3:
+        return (), "No están disponibles los tres escenarios indicados." if _is_spanish_workspace_text(question) else "The three requested scenarios are not all available."
+    if re.search(r"\b(?:la otra alternativa|the other alternative|la otra|the other one)\b", question, re.I):
+        return (), "¿A qué alternativa te refieres?" if _is_spanish_workspace_text(question) else "Which alternative do you mean?"
+    if re.search(r"\b(?:ambas alternativas|both alternatives)\b", question, re.I):
+        alternatives = tuple(entry for entry in history if entry.scenario_id != "baseline")
+        if len(alternatives) == 2:
+            return alternatives, None
+        return (), "¿Qué dos alternativas quieres comparar?" if _is_spanish_workspace_text(question) else "Which two alternatives should I compare?"
+
+    requested: list[str] = []
+    if re.search(r"\b(?:baseline|el actual|escenario actual|current scenario)\b", question, re.I):
+        requested.append("baseline")
+    offsets = _explicit_scenario_reference_offsets(question)
+    for offset in offsets:
+        requested.append(f"delivery-offset:{offset}")
+    if requested:
+        selected = tuple(entry for entry in history if entry.scenario_id in requested)
+        if len(selected) != len(set(requested)):
+            return (), "No encuentro todos los escenarios indicados en esta conversación." if _is_spanish_workspace_text(question) else "I cannot find every named scenario in this conversation."
+        return selected, None
+    if _is_scenario_comparison_request(question) or _scenario_question_semantics(question)[0] is not None:
+        return history, None
+    return (), "Aclara qué escenarios quieres comparar." if _is_spanish_workspace_text(question) else "Please clarify which scenarios to compare."
+
+
+def _retain_scenario_history(
+    context: SupplyAgentSessionContext,
+    item_id: str,
+    baseline_request: Any,
+    scenario: Any,
+    question: str,
+) -> SupplyAgentSessionContext:
+    alternative = scenario.alternative
+    if alternative.id != "planned-delivery-time":
+        return context
+    baseline_at = baseline_request.delivery_plan.planned_delivery_at
+    alternative_at = alternative.alternative_request.delivery_plan.planned_delivery_at
+    difference = (alternative_at - baseline_at).total_seconds() / 86400
+    if not difference.is_integer() or difference == 0:
+        return context
+    offset = int(difference)
+    scenario_id = f"delivery-offset:{offset}"
+    spanish = _is_spanish_workspace_text(question)
+    amount = abs(offset)
+    if spanish:
+        unit = "día" if amount == 1 else "días"
+        direction = "antes" if offset < 0 else "después"
+    else:
+        unit = "day" if amount == 1 else "days"
+        direction = "earlier" if offset < 0 else "later"
+    label = f"{amount} {unit} {direction}"
+    history = list(context.scenario_history)
+    if not any(entry.scenario_id == "baseline" for entry in history):
+        history.insert(0, WorkspaceScenario(
+            item_id, "baseline", "Actual" if spanish else "Baseline", None,
+            scenario.baseline_result,
+        ))
+    if not any(entry.scenario_id == scenario_id for entry in history):
+        history.append(WorkspaceScenario(item_id, scenario_id, label, offset, scenario.alternative_result))
+    if len(history) > 16:
+        history = history[:1] + history[-15:]
+    updated = replace(context, scenario_history=tuple(history))
+    return updated
+
+
+def _localized_scenario(entry: WorkspaceScenario, spanish: bool) -> WorkspaceScenario:
+    if entry.offset_days is None:
+        label = "Actual" if spanish else "Baseline"
+    else:
+        amount = abs(entry.offset_days)
+        if spanish:
+            unit = "día" if amount == 1 else "días"
+            direction = "antes" if entry.offset_days < 0 else "después"
+        else:
+            unit = "day" if amount == 1 else "days"
+            direction = "earlier" if entry.offset_days < 0 else "later"
+        label = f"{amount} {unit} {direction}"
+    return replace(entry, label=label)
 
 
 _PHYSICAL_SHORTAGE_CLAIM = re.compile(

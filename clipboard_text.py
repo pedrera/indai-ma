@@ -2,7 +2,7 @@ import json
 import re
 from typing import Any
 
-from diagnostics import PerformanceEvent, PerformanceSnapshot, PerformanceStatus
+from diagnostics import PerformanceEvent, PerformanceSnapshot, PerformanceStatus, safe_failure_category
 from execution_metrics import build_operation_metrics
 
 
@@ -305,6 +305,7 @@ def build_diagnostics_clipboard_text(
         f"Provider: {snapshot.provider}",
         f"Model: {snapshot.model}",
     ]
+    _append_optional(lines, "Failure category", safe_failure_category(snapshot))
     _append_optional(lines, "Thinking", _latest(events, "thinking_enabled"), _enabled)
     _append_optional(lines, "Max tokens", _latest(events, "max_tokens"))
     _append_optional(lines, "Max output tokens", _latest(events, "max_output_tokens"))
@@ -365,6 +366,12 @@ def build_diagnostics_clipboard_text(
     lines.append(f"Retrieval time total: {_duration(metrics.retrieval_time_total)}")
     lines.append(f"Parsing time total: {_duration(metrics.parsing_time_total)}")
     for call in metrics.llm_calls:
+        if call.request_to_stream_time is not None:
+            request_timing_label = "Local request preparation: "
+            request_timing_value = _optional_duration(call.request_setup_time)
+        else:
+            request_timing_label = "Request/setup duration (legacy timing): "
+            request_timing_value = _optional_duration(call.request_setup_time)
         lines.extend(
             [
                 "",
@@ -379,16 +386,28 @@ def build_diagnostics_clipboard_text(
                 + _available(call.tool_schema_character_count),
                 f"Response characters: {_available(call.response_character_count)}",
                 f"Request wall time: {_duration(call.request_wall_time)}",
-                "Request setup / wait for stream: "
-                + _optional_duration(call.request_setup_time),
+                request_timing_label + request_timing_value,
+                "Request to stream open: "
+                + _optional_duration(call.request_to_stream_time),
                 "Response stream wall time: "
                 + _optional_duration(call.response_stream_time),
+                "Time to first token (local): "
+                + _optional_duration(call.time_to_first_token_time),
+                "Wait after stream open (local): "
+                + _optional_duration(call.stream_initial_wait_time),
+                "Stream generation after first token (local): "
+                + _optional_duration(call.stream_generation_time),
                 "Server inference time: "
                 + _optional_duration(call.inference_time),
                 "Overhead time: " + _optional_duration(call.overhead_time),
                 f"Input tokens: {_available(call.input_tokens)}",
                 f"Output tokens: {_available(call.output_tokens)}",
                 f"Total tokens: {_available(call.total_tokens)}",
+                "Token usage source: " + _available(call.token_usage_source),
+                "Output tokens/second (local): "
+                + _available(call.tokens_per_second),
+                "Tokens/second basis: "
+                + _available(call.tokens_per_second_source),
                 f"Status: {call.status}",
             ]
         )
@@ -615,6 +634,16 @@ _WORKSPACE_EVENT_FIELDS = {
         "scenario_target_id",
     ),
     "deterministic_comparison": ("comparison_type", "comparable", "selected_item_ids"),
+    "scenario_history_resolution": (
+        "focused_item_id", "scenario_ids", "scenario_labels",
+    ),
+    "scenario_reference_resolution": (
+        "focused_item_id", "scenario_ids", "scenario_labels", "clarification_required",
+    ),
+    "deterministic_scenario_comparison": (
+        "focused_item_id", "scenario_labels", "compared_fields", "units",
+        "comparability", "reasons", "values",
+    ),
     "scenario_clarification": ("target_item_id", "supported_day_change"),
     "workspace_structured_evidence": (
         "item_id", "domain_status", "finding_codes", "has_projection", "missing_input_count",
@@ -623,7 +652,12 @@ _WORKSPACE_EVENT_FIELDS = {
     "session_reference_resolution": ("resolved_item_ids", "matched_by"),
     "agent_start": ("agent_name", "item_id", "selected_item_ids"),
     "portfolio_knowledge_retrieval": ("item_id", "knowledge_status", "retrieved_chunk_ids"),
-    "citation_validation": ("valid", "selected_item_ids", "source_count"),
+    "citation_validation": (
+        "valid", "citation_validation_status", "failure_category", "selected_item_ids",
+        "source_count", "citation_count", "cited_chunk_ids", "eligible_chunk_ids",
+        "unknown_chunk_ids", "missing_citation", "malformed_citation", "scope_mismatch",
+        "unsupported_claim",
+    ),
     "scenario_execution": ("item_id", "alternative_id", "change_type"),
     "workspace_response_projection": (
         "selected_item_ids", "status", "semantic_guard_applied", "semantic_guard_reason",

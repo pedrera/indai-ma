@@ -114,6 +114,7 @@ PROCUREMENT_DETERMINISTIC_PIPELINE_STAGES = (
 )
 SUPPLY_AGENT_PIPELINE_STAGES = (
     "workspace_intent_routing", "workspace_reference_resolution", "deterministic_comparison",
+    "scenario_history_resolution", "scenario_reference_resolution", "deterministic_scenario_comparison",
     "scenario_clarification", "workspace_structured_evidence", "workspace_response_projection",
     "portfolio_query", "session_reference_resolution", "agent_start", "prompt_build", "provider_start", "http_request",
     "model_inference", "llm_call", "parse_validation", "agent_decision", "tool_execution",
@@ -147,6 +148,39 @@ class PerformanceSnapshot:
     started_at: float
     elapsed_seconds: float
     events: tuple[PerformanceEvent, ...]
+
+
+def safe_failure_category(snapshot: PerformanceSnapshot) -> str | None:
+    """Return a fixed, non-free-form category suitable for UI and clipboard."""
+    status = str(snapshot.status).casefold()
+    if "timeout" in status or status == "timed_out":
+        return "timeout"
+    if status in {"cancelled", "canceled"}:
+        return "cancelled"
+    if status in {"provider_error", "protocol_error", "citation_validation", "scope_validation"}:
+        return status
+
+    for event in snapshot.events:
+        is_failed = event.status == PerformanceStatus.FAILED
+        if event.stage == "citation_validation" and (
+            is_failed or event.metadata.get("valid") is False
+        ):
+            return "citation_validation"
+        if event.stage in {"scope_validation", "query_scope_validation"} and (
+            is_failed or event.metadata.get("valid") is False
+        ):
+            return "scope_validation"
+        if event.stage == "parse_validation" and is_failed:
+            return "protocol_error"
+        if is_failed and event.stage in {"llm_call", "provider_start", "http_request", "model_inference"}:
+            return "provider_error"
+        if is_failed and event.stage in {"query_embedding", "vector_search", "retrieved_context", "portfolio_knowledge_retrieval"}:
+            return "retrieval_error"
+    if any(bool(event.metadata.get("semantic_guard_applied")) for event in snapshot.events):
+        return "semantic_guard"
+    if status in {"failed", "error"}:
+        return "operation_failed"
+    return None
 
 
 def get_performance_logger() -> logging.Logger:
@@ -248,6 +282,13 @@ class PerformanceRecorder:
         output_tokens: int | None = None,
         total_tokens: int | None = None,
         server_inference_seconds: float | None = None,
+        request_to_stream_seconds: float | None = None,
+        time_to_first_token_seconds: float | None = None,
+        stream_initial_wait_seconds: float | None = None,
+        stream_generation_seconds: float | None = None,
+        tokens_per_second: float | None = None,
+        tokens_per_second_source: str | None = None,
+        token_usage_source: str | None = None,
         response_character_count: int | None = None,
     ) -> None:
         if event_id is None:
@@ -258,6 +299,13 @@ class PerformanceRecorder:
                 request_setup_seconds=request_setup_seconds,
                 response_stream_seconds=response_stream_seconds,
                 server_inference_seconds=server_inference_seconds,
+                request_to_stream_seconds=request_to_stream_seconds,
+                time_to_first_token_seconds=time_to_first_token_seconds,
+                stream_initial_wait_seconds=stream_initial_wait_seconds,
+                stream_generation_seconds=stream_generation_seconds,
+                tokens_per_second=tokens_per_second,
+                tokens_per_second_source=tokens_per_second_source,
+                token_usage_source=token_usage_source,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 total_tokens=total_tokens,
@@ -266,6 +314,11 @@ class PerformanceRecorder:
                     "request_setup_seconds",
                     "response_stream_seconds",
                     "server_inference_seconds",
+                    "request_to_stream_seconds",
+                    "time_to_first_token_seconds",
+                    "stream_initial_wait_seconds",
+                    "stream_generation_seconds",
+                    "tokens_per_second",
                 ),
             )
         except Exception:
@@ -277,6 +330,10 @@ class PerformanceRecorder:
         *,
         request_setup_seconds: float | None = None,
         response_stream_seconds: float | None = None,
+        request_to_stream_seconds: float | None = None,
+        time_to_first_token_seconds: float | None = None,
+        stream_initial_wait_seconds: float | None = None,
+        stream_generation_seconds: float | None = None,
     ) -> None:
         if event_id is None:
             return
@@ -285,6 +342,10 @@ class PerformanceRecorder:
                 event_id,
                 request_setup_seconds=request_setup_seconds,
                 response_stream_seconds=response_stream_seconds,
+                request_to_stream_seconds=request_to_stream_seconds,
+                time_to_first_token_seconds=time_to_first_token_seconds,
+                stream_initial_wait_seconds=stream_initial_wait_seconds,
+                stream_generation_seconds=stream_generation_seconds,
                 server_inference_seconds=None,
                 input_tokens=None,
                 output_tokens=None,
@@ -292,6 +353,10 @@ class PerformanceRecorder:
                 nested_metrics=(
                     "request_setup_seconds",
                     "response_stream_seconds",
+                    "request_to_stream_seconds",
+                    "time_to_first_token_seconds",
+                    "stream_initial_wait_seconds",
+                    "stream_generation_seconds",
                 ),
             )
         except Exception:

@@ -7,3 +7,4 @@ __pycache__/
 streamlit.*.log
 .indai_ma/
 evals/results/
+artifacts/workspace_acceptance_*.txt

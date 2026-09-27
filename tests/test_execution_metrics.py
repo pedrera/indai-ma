@@ -127,6 +127,33 @@ class ExecutionMetricsTests(unittest.TestCase):
         self.assertEqual(metrics.prompt_character_count_total, 4820)
         self.assertEqual(metrics.response_character_count_total, 250)
 
+    def test_lmstudio_stream_telemetry_keeps_metric_sources_explicit(self):
+        metrics = build_operation_metrics(snapshot(events=[
+            event("llm_call", 12, {
+                "call_number": 1,
+                "request_setup_seconds": 0.15,
+                "request_to_stream_seconds": 1.2,
+                "response_stream_seconds": 10.5,
+                "time_to_first_token_seconds": 4.0,
+                "stream_initial_wait_seconds": 2.8,
+                "stream_generation_seconds": 7.7,
+                "input_tokens": 1200,
+                "output_tokens": 77,
+                "total_tokens": 1277,
+                "tokens_per_second": 10.0,
+                "tokens_per_second_source": "provider_usage_and_local_stream_timer",
+                "token_usage_source": "provider_usage",
+            })
+        ]))
+        call = metrics.llm_calls[0]
+        self.assertEqual(call.request_setup_time, 0.15)
+        self.assertEqual(call.request_to_stream_time, 1.2)
+        self.assertEqual(call.time_to_first_token_time, 4.0)
+        self.assertEqual(call.stream_initial_wait_time, 2.8)
+        self.assertEqual(call.stream_generation_time, 7.7)
+        self.assertEqual(call.tokens_per_second, 10.0)
+        self.assertEqual(call.token_usage_source, "provider_usage")
+
 
 if __name__ == "__main__":
     unittest.main()

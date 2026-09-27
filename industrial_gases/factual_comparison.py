@@ -7,7 +7,7 @@ from itertools import combinations
 import re
 from typing import Any
 
-from .portfolio_query import PortfolioQueryResult
+from .portfolio_query import PortfolioQueryResult, WorkspaceScenario
 from .portfolio_ui import _format_number
 
 
@@ -38,6 +38,32 @@ class FactualComparison:
     comparable: bool
     relations: tuple[ComparisonRelation, ...] = ()
     reason: str | None = None
+
+
+@dataclass(frozen=True)
+class ScenarioFactValue:
+    scenario_id: str
+    label: str
+    value: Decimal | bool | None
+    unit: str | None = None
+    unavailable_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class ScenarioMetricComparison:
+    field: str
+    label: str
+    values: tuple[ScenarioFactValue, ...]
+    comparable: bool
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class ScenarioSetComparison:
+    """Structured comparison over retained, evaluated scenario results."""
+
+    metrics: tuple[ScenarioMetricComparison, ...]
+    requested_field: str | None = None
 
 
 _COMPARISON_INTENT = re.compile(
@@ -202,6 +228,114 @@ def comparison_answer(comparison: FactualComparison, *, spanish: bool) -> str:
             else:
                 relation_text = "Los valores son iguales." if spanish else "The values are equal."
     return lead + "\n" + "\n".join(rendered) + ("\n" + relation_text if relation_text else "")
+
+
+_SCENARIO_FIELDS = (
+    "consumption_until_delivery",
+    "inventory_immediately_before_delivery",
+    "safety_stock_gap_before_delivery",
+    "stockout_before_delivery",
+    "inventory_immediately_after_delivery",
+    "required_delivery_volume",
+    "capacity_exceeded",
+)
+
+_SCENARIO_FIELD_LABELS = {
+    "consumption_until_delivery": ("Consumption until delivery", "Consumo hasta la entrega"),
+    "inventory_immediately_before_delivery": ("Inventory before delivery", "Inventario antes de la entrega"),
+    "safety_stock_gap_before_delivery": ("Safety-stock gap", "Diferencia frente al stock de seguridad"),
+    "stockout_before_delivery": ("Stockout before delivery", "Agotamiento antes de la entrega"),
+    "inventory_immediately_after_delivery": ("Inventory after delivery", "Inventario después de la entrega"),
+    "required_delivery_volume": ("Required delivery volume", "Volumen de entrega requerido"),
+    "capacity_exceeded": ("Capacity exceeded", "Capacidad superada"),
+}
+
+
+def compare_scenarios(
+    scenarios: tuple[WorkspaceScenario, ...],
+    *,
+    fields: tuple[str, ...] | None = None,
+    spanish: bool = False,
+) -> ScenarioSetComparison:
+    """Read existing projections only; never derives or converts supply values."""
+    selected_fields = fields or _SCENARIO_FIELDS
+    if any(field not in _SCENARIO_FIELDS for field in selected_fields):
+        raise ValueError("unsupported scenario comparison field")
+    metrics = []
+    for field in selected_fields:
+        values = []
+        for scenario in scenarios:
+            projection = scenario.result.projection
+            raw = getattr(projection, field) if projection is not None else None
+            unit = raw.unit if hasattr(raw, "unit") else None
+            value = raw.value if hasattr(raw, "value") else raw
+            values.append(ScenarioFactValue(
+                scenario.scenario_id, scenario.label, value, unit,
+                None if projection is not None else f"evaluation_{scenario.result.status.casefold()}",
+            ))
+        units = {value.unit for value in values if value.value is not None}
+        missing = any(value.value is None for value in values)
+        comparable = not missing and len(units) <= 1
+        reason = "projection_unavailable" if missing else (
+            "incompatible_operational_units" if len(units) > 1 else None
+        )
+        metrics.append(ScenarioMetricComparison(
+            field, _SCENARIO_FIELD_LABELS[field][1 if spanish else 0], tuple(values), comparable, reason,
+        ))
+    return ScenarioSetComparison(tuple(metrics), fields[0] if fields and len(fields) == 1 else None)
+
+
+def scenario_comparison_answer(
+    comparison: ScenarioSetComparison,
+    *,
+    question_kind: str,
+    spanish: bool,
+) -> str:
+    """Answer factual scenario questions without preference or recommendation language."""
+    metric = comparison.metrics[0] if comparison.metrics else None
+    if metric is None:
+        return "No hay métricas disponibles para comparar." if spanish else "No metrics are available to compare."
+    if not metric.comparable:
+        if metric.reason == "incompatible_operational_units":
+            return "No se pueden comparar directamente porque las unidades operativas son distintas." if spanish else "These values cannot be compared directly because their operational units differ."
+        return "Falta una proyección válida para comparar todos los escenarios." if spanish else "A valid projection is missing for at least one scenario."
+    values = metric.values
+    if question_kind in {"highest", "lowest"}:
+        numeric = [value for value in values if isinstance(value.value, Decimal)]
+        if not numeric:
+            return "La pregunta requiere una métrica numérica." if spanish else "This question requires a numeric metric."
+        extreme = (max if question_kind == "highest" else min)(value.value for value in numeric)
+        matches = [value for value in numeric if value.value == extreme]
+        labels = ", ".join(value.label for value in matches)
+        unit = numeric[0].unit or ""
+        if spanish:
+            return f"El valor más {('alto' if question_kind == 'highest' else 'bajo')} de {metric.label.casefold()} corresponde a {labels}: {_decimal_text(extreme)} {unit}.".replace("  ", " ")
+        return f"The {question_kind} {metric.label.casefold()} is {labels}: {_decimal_text(extreme)} {unit}.".replace("  ", " ")
+    if question_kind == "safety_maintained":
+        qualified = [value for value in values if isinstance(value.value, Decimal) and value.value >= 0]
+        if not qualified:
+            return "Ningún escenario mantiene el inventario en el stock de seguridad configurado." if spanish else "No scenario keeps projected inventory at or above configured safety stock."
+        rendered = "; ".join(
+            f"{value.label}: {'+' if value.value > 0 else ''}{_decimal_text(value.value)} {value.unit or ''}".strip()
+            for value in qualified
+        )
+        return ("Mantiene el stock de seguridad (brecha no negativa): " if spanish else "Meets configured safety stock (non-negative gap): ") + rendered
+    if question_kind in {"stockout", "capacity"}:
+        active = [value.label for value in values if value.value is True]
+        if question_kind == "stockout":
+            return (("Hay agotamiento previsto en: " if spanish else "Stockout is projected in: ") + ", ".join(active)) if active else ("No hay agotamiento previsto en los escenarios evaluados." if spanish else "No evaluated scenario projects stockout.")
+        return (("Se supera capacidad en: " if spanish else "Capacity is exceeded in: ") + ", ".join(active)) if active else ("Ningún escenario supera la capacidad." if spanish else "No scenario exceeds capacity.")
+    if comparison.requested_field is not None:
+        rendered = []
+        for value in values:
+            if isinstance(value.value, Decimal):
+                rendered.append(f"{value.label}: {_decimal_text(value.value)} {value.unit or ''}".strip())
+            elif isinstance(value.value, bool):
+                rendered.append(f"{value.label}: {'Sí' if value.value else 'No'}" if spanish else f"{value.label}: {'Yes' if value.value else 'No'}")
+            else:
+                rendered.append(f"{value.label}: {value.value}")
+        return metric.label + ":\n" + "\n".join(rendered)
+    return ("Escenarios comparados: " if spanish else "Compared scenarios: ") + ", ".join(value.label for value in values)
 
 
 def _semantics(field: str) -> str:

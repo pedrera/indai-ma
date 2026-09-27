@@ -21,6 +21,7 @@ from industrial_gases.supply_agent import (
     SupplyAgentStatus,
     SupplyAgentTools,
     _documentary_citation_guidance,
+    _decision_prompt,
 )
 from llm_client import LLMResponse
 from rag_service import RAGService
@@ -272,22 +273,19 @@ class SupplyAgentTests(unittest.TestCase):
             def __init__(inner_self):
                 inner_self.calls = 0
                 inner_self.cited = None
+                inner_self.prompt = None
+                inner_self.assertion_error = None
 
             def generate_response(inner_self, messages, **kwargs):
                 inner_self.calls += 1
                 sequence.append("generate")
                 prompt = messages[0]["content"]
-                self.assertIn('"available_citations"', prompt)
-                self.assertIn("MANDATORY DOCUMENTARY CITATION CONTRACT", prompt)
-                self.assertIn("Allowed citation tokens (copy verbatim):", prompt)
-                self.assertIn('"inventory_immediately_before_delivery"', prompt)
-                self.assertIn('"safety_stock_breach"', prompt)
-                self.assertIn("hospital_o2_supply_contract.txt", prompt)
-                match = re.search(r'\[chunk_id:([^\]\r\n]+)\]', prompt)
-                self.assertIsNotNone(match)
-                inner_self.cited = match.group(1)
-                self.assertIn(f"- [chunk_id:{inner_self.cited}]", prompt)
-                self.assertIn("Never invent, alter, shorten, or omit a token", prompt)
+                inner_self.prompt = prompt
+                try:
+                    inner_self.assert_prompt_contract(prompt)
+                except AssertionError as error:
+                    inner_self.assertion_error = str(error)
+                    raise
                 answer = (
                     "La proyección registra una brecha de stock; la fuente contractual aplicable "
                     f"describe las condiciones pertinentes. [chunk_id:{inner_self.cited}]"
@@ -296,6 +294,32 @@ class SupplyAgentTests(unittest.TestCase):
                     "action": "finish", "answer": answer, "decision_summary": "grounded answer",
                 }))
 
+            def assert_prompt_contract(inner_self, prompt):
+                self.assertNotIn('"available_citations"', prompt)
+                self.assertIn("DOCUMENTARY ANSWER CONTRACT", prompt)
+                self.assertIn("Allowed citation tokens (copy exactly; choose the supporting source):", prompt)
+                self.assertIn('"inventory_immediately_before_delivery"', prompt)
+                self.assertIn('"safety_stock_breach"', prompt)
+                self.assertIn("hospital_o2_supply_contract.txt", prompt)
+                match = re.search(r'\[chunk_id:([^\]\r\n]+)\]', prompt)
+                self.assertIsNotNone(match)
+                inner_self.cited = match.group(1)
+                self.assertIn(f"- [chunk_id:{inner_self.cited}]", prompt)
+                self.assertEqual(
+                    prompt.count(f"[chunk_id:{inner_self.cited}]"), 1,
+                    prompt[max(0, prompt.find(f"[chunk_id:{inner_self.cited}]") - 180):
+                           prompt.find(f"[chunk_id:{inner_self.cited}]") + 240],
+                )
+                self.assertIn('"chunk_id": "' + inner_self.cited + '"', prompt)
+                question_at = prompt.rfind("USER QUESTION:")
+                contract_at = prompt.rfind("DOCUMENTARY ANSWER CONTRACT:")
+                allowlist_at = prompt.rfind("Allowed citation tokens")
+                self.assertGreater(contract_at, question_at)
+                self.assertGreater(allowlist_at, contract_at)
+                self.assertGreater(prompt.index("Answer the user's question now"), allowlist_at)
+                self.assertLess(prompt.index("AVAILABLE TOOLS:"), question_at)
+                self.assertIn("Never invent, alter, shorten, or omit a citation", prompt)
+
         provider = ContextAwareProvider()
         result = self.agent(
             question, ProviderSupplyDecisionModel(provider), knowledge=RecordingKnowledge(),
@@ -303,9 +327,32 @@ class SupplyAgentTests(unittest.TestCase):
 
         self.assertEqual(sequence, ["retrieve", "generate"])
         self.assertEqual(provider.calls, 1)
-        self.assertEqual(result.status, SupplyAgentStatus.COMPLETED)
+        self.assertEqual(result.status, SupplyAgentStatus.COMPLETED, provider.assertion_error)
         self.assertIn(f"[chunk_id:{provider.cited}]", result.answer)
         self.assertIn(provider.cited, {source.chunk.chunk_id for source in result.knowledge_sources})
+        cited_source = next(
+            source for source in result.knowledge_sources
+            if source.chunk.chunk_id == provider.cited
+        )
+        prompt_state_json = provider.prompt.split(
+            "STATE (domain status is source data; observations are authoritative):\n", 1,
+        )[1].split("\n\nAVAILABLE TOOLS:", 1)[0]
+        prompt_state = json.loads(prompt_state_json)
+        prompted_source_texts = {
+            source["chunk_id"]: source["text"]
+            for item in prompt_state["portfolio_items"]
+            for source in item["knowledge_sources"]
+        }
+        prompted_source_texts.update({
+            source["chunk_id"]: source["text"]
+            for source in prompt_state["global_knowledge_sources"]
+        })
+        self.assertEqual(prompted_source_texts[provider.cited], cited_source.chunk.text)
+        self.assertEqual(
+            provider.prompt.count(question), 1,
+            [provider.prompt[max(0, match.start() - 80):match.end() + 80]
+             for match in re.finditer(re.escape(question), provider.prompt)],
+        )
         self.assertEqual({reference.evidence_type for reference in result.evidence_references},
                          {"domain", "knowledge"})
         self.assertEqual(result.position.result.findings[0].code, "safety_stock_breach")
@@ -319,6 +366,39 @@ class SupplyAgentTests(unittest.TestCase):
         }
         self.assertEqual(_documentary_citation_guidance(state), "")
 
+        prompt = _decision_prompt(
+            "¿Cuál es el inventario actual?", state, [],
+        )
+        self.assertNotIn("DOCUMENTARY ANSWER CONTRACT", prompt)
+        self.assertNotIn("[chunk_id:should-not-appear]", prompt)
+        self.assertIn("Answer the user's question now", prompt)
+
+    def test_zero_temperature_is_scoped_to_lmstudio_documentary_turns(self):
+        class CapturingProvider:
+            def __init__(self, provider_name):
+                self.provider_name = provider_name
+                self.model = "test-model"
+                self.options = None
+
+            def generate_response(self, _messages, *, timeout_seconds=None, options=None):
+                self.options = options
+                return LLMResponse(json.dumps({
+                    "action": "finish", "answer": "No documentary claim.",
+                    "decision_summary": "answer",
+                }))
+
+        for provider_name, documentary, expected in (
+            ("lmstudio", True, 0.0),
+            ("lmstudio", False, None),
+            ("openai", True, None),
+        ):
+            with self.subTest(provider=provider_name, documentary=documentary):
+                provider = CapturingProvider(provider_name)
+                ProviderSupplyDecisionModel(provider).decide(
+                    "Question", {"documentary_evidence_required": documentary}, [],
+                )
+                self.assertEqual(provider.options.temperature, expected)
+
     def test_documentary_claim_without_citation_is_rejected_even_with_retrieval(self):
         model = QueueDecisionModel(AgentDecision(
             "finish", "finish", answer="El contrato establece condiciones de suministro aplicables.",
@@ -329,6 +409,7 @@ class SupplyAgentTests(unittest.TestCase):
                       f"answer={result.answer!r}, sources={len(result.knowledge_sources)}")
         self.assertTrue(result.knowledge_sources)
         self.assertNotIn("establece condiciones", result.answer)
+        self.assertNotIn("[chunk_id:", result.answer)
 
     def test_explicit_what_if_uses_existing_evaluator_and_keeps_baseline_immutable(self):
         original = self.baseline_item.result

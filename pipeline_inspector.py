@@ -24,6 +24,7 @@ from diagnostics import (
     PerformanceEvent,
     PerformanceSnapshot,
     PerformanceStatus,
+    safe_failure_category,
 )
 
 
@@ -31,6 +32,9 @@ STAGE_PRESENTATION = {
     "workspace_intent_routing": ("⌖", "Workspace Intent / Routing"),
     "workspace_reference_resolution": ("↪", "Workspace Reference Resolution"),
     "deterministic_comparison": ("⇄", "Deterministic Factual Comparison"),
+    "scenario_history_resolution": ("◷", "Scenario History Resolution"),
+    "scenario_reference_resolution": ("↔", "Scenario Reference Resolution"),
+    "deterministic_scenario_comparison": ("⇄", "Deterministic Scenario Comparison"),
     "scenario_clarification": ("?", "Scenario Clarification"),
     "workspace_structured_evidence": ("▣", "Structured Operational Evidence"),
     "workspace_response_projection": ("✓", "Workspace Response Projection"),
@@ -572,6 +576,31 @@ def _render_supply_agent_timeline(snapshot: PerformanceSnapshot) -> list[str]:
                 f'<small>Values: {escape(formatted or "none")}</small>'
                 '</div></div>'
             )
+        elif event.stage in {"scenario_history_resolution", "scenario_reference_resolution"}:
+            parts.append(
+                '<div class="pi-tools"><div class="pi-tool">'
+                f'<small>Focused item: {escape(str(event.metadata.get("focused_item_id", "unknown")))}</small>'
+                f'<small>Scenario IDs: {escape(str(event.metadata.get("scenario_ids", ())))}</small>'
+                f'<small>Scenario labels: {escape(str(event.metadata.get("scenario_labels", ())))}</small>'
+                f'<small>Clarification required: {escape(str(event.metadata.get("clarification_required", False)))}</small>'
+                '</div></div>'
+            )
+        elif event.stage == "deterministic_scenario_comparison":
+            values = event.metadata.get("values", ())
+            formatted = "; ".join(
+                f'{item.get("label", "scenario")}: {item.get("value")} {item.get("unit") or ""}'.strip()
+                for metric in values for item in metric if isinstance(item, dict)
+            )
+            parts.append(
+                '<div class="pi-tools"><div class="pi-tool">'
+                f'<small>Focused item: {escape(str(event.metadata.get("focused_item_id", "unknown")))}</small>'
+                f'<small>Compared fields: {escape(str(event.metadata.get("compared_fields", ())))}</small>'
+                f'<small>Units: {escape(str(event.metadata.get("units", ())))}</small>'
+                f'<small>Comparable: {escape(str(event.metadata.get("comparability", ())))}</small>'
+                f'<small>Reasons: {escape(str(event.metadata.get("reasons", ())))}</small>'
+                f'<small>Scenario values: {escape(formatted or "none")}</small>'
+                '</div></div>'
+            )
         elif event.stage == "scenario_clarification":
             parts.append(
                 '<div class="pi-tools"><div class="pi-tool">'
@@ -622,10 +651,27 @@ def _render_supply_agent_timeline(snapshot: PerformanceSnapshot) -> list[str]:
                 '</div></div>'
             )
         elif event.stage == "citation_validation":
+            citation_details = (
+                ("Status", event.metadata.get("citation_validation_status")),
+                ("Failure category", event.metadata.get("failure_category")),
+                ("Citations", event.metadata.get("citation_count")),
+                ("Cited chunk IDs", event.metadata.get("cited_chunk_ids")),
+                ("Eligible chunk IDs", event.metadata.get("eligible_chunk_ids")),
+                ("Unknown chunk IDs", event.metadata.get("unknown_chunk_ids")),
+                ("Missing citation", event.metadata.get("missing_citation")),
+                ("Malformed citation", event.metadata.get("malformed_citation")),
+                ("Scope mismatch", event.metadata.get("scope_mismatch")),
+                ("Unsupported claim boundary", event.metadata.get("unsupported_claim")),
+            )
+            detail_html = "".join(
+                f'<small>{escape(label)}: {escape(str(value))}</small>'
+                for label, value in citation_details if value is not None
+            )
             parts.append(
                 '<div class="pi-tools"><div class="pi-tool">'
                 f'<small>Valid: {escape(str(event.metadata.get("valid", "pending")))}</small>'
                 f'<small>Selected scopes: {escape(str(event.metadata.get("selected_item_ids", ())))}</small>'
+                f'{detail_html}'
                 '</div></div>'
             )
         if event.stage == "tool_execution":
@@ -683,8 +729,81 @@ def _render_risk_timeline(snapshot):
     return parts
 
 
-def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
-    with st.expander("Pipeline Inspector", expanded=False):
+def render_workspace_pipeline_history(history, execution_views, *, active_recorder=None) -> None:
+    """Render conversation-scoped execution selection over existing safe views."""
+    st.subheader("Pipeline Inspector")
+    st.caption("Execution history")
+    if not history:
+        st.caption("Workspace executions will appear here.")
+        return
+
+    positions = {entry.operation_id: index + 1 for index, entry in enumerate(history)}
+    entries = tuple(reversed(history))
+    operation_ids = tuple(entry.operation_id for entry in entries)
+    selected_key = "workspace_pipeline_selected_operation_id"
+    selected_id = st.session_state.get(selected_key)
+    if selected_id not in operation_ids:
+        selected_id = operation_ids[0]
+        st.session_state[selected_key] = selected_id
+
+    views_by_id = {entry.operation_id: execution_views.get(entry.operation_id) for entry in entries}
+
+    def option_label(operation_id: str) -> str:
+        entry = next(item for item in entries if item.operation_id == operation_id)
+        view = views_by_id[operation_id]
+        if view is None:
+            return f"Q{positions[operation_id]} · {entry.query_label} · snapshot unavailable"
+        snapshot = view.snapshot
+        category = safe_failure_category(snapshot)
+        icon = "⚠" if category else ("✓" if snapshot.status == "completed" else "✕")
+        status = snapshot.status.replace("_", " ")
+        intent = next((
+            event.metadata.get("intent") for event in snapshot.events
+            if event.stage == "workspace_intent_routing"
+        ), None)
+        intent_text = f" · {intent}" if intent else ""
+        failure_text = f" · {category}" if category else ""
+        return (
+            f"Q{positions[operation_id]} · {entry.query_label} · {icon} {status}"
+            f"{failure_text} · {_format_duration(snapshot.elapsed_seconds)}"
+            f" · {snapshot.provider}/{snapshot.model}{intent_text}"
+        )
+
+    selected_id = st.selectbox(
+        "Conversation executions", operation_ids, index=operation_ids.index(selected_id),
+        key=selected_key, format_func=option_label,
+    )
+    selected_view = execution_views.get(selected_id)
+    snapshot = selected_view.snapshot if selected_view is not None else None
+    if (
+        active_recorder is not None
+        and active_recorder.operation_id == selected_id
+        and (snapshot is None or snapshot.status == "running")
+    ):
+        snapshot = active_recorder.snapshot()
+    if snapshot is None:
+        st.warning("No safe execution snapshot is available for this turn.")
+        return
+
+    metrics = build_operation_metrics(snapshot)
+    st.subheader("Selected execution")
+    st.caption(
+        f"LLM calls: {metrics.llm_call_count} · "
+        f"LLM request: {_format_duration(metrics.llm_request_wall_time_total)} · "
+        f"Retrieval: {_format_duration(metrics.retrieval_time_total)} · "
+        f"Tools: {_format_duration(metrics.tool_execution_time_total)} · "
+        f"Parsing: {_format_duration(metrics.parsing_time_total)}"
+    )
+    render_pipeline_inspector(snapshot, title="Execution detail", expanded=True)
+
+
+def render_pipeline_inspector(
+    snapshot: PerformanceSnapshot | None,
+    *,
+    title: str = "Pipeline Inspector",
+    expanded: bool = False,
+) -> None:
+    with st.expander(title, expanded=expanded):
         if snapshot is None:
             st.caption("El flujo de la próxima petición aparecerá aquí.")
             return
@@ -698,6 +817,7 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
         provider = {"lmstudio": "LM Studio", "openai": "OpenAI"}.get(
             snapshot.provider, snapshot.provider
         )
+        failure_category = safe_failure_category(snapshot)
         mode = {
             "chat": "Chat",
             "rag_chat": "RAG Chat",
@@ -717,6 +837,7 @@ def render_pipeline_inspector(snapshot: PerformanceSnapshot | None) -> None:
                   <div><span>Modo</span><strong>{escape(mode)}</strong></div>
                   <div><span>Estado</span><strong class="pi-{status_class}">{escape(STATUS_LABELS.get(snapshot.status, snapshot.status))}</strong></div>
                   <div><span>Tiempo total</span><strong>{_format_duration(snapshot.elapsed_seconds)}</strong></div>
+                  {f'<div><span>Categoría</span><strong>{escape(failure_category)}</strong></div>' if failure_category else ''}
                 </div>
                 """
             ),

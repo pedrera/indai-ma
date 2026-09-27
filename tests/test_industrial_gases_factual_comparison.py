@@ -6,10 +6,12 @@ from industrial_gases.factual_comparison import (
     compare_portfolio_facts,
     comparison_field_for_question,
     is_factual_comparison_question,
+    compare_scenarios,
+    scenario_comparison_answer,
 )
 from industrial_gases.operational_attention import OperationalAttentionService
 from industrial_gases.portfolio import SupplyPortfolioResult
-from industrial_gases.portfolio_query import PortfolioQuery, SupplyPortfolioQueryService
+from industrial_gases.portfolio_query import PortfolioQuery, SupplyPortfolioQueryService, WorkspaceScenario
 from industrial_gases.portfolio_ui import evaluate_demo_supply_portfolio
 
 
@@ -142,6 +144,44 @@ class FactualComparisonTests(unittest.TestCase):
             comparison_field_for_question("¿Cuáles posiciones tienen agotamiento antes de la entrega?"),
             "stockout_before_delivery",
         )
+
+    def test_scenario_comparison_preserves_signed_values_and_handles_unavailable_and_units(self):
+        source = self.portfolio.items[0].result
+        baseline = WorkspaceScenario("hospital-costa-sur-o2", "baseline", "Actual", None, source)
+        alternative = WorkspaceScenario("hospital-costa-sur-o2", "delivery-offset:-2", "2 días antes", -2, source)
+        signed = compare_scenarios((baseline, alternative), fields=("safety_stock_gap_before_delivery",), spanish=True)
+        self.assertTrue(signed.metrics[0].comparable)
+        self.assertEqual(tuple(value.value for value in signed.metrics[0].values), (-1100, -1100))
+        self.assertIn("-1,100 kg", scenario_comparison_answer(signed, question_kind="values", spanish=True))
+
+        invalid_result = replace(source, status="INVALID", projection=None, findings=(), validation_errors=("invalid",))
+        missing_result = replace(source, status="MISSING_INPUTS", projection=None, findings=(), missing_inputs=("delivery_plan",))
+        for result, status in ((invalid_result, "INVALID"), (missing_result, "MISSING_INPUTS")):
+            compared = compare_scenarios((baseline, replace(alternative, result=result)))
+            self.assertFalse(compared.metrics[0].comparable)
+            self.assertEqual(compared.metrics[0].reason, "projection_unavailable")
+            self.assertEqual(compared.metrics[0].values[1].unavailable_reason, f"evaluation_{status.casefold()}")
+        from industrial_gases.conversational_workspace_ui import _scenario_comparison_rows
+        invalid_rows = _scenario_comparison_rows(
+            compare_scenarios((baseline, replace(alternative, result=invalid_result))), "es",
+        )
+        missing_rows = _scenario_comparison_rows(
+            compare_scenarios((baseline, replace(alternative, result=missing_result))), "es",
+        )
+        self.assertIn("Evaluación inválida", tuple(invalid_rows[0].values()))
+        self.assertIn("Faltan datos", tuple(missing_rows[0].values()))
+
+        from industrial_gases.models import Quantity
+        altered_projection = replace(
+            source.projection,
+            inventory_immediately_before_delivery=Quantity(1100, "Nm3"),
+        )
+        altered = replace(alternative, result=replace(source, projection=altered_projection))
+        incompatible = compare_scenarios(
+            (baseline, altered), fields=("inventory_immediately_before_delivery",),
+        )
+        self.assertFalse(incompatible.metrics[0].comparable)
+        self.assertEqual(incompatible.metrics[0].reason, "incompatible_operational_units")
 
 
 if __name__ == "__main__":

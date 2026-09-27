@@ -5,6 +5,26 @@ from typing import Any
 from diagnostics import PerformanceSnapshot
 from clipboard_text import build_diagnostics_clipboard_text, build_all_clipboard_text, _redact_text
 
+
+WORKSPACE_EXECUTION_HISTORY_LIMIT = 50
+
+
+@dataclass(frozen=True)
+class WorkspaceExecutionReference:
+    """Safe, bounded link from a conversation turn to its captured execution view."""
+
+    operation_id: str
+    query_label: str
+
+
+def append_workspace_execution_reference(history, operation_id: str, query: str):
+    if not operation_id:
+        raise ValueError("workspace operation ID must be non-empty")
+    query_label = _redact_text(" ".join(str(query).split()))[:120] or "Workspace turn"
+    retained = [entry for entry in history if entry.operation_id != operation_id]
+    retained.append(WorkspaceExecutionReference(operation_id, query_label))
+    return tuple(retained[-WORKSPACE_EXECUTION_HISTORY_LIMIT:])
+
 @dataclass(frozen=True)
 class ExecutionView:
     operation_id: str

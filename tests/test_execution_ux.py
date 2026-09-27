@@ -5,8 +5,11 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from streamlit.testing.v1 import AppTest
-from diagnostics import PerformanceRecorder
-from execution_view import ExecutionView, find_execution, clipboard_payloads
+from diagnostics import PerformanceRecorder, safe_failure_category
+from execution_view import (
+    ExecutionView, find_execution, clipboard_payloads,
+    WorkspaceExecutionReference, append_workspace_execution_reference,
+)
 from business_output import commercial_text, supervisor_text
 from business_output import build_supervisor_executive_sections
 from api_client_models import ApiAnalysisResult
@@ -25,6 +28,37 @@ RISK_QUERY = 'Demanda 4,8 GWh. Tenemos 4,3 GWh aprovisionados. Precio spot 42 EU
 
 
 class ExecutionUXTests(unittest.TestCase):
+    def test_workspace_execution_history_is_ordered_bounded_and_redacts_query_labels(self):
+        history = ()
+        for index in range(1, 4):
+            history = append_workspace_execution_reference(history, f"op-{index}", f"Turn {index}")
+        self.assertEqual(tuple(item.operation_id for item in history), ("op-1", "op-2", "op-3"))
+
+        history = append_workspace_execution_reference(history, "op-4", "lookup api_key=very-secret-value")
+        self.assertIn("[REDACTED]", history[-1].query_label)
+        self.assertNotIn("very-secret-value", history[-1].query_label)
+        for index in range(5, 56):
+            history = append_workspace_execution_reference(history, f"op-{index}", f"Turn {index}")
+        self.assertEqual(len(history), 50)
+        self.assertEqual(history[0].operation_id, "op-6")
+        self.assertEqual(history[-1].operation_id, "op-55")
+
+    def test_safe_failure_categories_use_status_and_structured_stages_only(self):
+        timed_out = PerformanceRecorder("timeout", "fixture", "model", "conversational_workspace")
+        timed_out.record_stage("llm_call", call_number=1)
+        timed_out.finish("timed_out")
+        self.assertEqual(safe_failure_category(timed_out.snapshot()), "timeout")
+
+        citation = PerformanceRecorder("citation", "fixture", "model", "conversational_workspace")
+        citation.record_stage("citation_validation", valid=False)
+        citation.finish("failed")
+        self.assertEqual(safe_failure_category(citation.snapshot()), "citation_validation")
+
+        guard = PerformanceRecorder("guard", "fixture", "model", "conversational_workspace")
+        guard.record_stage("workspace_response_projection", semantic_guard_applied=True)
+        guard.finish("completed")
+        self.assertEqual(safe_failure_category(guard.snapshot()), "semantic_guard")
+
     def test_business_adapter_forwards_explicit_inputs_and_legacy_none(self):
         client = Mock()
         client.analyze.return_value = "result"
@@ -198,14 +232,9 @@ class ExecutionUXTests(unittest.TestCase):
             app = AppTest.from_file(APP, default_timeout=20).run()
             self.assertFalse(app.exception)
             self.assertEqual(app.radio(key='selected_mode').value, 'indAI MA')
-            developer_diagnostics = next(
-                item for item in app.expander if item.label == 'Developer diagnostics'
-            )
-            self.assertFalse(developer_diagnostics.proto.expanded)
-            self.assertIn(
-                'Pipeline Inspector',
-                [item.label for item in developer_diagnostics.expander],
-            )
+            self.assertEqual(app.session_state['workspace_execution_history'], ())
+            self.assertFalse(any(item.label == 'Developer diagnostics' for item in app.expander))
+            self.assertTrue(any(str(item.value) == 'Pipeline Inspector' for item in app.subheader))
 
             app.button(key='workspace_starter_0').click().run()
             self.assertFalse(app.exception)
@@ -215,20 +244,10 @@ class ExecutionUXTests(unittest.TestCase):
             self.assertEqual(workspace_recorder.operation_id, operation_id)
             self.assertEqual(workspace_recorder.mode, 'conversational_workspace')
             self.assertEqual(app.session_state['execution_views'][operation_id].snapshot.operation_id, operation_id)
-
-            developer_diagnostics = next(
-                item for item in app.expander if item.label == 'Developer diagnostics'
-            )
-            self.assertFalse(developer_diagnostics.proto.expanded)
-            pipeline_inspector = next(
-                item for item in app.expander if item.label == 'Pipeline Inspector'
-            )
-            self.assertFalse(pipeline_inspector.proto.expanded)
-            self.assertIn('Métricas avanzadas', [item.label for item in app.expander])
-            self.assertIn(
-                'Métricas avanzadas',
-                [item.label for item in pipeline_inspector.expander],
-            )
+            self.assertEqual(len(app.session_state['workspace_execution_history']), 1)
+            self.assertEqual(app.session_state['workspace_execution_history'][0].operation_id, operation_id)
+            self.assertEqual(app.session_state['workspace_pipeline_selected_operation_id'], operation_id)
+            self.assertTrue(any(item.label == 'Execution detail' for item in app.expander))
             app.run()
             self.assertFalse(app.exception)
 
@@ -241,6 +260,8 @@ class ExecutionUXTests(unittest.TestCase):
             self.assertIn('Conversational Workspace', inspector_text)
             self.assertIn('Workspace Intent / Routing', inspector_text)
             self.assertIn('Workspace Response Projection', inspector_text)
+            self.assertIn('LLM calls: 0', inspector_text)
+            self.assertIn('Retrieval: 0 ms', inspector_text)
             self.assertNotIn('older-operation', inspector_text)
             self.assertNotIn('Query Embedding', inspector_text)
             self.assertNotIn('Vector Search', inspector_text)
@@ -256,10 +277,98 @@ class ExecutionUXTests(unittest.TestCase):
             self.assertNotIn('"query"', selected_copy[0])
             self.assertNotIn('unrelated previous operation', selected_copy[0])
 
+            old_recorder = PerformanceRecorder(
+                'old-workspace-operation', 'lmstudio', 'old-model', 'conversational_workspace',
+            )
+            old_recorder.record_stage('workspace_intent_routing', intent='documentary')
+            old_recorder.record_stage('query_embedding', top_k=8)
+            old_recorder.record_stage('vector_search', retrieved_chunk_count=1)
+            old_recorder.record_stage('retrieved_context', retrieved_chunk_count=1)
+            old_recorder.record_stage('llm_call', call_number=1, purpose='generation')
+            old_recorder.finish('timed_out')
+            old_view = ExecutionView.capture(
+                'indAI MA', None, {}, old_recorder.snapshot(), 'must not copy this response text',
+            )
+            app.session_state['execution_views']['old-workspace-operation'] = old_view
+            citation_recorder = PerformanceRecorder(
+                'citation-failure-operation', 'lmstudio', 'model-c', 'conversational_workspace',
+            )
+            citation_recorder.record_stage(
+                'citation_validation', valid=False, citation_validation_status='failed',
+                failure_category='missing_citation', selected_item_ids=('hospital-costa-sur-o2',),
+                source_count=1, citation_count=0, cited_chunk_ids=(),
+                eligible_chunk_ids=('hospital-delivery-contract',), unknown_chunk_ids=(),
+                missing_citation=True, malformed_citation=False, scope_mismatch=False,
+                unsupported_claim=False, raw_response='private provider output',
+            )
+            citation_recorder.record_stage(
+                'workspace_response_projection', semantic_guard_applied=True,
+                semantic_guard_reason='fixture_guard_reason',
+            )
+            citation_recorder.finish('failed')
+            app.session_state['execution_views']['citation-failure-operation'] = ExecutionView.capture(
+                'indAI MA', None, {}, citation_recorder.snapshot(), 'unsafe exception details excluded',
+            )
+            app.session_state['workspace_execution_history'] = (
+                WorkspaceExecutionReference('old-workspace-operation', '¿Qué dice el contrato?'),
+                WorkspaceExecutionReference('citation-failure-operation', 'Reintento documental'),
+                *app.session_state['workspace_execution_history'],
+            )
+            app.run()
+            self.assertFalse(app.exception)
+            self.assertEqual(
+                app.session_state['workspace_pipeline_selected_operation_id'], operation_id,
+                'the most recent operation remains selected by default',
+            )
+            history_options = app.selectbox(key='workspace_pipeline_selected_operation_id').options
+            self.assertEqual(
+                tuple(str(option).split(' · ', 1)[0] for option in history_options),
+                ('Q3', 'Q2', 'Q1'),
+                'history displays turns newest first with numbers derived from conversation order',
+            )
+            self.assertTrue(any('timeout' in str(option).casefold() for option in history_options))
+            self.assertTrue(any('citation_validation' in str(option) for option in history_options))
+            app.selectbox(key='workspace_pipeline_selected_operation_id').set_value(
+                'old-workspace-operation',
+            ).run()
+            self.assertFalse(app.exception)
+            historical_visible = "\n".join(
+                str(item.value)
+                for collection in (app.markdown, app.caption, app.text)
+                for item in collection
+            )
+            for stage in ('Query Embedding', 'Vector Search', 'Retrieved Context', 'LLM Call'):
+                self.assertIn(stage, historical_visible)
+            selected_old_copy = next(
+                item for item in reversed(copied_diagnostics)
+                if item[1] == 'Copiar diagnóstico'
+                and 'ID: old-workspace-operation' in item[0]
+            )
+            self.assertIn('llm_call', selected_old_copy[0])
+            self.assertIn('Failure category: timeout', selected_old_copy[0])
+            self.assertNotIn('must not copy this response text', selected_old_copy[0])
+
+            app.selectbox(key='workspace_pipeline_selected_operation_id').set_value(
+                'citation-failure-operation',
+            ).run()
+            selected_citation_copy = next(
+                item for item in reversed(copied_diagnostics)
+                if item[1] == 'Copiar diagnóstico'
+                and 'ID: citation-failure-operation' in item[0]
+            )
+            self.assertIn('Failure category: citation_validation', selected_citation_copy[0])
+            self.assertIn('fixture_guard_reason', selected_citation_copy[0])
+            self.assertIn('failure_category', selected_citation_copy[0])
+            self.assertIn('missing_citation', selected_citation_copy[0])
+            self.assertIn('eligible_chunk_ids', selected_citation_copy[0])
+            self.assertIn('hospital-delivery-contract', selected_citation_copy[0])
+            self.assertNotIn('private provider output', selected_citation_copy[0])
+            self.assertNotIn('Failure category: timeout', selected_citation_copy[0])
+
             app.session_state['pipeline_recorder'] = stale_recorder
             app.run()
             self.assertFalse(app.exception)
-            self.assertTrue(any(operation_id in str(item.value) for item in app.caption))
+            self.assertTrue(any('citation-failure-operation' in str(item.value) for item in app.caption))
             retained_text = '\n'.join(
                 str(item.value)
                 for collection in (app.markdown, app.caption, app.text, app.info)
@@ -270,7 +379,7 @@ class ExecutionUXTests(unittest.TestCase):
                 item for item in reversed(copied_diagnostics)
                 if item[1] == 'Copiar diagnóstico'
             )
-            self.assertIn(f"ID: {operation_id}", refreshed_copy[0])
+            self.assertIn("ID: citation-failure-operation", refreshed_copy[0])
             self.assertNotIn('older-operation', refreshed_copy[0])
 
     def test_business_demos_populate_editable_request_without_execution(self):

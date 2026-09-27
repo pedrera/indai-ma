@@ -2,9 +2,8 @@
 
 ## Current status
 
-The latest published baseline is **v1.13.0**. The current working tree contains
-the **v1.14.0 Conversational Intelligence release candidate**, which has not been
-tagged or published.
+The latest published baseline is **v1.14.0**. The current working tree contains
+the **v1.15.0 Conversational Multi-Scenario Decision Support release candidate**.
 This roadmap distinguishes shipped capabilities from future candidates; candidate
 items are not commitments or claims about the current implementation.
 
@@ -52,12 +51,18 @@ items are not commitments or claims about the current implementation.
   single-item scenarios. Bounded follow-up context and structured cards preserve
   evidence boundaries; specialized demo views remain reachable in secondary
   navigation. No new calculations, aggregation or recommendations are added.
-- **v1.14.0 release candidate — Conversational Intelligence:** bounded current-set,
+- **v1.14.0 — Conversational Intelligence:** bounded current-set,
   focus, documentary and scenario continuity; deterministic structured reference
   resolution; unit-safe factual comparisons over existing projections; scoped
   documentary follow-ups; original-baseline scenario follow-ups; and progressive
-  conversational presentation. v1.13.0 is the published baseline; v1.14.0 is
-  not yet released.
+  conversational presentation. Published release.
+- **v1.15.0 release candidate — Conversational Multi-Scenario Decision Support:**
+  bounded item-scoped scenario history, original-baseline alternatives,
+  deterministic factual comparisons, documentary continuity, Workspace and Copy
+  presentation, and safe Pipeline Inspector diagnostics. The default Workspace
+  has a persistent right-side Inspector with selectable history bounded to the
+  latest 50 operations in the conversation; failures remain inspectable. No
+  recommendation, ranking, optimization or automatic scenario search.
 
 ## Future direction
 
@@ -67,9 +72,9 @@ implementation unless described in the completed releases above:
 - **Future industrial decision support:** candidate direction only; no additional
   agents, coordination, cross-position aggregation or decision automation is
   implied by the current release candidate.
-- **v1.15 — Decision Support:** future candidate for explicit multi-alternative
-  comparison, subject to separate design and validation; it is not implemented in
-  v1.14.0.
+- **Future decision support:** recommendation, ranking and optimization remain
+  candidates for separate design and validation; they are not implemented in
+  v1.15.0.
 - **v2.0.0 — Industrial Decision Intelligence:** longer-term direction, not a
   commitment or an existing capability.
 

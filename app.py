@@ -7,7 +7,10 @@ from time import perf_counter
 from uuid import uuid4
 
 from dataclasses import asdict
-from execution_view import ExecutionView, find_execution, clipboard_payloads, render_execution_header
+from execution_view import (
+    ExecutionView, find_execution, clipboard_payloads, render_execution_header,
+    append_workspace_execution_reference,
+)
 from business_output import commercial_text, risk_text, supervisor_text
 from diagnostics import PerformanceRecorder
 from commercial_agent import CommercialAgent, ProviderCommercialModel
@@ -53,7 +56,9 @@ from llm_client import (
     get_supported_providers,
 )
 from embeddings import LMStudioEmbeddingProvider, get_embedding_model_name
-from pipeline_inspector import inject_pipeline_styles, render_pipeline_inspector
+from pipeline_inspector import (
+    inject_pipeline_styles, render_pipeline_inspector, render_workspace_pipeline_history,
+)
 from rag_service import RAGService, build_rag_messages, sanitize_rag_citations
 from runtime_config import LLMRuntimeConfig
 from vector_store import LocalVectorStore, VectorStoreError
@@ -143,6 +148,10 @@ if "workspace_context" not in st.session_state:
     st.session_state.workspace_context = SupplyAgentSessionContext()
 if "workspace_pending_prompt" not in st.session_state:
     st.session_state.workspace_pending_prompt = None
+if "workspace_execution_history" not in st.session_state:
+    st.session_state.workspace_execution_history = ()
+if "workspace_pipeline_selected_operation_id" not in st.session_state:
+    st.session_state.workspace_pipeline_selected_operation_id = None
 if "generation_job" not in st.session_state:
     st.session_state.generation_job = None
 if "generation_kind" not in st.session_state:
@@ -311,6 +320,17 @@ def remember_execution_start(recorder):
     st.session_state.execution_views[view.operation_id] = view
     execution_mode = "Multi-Agent Supervisor" if selected_mode == "Business" else selected_mode
     st.session_state.execution_mode_ids[execution_mode] = view.operation_id
+
+
+def remember_workspace_execution(operation_id: str, question: str) -> None:
+    history = st.session_state.workspace_execution_history
+    updated = append_workspace_execution_reference(history, operation_id, question)
+    retained_ids = {entry.operation_id for entry in updated}
+    for entry in history:
+        if entry.operation_id not in retained_ids:
+            st.session_state.execution_views.pop(entry.operation_id, None)
+    st.session_state.workspace_execution_history = updated
+    st.session_state.workspace_pipeline_selected_operation_id = operation_id
 
 
 def visible_execution():
@@ -1174,6 +1194,7 @@ def start_conversational_workspace(question: str, session_context: SupplyAgentSe
     st.session_state.operation_started_at = perf_counter()
     st.session_state.operation_id = operation_id
     remember_execution_start(recorder)
+    remember_workspace_execution(operation_id, question)
     job.start()
 
 
@@ -1331,6 +1352,8 @@ def finish_generation(result: GenerationResult) -> None:
             domain = result.domain_result
             text = result.content or result.error or ""
             tools = list(result.tool_executions)
+            if generation_kind == "conversational_workspace" and result.status != GenerationStatus.COMPLETED:
+                text = _safe_workspace_failure_message(result.status)
             if generation_kind == "commercial_agent" and domain is not None:
                 text = commercial_text(domain)
             elif generation_kind == "risk_agent" and domain is not None:
@@ -1481,12 +1504,16 @@ def finish_generation(result: GenerationResult) -> None:
     if result.status == GenerationStatus.CANCELLED:
         st.session_state.generation_notice = (
             "info",
-            format_interrupted_generation("Generación cancelada.", result),
+            _safe_workspace_failure_message(result.status)
+            if generation_kind == "conversational_workspace"
+            else format_interrupted_generation("Generación cancelada.", result),
         )
     elif result.status == GenerationStatus.TIMED_OUT:
         st.session_state.generation_notice = (
             "warning",
-            format_interrupted_generation(
+            _safe_workspace_failure_message(result.status)
+            if generation_kind == "conversational_workspace"
+            else format_interrupted_generation(
                 "La generación superó el tiempo límite y fue cancelada.",
                 result,
             ),
@@ -1494,7 +1521,9 @@ def finish_generation(result: GenerationResult) -> None:
     else:
         st.session_state.generation_notice = (
             "error",
-            format_interrupted_generation(
+            _safe_workspace_failure_message(result.status)
+            if generation_kind == "conversational_workspace"
+            else format_interrupted_generation(
                 result.error or "El proveedor no pudo completar la generación.",
                 result,
             ),
@@ -1503,10 +1532,19 @@ def finish_generation(result: GenerationResult) -> None:
         st.session_state.workspace_messages.append({
             "role": "assistant",
             "operation_id": operation_id,
-            "content": result.error or "The request could not be completed.",
+            "content": _safe_workspace_failure_message(result.status),
         })
         st.session_state.workspace_pending_prompt = None
     log_operation_total()
+
+
+def _safe_workspace_failure_message(status) -> str:
+    value = getattr(status, "value", str(status)).casefold()
+    if "timeout" in value:
+        return "La ejecución agotó el tiempo límite. Consulta Pipeline Inspector para ver sus etapas."
+    if value in {"cancelled", "canceled"}:
+        return "La ejecución se canceló. Consulta Pipeline Inspector para ver las etapas completadas."
+    return "La ejecución no pudo completarse. Consulta Pipeline Inspector para ver la categoría segura del fallo."
 
 
 @st.fragment(run_every=0.5)
@@ -1536,28 +1574,30 @@ def render_generation_status() -> None:
 
 @st.fragment(run_every=0.5)
 def render_pipeline_panel() -> None:
-    if selected_mode == "indAI MA":
-        operation_id = st.session_state.get("workspace_operation_id")
-        recorder = st.session_state.get("pipeline_recorder")
-        if recorder is not None and recorder.operation_id == operation_id:
-            snapshot = recorder.snapshot()
-        else:
-            view = find_execution(st.session_state.execution_views, operation_id)
-            snapshot = view.snapshot if view else None
-    else:
-        view = visible_execution()
-        snapshot = view.snapshot if view else None
+    view = visible_execution()
+    snapshot = view.snapshot if view else None
     render_pipeline_inspector(snapshot)
+
+
+@st.fragment(run_every=0.5)
+def render_workspace_pipeline_panel() -> None:
+    render_workspace_pipeline_history(
+        st.session_state.workspace_execution_history,
+        st.session_state.execution_views,
+        active_recorder=st.session_state.pipeline_recorder,
+    )
 
 
 if selected_mode != "indAI MA":
     render_rag_configuration()
 inject_pipeline_styles()
 if selected_mode == "indAI MA":
-    render_conversational_workspace(start_conversational_workspace, running=generation_active)
-    render_generation_status()
-    with st.expander("Developer diagnostics", expanded=False):
-        render_pipeline_panel()
+    workspace_column, inspector_column = st.columns([2.6, 1], gap="large")
+    with workspace_column:
+        render_conversational_workspace(start_conversational_workspace, running=generation_active)
+        render_generation_status()
+    with inspector_column:
+        render_workspace_pipeline_panel()
 else:
     main_column, inspector_column = st.columns([2.15, 1], gap="large", wrap=True)
     with main_column:

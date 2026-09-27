@@ -41,15 +41,39 @@ def _read_usage(
     output_field: str,
 ) -> tuple[int | None, int | None, int | None]:
     """Best-effort metrics extraction that cannot fail generation."""
-    try:
-        return (
-            getattr(usage, input_field, None),
-            getattr(usage, output_field, None),
-            getattr(usage, "total_tokens", None),
+    def read_count(field_name: str) -> int | None:
+        try:
+            value = (
+                usage.get(field_name)
+                if isinstance(usage, dict)
+                else getattr(usage, field_name, None)
+            )
+            # Usage is optional telemetry. Do not coerce malformed values or
+            # let them affect an otherwise successful response.
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                return None
+            return value
+        except Exception:
+            return None
+
+    return (
+        read_count(input_field),
+        read_count(output_field),
+        read_count("total_tokens"),
+    )
+
+
+def _is_generated_output_delta(delta: Any) -> bool:
+    """Whether a delta has generated payload; content is never retained here."""
+    return any(
+        bool(getattr(delta, field_name, None))
+        for field_name in (
+            "content",
+            "tool_calls",
+            "reasoning",
+            "reasoning_content",
         )
-    except Exception:
-        logger.exception("Unable to read provider token usage")
-        return None, None, None
+    )
 
 
 def _collection_character_count(value: list[Any]) -> int:
@@ -75,6 +99,7 @@ def _print_lmstudio_request_diagnostics(
     max_tokens: int,
     thinking_enabled: bool,
     final_generation: bool,
+    temperature: float | None = None,
 ) -> None:
     message_content_lengths = [
         len(message.get("content") or "")
@@ -92,7 +117,7 @@ def _print_lmstudio_request_diagnostics(
         "model": model,
         "max_tokens": max_tokens,
         "max_completion_tokens": None,
-        "temperature": None,
+        "temperature": temperature,
         "timeout_seconds": timeout_seconds,
         "message_count": len(messages),
         "message_content_lengths": message_content_lengths,
@@ -109,6 +134,7 @@ def _print_lmstudio_request_diagnostics(
         "thinking_enabled": thinking_enabled,
         "final_generation": final_generation,
         "stream": True,
+        "stream_usage_requested": True,
     }
     if not final_generation:
         diagnostics["tool_choice"] = "auto"
@@ -141,6 +167,7 @@ class GenerationOptions:
     trace_purpose: str = "generation"
     trace_call_number: int | None = None
     trace_tool_schema_character_count: int = 0
+    temperature: float | None = None
 
     def __post_init__(self) -> None:
         if self.max_rounds < 1:
@@ -649,6 +676,12 @@ class LMStudioProvider(LLMProvider):
                     else None
                 )
                 inference_event: str | None = None
+                request_setup_seconds: float | None = None
+                request_started_at: float | None = None
+                first_output_at: float | None = None
+                stream_generation_seconds: float | None = None
+                time_to_first_token_seconds: float | None = None
+                stream_initial_wait_seconds: float | None = None
                 try:
                     _print_lmstudio_request_diagnostics(
                         round_number,
@@ -659,24 +692,31 @@ class LMStudioProvider(LLMProvider):
                         self.max_tokens,
                         self.thinking_enabled,
                         final_generation,
+                        options.temperature,
                     )
                     request_parameters: dict[str, Any] = {
                         "model": self.model,
                         "messages": conversation,
                         "max_tokens": self.max_tokens,
                         "stream": True,
+                        "stream_options": {"include_usage": True},
                         "timeout": timeout_seconds,
                     }
+                    if options.temperature is not None:
+                        request_parameters["temperature"] = options.temperature
                     if not final_generation:
                         request_parameters.update(
                             tools=tools,
                             tool_choice="auto",
                         )
 
+                    request_setup_seconds = perf_counter() - http_started_at
+                    request_started_at = perf_counter()
                     stream = self.client.chat.completions.create(
                         **request_parameters
                     )
-                    request_seconds = perf_counter() - http_started_at
+                    stream_opened_at = perf_counter()
+                    request_seconds = stream_opened_at - request_started_at
                     if self.recorder is not None and http_event is not None:
                         self.recorder.complete_stage(
                             http_event, http_seconds=request_seconds
@@ -700,6 +740,14 @@ class LMStudioProvider(LLMProvider):
                             continue
 
                         delta = chunk.choices[0].delta
+                        if _is_generated_output_delta(delta) and first_output_at is None:
+                            first_output_at = perf_counter()
+                            time_to_first_token_seconds = (
+                                first_output_at - request_started_at
+                            )
+                            stream_initial_wait_seconds = max(
+                                0.0, first_output_at - stream_opened_at
+                            )
                         if delta.content:
                             chunks.append(delta.content)
 
@@ -715,7 +763,12 @@ class LMStudioProvider(LLMProvider):
                                     entry["name"] += tool_call.function.name
                                 if tool_call.function.arguments:
                                     entry["arguments"] += tool_call.function.arguments
-                    inference_seconds = perf_counter() - inference_started_at
+                    stream_finished_at = perf_counter()
+                    inference_seconds = stream_finished_at - inference_started_at
+                    if first_output_at is not None:
+                        stream_generation_seconds = max(
+                            0.0, stream_finished_at - first_output_at
+                        )
                     if self.recorder is not None and inference_event is not None:
                         self.recorder.complete_stage(
                             inference_event,
@@ -727,8 +780,33 @@ class LMStudioProvider(LLMProvider):
                     if self.recorder is not None and llm_call_event is not None:
                         self.recorder.complete_llm_call(
                             llm_call_event,
-                            request_setup_seconds=request_seconds,
+                            request_setup_seconds=request_setup_seconds,
+                            request_to_stream_seconds=request_seconds,
                             response_stream_seconds=inference_seconds,
+                            time_to_first_token_seconds=time_to_first_token_seconds,
+                            stream_initial_wait_seconds=stream_initial_wait_seconds,
+                            stream_generation_seconds=stream_generation_seconds,
+                            tokens_per_second=(
+                                output_tokens / stream_generation_seconds
+                                if output_tokens is not None
+                                and stream_generation_seconds is not None
+                                and stream_generation_seconds > 0
+                                else None
+                            ),
+                            tokens_per_second_source=(
+                                "provider_usage_and_local_stream_timer"
+                                if output_tokens is not None
+                                and stream_generation_seconds is not None
+                                and stream_generation_seconds > 0
+                                else None
+                            ),
+                            token_usage_source=(
+                                "provider_usage"
+                                if any(value is not None for value in (
+                                    input_tokens, output_tokens, total_tokens
+                                ))
+                                else None
+                            ),
                             input_tokens=input_tokens,
                             output_tokens=output_tokens,
                             total_tokens=total_tokens,
@@ -744,11 +822,15 @@ class LMStudioProvider(LLMProvider):
                             self.recorder.fail_llm_call(
                                 llm_call_event,
                                 request_setup_seconds=(
-                                    request_seconds
+                                    request_setup_seconds
                                 ),
                                 response_stream_seconds=(
                                     inference_seconds
                                 ),
+                                request_to_stream_seconds=request_seconds,
+                                time_to_first_token_seconds=time_to_first_token_seconds,
+                                stream_initial_wait_seconds=stream_initial_wait_seconds,
+                                stream_generation_seconds=stream_generation_seconds,
                             )
                     logger.info(
                         "stage=http_call provider=%s model=%s round=%d "

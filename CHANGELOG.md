@@ -4,7 +4,25 @@ This maintained changelog begins with v1.9.0. Earlier release history is recorde
 in annotated Git tags and selected historical release notes; the repository does
 not reconstruct every development milestone as a release.
 
-## v1.14.0 — Conversational Intelligence (release candidate)
+## v1.15.0 — Conversational Multi-Scenario Decision Support (release candidate)
+
+- Retain immutable, item-scoped baseline and explicitly evaluated delivery-time
+  alternatives. Every alternative continues to use the original baseline.
+- Compare existing SupplyProjection facts deterministically, preserving signed
+  values and operational units. No LLM or retrieval is used for comparisons.
+- Preserve scenario history through scoped documentary turns, show compact
+  comparison tables in Workspace and include them in business Copy output.
+- Expose safe scenario resolution/comparison stages and structured facts in
+  Pipeline Inspector and its diagnostic Copy action.
+- Keep a persistent right-side Workspace Inspector with selectable, bounded
+  conversation-level execution history; failed turns remain available and
+  diagnostic Copy follows the selected historical operation.
+- Comparison is factual; recommendation, ranking and optimization remain outside
+  this release.
+
+v1.14.0 is the published baseline. v1.15.0 is not yet released.
+
+## v1.14.0 — Conversational Intelligence
 
 ### Continuous conversational workspace
 
@@ -28,9 +46,8 @@ not reconstruct every development milestone as a release.
 - Present compact comparisons and business-readable position references in the
   existing conversational workspace without adding a top-level mode or controls.
 
-The published baseline is v1.13.0. v1.14.0 is a release candidate, not a
-published release. Decision Support and batch alternative comparison remain
-future v1.15 scope and are not implemented here.
+v1.14.0 is the published baseline for v1.15.0. Multi-scenario comparison is
+implemented in v1.15.0; recommendation and optimization remain future work.
 
 ## v1.13.0 — Conversational Workspace
 

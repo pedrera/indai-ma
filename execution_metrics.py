@@ -12,7 +12,14 @@ class LLMCallMetrics:
     model: str
     request_wall_time: float
     request_setup_time: float | None
+    request_to_stream_time: float | None
     response_stream_time: float | None
+    time_to_first_token_time: float | None
+    stream_initial_wait_time: float | None
+    stream_generation_time: float | None
+    tokens_per_second: float | None
+    tokens_per_second_source: str | None
+    token_usage_source: str | None
     inference_time: float | None
     overhead_time: float | None
     input_tokens: int | None
@@ -178,7 +185,30 @@ def _llm_call(snapshot: PerformanceSnapshot, event: PerformanceEvent) -> LLMCall
         model=snapshot.model,
         request_wall_time=wall,
         request_setup_time=_optional_float(metadata.get("request_setup_seconds")),
+        request_to_stream_time=_optional_float(
+            metadata.get("request_to_stream_seconds")
+        ),
         response_stream_time=_optional_float(metadata.get("response_stream_seconds")),
+        time_to_first_token_time=_optional_float(
+            metadata.get("time_to_first_token_seconds")
+        ),
+        stream_initial_wait_time=_optional_float(
+            metadata.get("stream_initial_wait_seconds")
+        ),
+        stream_generation_time=_optional_float(
+            metadata.get("stream_generation_seconds")
+        ),
+        tokens_per_second=_optional_float(metadata.get("tokens_per_second")),
+        tokens_per_second_source=(
+            str(metadata["tokens_per_second_source"])
+            if metadata.get("tokens_per_second_source") is not None
+            else None
+        ),
+        token_usage_source=(
+            str(metadata["token_usage_source"])
+            if metadata.get("token_usage_source") is not None
+            else None
+        ),
         inference_time=inference,
         overhead_time=overhead,
         input_tokens=_optional_int(metadata.get("input_tokens")),
