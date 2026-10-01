@@ -2,6 +2,7 @@ import tempfile
 import subprocess
 import sys
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,12 +24,14 @@ from tests.test_industrial_gases_conversational_workspace import (
     ScopedFixtureKnowledge,
 )
 from industrial_gases.portfolio_ui import evaluate_demo_supply_portfolio
+from rag_models import RetrievedChunk
 
 
 class _RecordingKnowledge:
-    def __init__(self, recorder, *, fail=False):
+    def __init__(self, recorder, *, fail=False, direct_documentary_fact=True):
         self.recorder = recorder
         self.fixture = ScopedFixtureKnowledge(fail=fail)
+        self.direct_documentary_fact = direct_documentary_fact
 
     def search(self, *, identity, query, top_k=4):
         event = self.recorder.start_stage(
@@ -36,6 +39,17 @@ class _RecordingKnowledge:
         )
         try:
             status, chunks = self.fixture.search(identity=identity, query=query, top_k=top_k)
+            if self.direct_documentary_fact and identity.get("gas_product_id") == "medical-oxygen":
+                chunks = tuple(
+                    RetrievedChunk(
+                        replace(chunk.chunk, text=(
+                            "The planned delivery record is 4,000 kg, scheduled four days after "
+                            "the reference time supplied to the analysis."
+                        )),
+                        score=chunk.score,
+                    ) if chunk.chunk.document_name == "hospital_o2_supply_contract.txt" else chunk
+                    for chunk in chunks
+                )
         except Exception:
             self.recorder.fail_stage(event, status="operational_error")
             raise
@@ -75,6 +89,56 @@ class _OfflineDocumentaryModel:
 
 
 class WorkspaceAcceptanceTests(unittest.TestCase):
+    def test_safe_acceptance_report_includes_prompt_composition_counts(self):
+        recorder = PerformanceRecorder("q8-prompt", "lmstudio", "qwen", "conversational_workspace")
+        event = recorder.start_stage("prompt_build")
+        recorder.complete_stage(
+            event,
+            prompt_character_count=100,
+            prompt_component_character_counts={"system_base_instructions": 60, "user_question": 40},
+            prompt_component_percentages={"system_base_instructions": 60.0, "user_question": 40.0},
+            prompt_composition_accounting_delta=0,
+        )
+        snapshot = recorder.snapshot()
+        turn = TurnResult(
+            number=8, label="Contract delivery", question="What does the contract say?",
+            operation_id="q8-prompt", status="completed", duration_seconds=1.0,
+            category=FailureCategory.PASS, failed_checks=(), llm_calls=1,
+            retrieval_seconds=0.1, retrieval_status="retrieved", citation_status="passed",
+            semantic_guard_status="not_applied", snapshot=snapshot,
+        )
+        report = render_safe_report(
+            AcceptanceResult((turn,), {}, None, ()), provider="lmstudio", model="qwen", timeout=640,
+        )
+        self.assertIn("Prompt composition: 100 chars; accounting delta=0", report)
+        self.assertIn("system_base_instructions: 60 chars (60.00%)", report)
+        self.assertIn("user_question: 40 chars (40.00%)", report)
+
+    def test_safe_acceptance_report_exposes_documentary_eligibility_and_llm_avoidance(self):
+        recorder = PerformanceRecorder("q8-deterministic", "fixture", "fixture-model", "conversational_workspace")
+        recorder.record_stage(
+            "deterministic_documentary_eligibility", deterministic_documentary_eligibility=True,
+            eligibility_decision="eligible", eligibility_reason="single_direct_extractable_fact",
+            selected_supporting_chunk_ids=("hospital-contract-42",),
+        )
+        recorder.record_stage(
+            "deterministic_documentary_response", deterministic_documentary_response_used=True,
+            selected_supporting_chunk_ids=("hospital-contract-42",), llm_calls_avoided=True,
+        )
+        turn = TurnResult(
+            8, "Contract delivery", "¿Qué dice el contrato sobre la entrega?", "q8-deterministic",
+            "completed", 0.2, FailureCategory.PASS, (), 0, 0.1, "retrieved", "passed", "clear",
+            snapshot=recorder.snapshot(),
+        )
+        report = render_safe_report(
+            AcceptanceResult((turn,), {}, None, ()), provider="fixture", model="fixture-model", timeout=640,
+        )
+        self.assertIn("eligible=eligible", report)
+        self.assertIn("reason=single_direct_extractable_fact", report)
+        self.assertIn("supporting_chunks=hospital-contract-42", report)
+        self.assertIn("deterministic_response_used=True", report)
+        self.assertIn("llm_calls_avoided=True", report)
+
     def test_documented_script_invocation_bootstraps_repo_imports_without_running_acceptance(self):
         repository_root = Path(__file__).resolve().parents[1]
         completed = subprocess.run(
@@ -102,7 +166,10 @@ class WorkspaceAcceptanceTests(unittest.TestCase):
             decision_model_factory=lambda provider, recorder: _OfflineDocumentaryModel(
                 recorder, delegate, failure=documentary_failure, answer_override=answer_override,
             ),
-            knowledge_factory=lambda recorder: _RecordingKnowledge(recorder, fail=retrieval_failure),
+            knowledge_factory=lambda recorder: _RecordingKnowledge(
+                recorder, fail=retrieval_failure,
+                direct_documentary_fact=not (documentary_failure or answer_override),
+            ),
             portfolio_factory=evaluate_demo_supply_portfolio,
         )
         return result, provider_calls, delegate
@@ -113,7 +180,7 @@ class WorkspaceAcceptanceTests(unittest.TestCase):
         self.assertTrue(result.passed)
         self.assertEqual(len(result.turns), 9)
         self.assertEqual(len(provider_calls), 9)
-        self.assertGreaterEqual(len(model.calls), 1)
+        self.assertEqual(model.calls, [])
         self.assertTrue(all(turn.category is FailureCategory.PASS for turn in result.turns))
 
         q3 = result.turns[2].response
@@ -128,7 +195,15 @@ class WorkspaceAcceptanceTests(unittest.TestCase):
         q8_view = result.execution_views[q8.operation_id]
         q9_view = result.execution_views[q9.operation_id]
         self.assertIn("portfolio_knowledge_retrieval", tuple(event.stage for event in q8_view.snapshot.events))
-        self.assertIn("llm_call", tuple(event.stage for event in q8_view.snapshot.events))
+        q8_stages = tuple(event.stage for event in q8_view.snapshot.events)
+        self.assertIn("deterministic_documentary_eligibility", q8_stages)
+        self.assertIn("deterministic_documentary_response", q8_stages)
+        self.assertNotIn("llm_call", q8_stages)
+        q8_response_event = next(event for event in q8_view.snapshot.events
+                                 if event.stage == "deterministic_documentary_response")
+        self.assertTrue(q8_response_event.metadata["deterministic_documentary_response_used"])
+        self.assertTrue(q8_response_event.metadata["llm_calls_avoided"])
+        self.assertEqual(q8.llm_calls, 0)
         self.assertIn("deterministic_scenario_comparison", tuple(event.stage for event in q9_view.snapshot.events))
         self.assertFalse(any(event.stage in {"llm_call", "vector_search", "query_embedding"}
                              for event in q9_view.snapshot.events))

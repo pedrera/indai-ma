@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from dataclasses import asdict, dataclass, is_dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -19,7 +20,9 @@ from procurement_agent import parse_agent_decision
 from rag_models import RetrievedChunk
 
 from .decision_models import ExplicitChange
-from .industrial_knowledge import IndustrialKnowledgeOperationalError, IndustrialKnowledgeService
+from .industrial_knowledge import (
+    IDENTITY_FIELDS, IndustrialKnowledgeOperationalError, IndustrialKnowledgeService,
+)
 from .lexical import numeric_lexemes, parse_decimal_number, unit_after_number
 from .models import ConsumptionRate, Quantity
 from .operational_attention import OperationalAttentionItem, OperationalAttentionResult
@@ -103,6 +106,14 @@ class SupplyAgentResponse:
 
 
 @dataclass(frozen=True)
+class _DocumentaryEligibility:
+    eligible: bool
+    reason: str
+    answer: str | None = None
+    supporting_chunk_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class SupplyAgentToolExecution:
     name: str
     arguments: dict[str, Any]
@@ -137,9 +148,18 @@ class ProviderSupplyDecisionModel:
         self.call_count += 1
         recorder = getattr(self.provider, "recorder", None)
         prompt_event = recorder.start_stage("prompt_build", message_count=1) if recorder else None
-        prompt = _decision_prompt(question, state, tools)
+        prompt, prompt_composition = _decision_prompt_with_composition(
+            question, state, tools,
+        )
         if prompt_event:
-            recorder.complete_stage(prompt_event, approximate_prompt_chars=len(prompt))
+            recorder.complete_stage(
+                prompt_event,
+                approximate_prompt_chars=len(prompt),
+                prompt_character_count=len(prompt),
+                prompt_component_character_counts=prompt_composition["character_counts"],
+                prompt_component_percentages=prompt_composition["percentages"],
+                prompt_composition_accounting_delta=prompt_composition["accounting_delta"],
+            )
         try:
             response = self.provider.generate_response(
                 [{"role": "user", "content": prompt}],
@@ -550,6 +570,7 @@ class SupplyAgent:
         errors: list[str] = []
         decision_count = 0
         final_response_event: str | None = None
+        deterministic_documentary_answer: str | None = None
 
         def execute_tool(name: str, arguments: dict[str, Any], round_number: int | None) -> None:
             if len(executions) >= self.MAX_TOOL_CALLS:
@@ -708,10 +729,98 @@ class SupplyAgent:
                     "get_supply_position", "get_operational_attention",
                 }]
 
+            # Retrieval is complete before documentary final generation. A
+            # documentary-only answer has no remaining operation to perform;
+            # do not send irrelevant tool schemas or operational observations.
+            if _is_documentary_only_turn(question, state):
+                tools = []
+
+            documentary_eligibility = None
+            if documentary_required:
+                documentary_eligibility = _assess_deterministic_documentary_answer(
+                    question, selected_matches, self.tools._knowledge_sources_by_item,
+                )
+                if documentary_eligibility.eligible and documentary_eligibility.answer:
+                    proposed_answer = documentary_eligibility.answer
+                    citation_started = self.recorder.start_stage(
+                        "citation_validation", source_count=len(self.tools._knowledge_sources),
+                    ) if self.recorder else None
+                    citation_diagnostics = _citation_validation_diagnostics(
+                        proposed_answer, selected_matches, self.tools._knowledge_sources_by_item,
+                    )
+                    validation_diagnostics: dict[str, Any] = {}
+                    validated_answer, rejected = _enforce_supply_answer_boundary(
+                        question, proposed_answer, self.tools._knowledge_status,
+                        self.tools._knowledge_sources, documentary_required,
+                        diagnostics=validation_diagnostics,
+                    )
+                    if not rejected:
+                        validated_answer, rejected = _enforce_portfolio_answer_boundary(
+                            validated_answer, selected_matches,
+                            self.tools._knowledge_sources_by_item, self.portfolio.items,
+                            diagnostics=validation_diagnostics,
+                        )
+                    if citation_started:
+                        citation_diagnostics.update(validation_diagnostics)
+                        citation_diagnostics.setdefault(
+                            "failure_category",
+                            _CitationFailureCategory.OTHER_VALIDATION_FAILURE.value if rejected else None,
+                        )
+                        (self.recorder.fail_stage if rejected else self.recorder.complete_stage)(
+                            citation_started, selected_item_ids=selected_ids, valid=not rejected,
+                            citation_validation_status="failed" if rejected else "passed",
+                            **citation_diagnostics,
+                        )
+                    if rejected:
+                        documentary_eligibility = replace(
+                            documentary_eligibility, eligible=False,
+                            reason="citation_validation_rejected", answer=None,
+                        )
+                    else:
+                        deterministic_documentary_answer = validated_answer
+
+                safe_supporting_ids = tuple(
+                    value if isinstance(value, str) and _SAFE_CITATION_ID.fullmatch(value)
+                    else "[redacted-id]"
+                    for value in documentary_eligibility.supporting_chunk_ids[:8]
+                )
+                eligibility_event = self.recorder.start_stage(
+                    "deterministic_documentary_eligibility",
+                ) if self.recorder else None
+                if eligibility_event:
+                    self.recorder.complete_stage(
+                        eligibility_event,
+                        deterministic_documentary_eligibility=documentary_eligibility.eligible,
+                        eligibility_decision="eligible" if documentary_eligibility.eligible else "ineligible",
+                        eligibility_reason=documentary_eligibility.reason,
+                        selected_supporting_chunk_ids=safe_supporting_ids,
+                    )
+                response_event = self.recorder.start_stage(
+                    "deterministic_documentary_response",
+                ) if self.recorder else None
+                if response_event:
+                    self.recorder.complete_stage(
+                        response_event,
+                        deterministic_documentary_response_used=(
+                            deterministic_documentary_answer is not None
+                        ),
+                        selected_supporting_chunk_ids=safe_supporting_ids,
+                        llm_calls_avoided=deterministic_documentary_answer is not None,
+                    )
+
             # Without eligible sources there is no grounded documentary
             # generation to perform. Keep the structured domain/attention
             # evidence collected above and return the established safe message.
-            if clarification or not selected_matches or deterministic_portfolio_selection:
+            if deterministic_documentary_answer is not None:
+                answer = deterministic_documentary_answer
+                status = SupplyAgentStatus.COMPLETED
+                final_response_event = self.recorder.start_stage("final_response") if self.recorder else None
+                if final_response_event:
+                    self.recorder.complete_stage(
+                        final_response_event, response_chars=len(answer),
+                        deterministic_documentary_response=True,
+                    )
+            elif clarification or not selected_matches or deterministic_portfolio_selection:
                 pass
             elif documentary_required and not self.tools._knowledge_sources:
                 answer = _documentary_boundary_message(
@@ -1339,13 +1448,21 @@ def _build_portfolio_evidence_bundle(matches, sources_by_item, statuses_by_item,
     return PortfolioEvidenceBundle(item_evidence, global_sources, failures)
 
 def _decision_prompt(question: str, state: dict[str, Any], tools: list[dict[str, Any]]) -> str:
+    return _decision_prompt_with_composition(question, state, tools)[0]
+
+
+def _decision_prompt_with_composition(
+    question: str, state: dict[str, Any], tools: list[dict[str, Any]], *,
+    project_documentary: bool = True,
+) -> tuple[str, dict[str, Any]]:
+    """Build the provider prompt and safe, character-only attribution."""
     evidence_instructions = (
         "Use the selected structured evidence and per-item sources already present in STATE; do not reread domain facts or repeat retrieval. "
         if state.get("workspace_mode") else
         "Use get_supply_position for operational facts, get_operational_attention for existing findings, "
         "the pre-retrieved documentary observations in STATE when present, and "
     )
-    return (
+    base_instructions = (
         "You are SupplyAgent, a grounded industrial supply analyst. Select at most one listed tool per turn. "
         + evidence_instructions
         + "evaluate_supply_what_if only for an explicit "
@@ -1366,21 +1483,147 @@ def _decision_prompt(question: str, state: dict[str, Any], tools: list[dict[str,
         "decision_summary must be a short action label, not reasoning. Return one JSON object exactly in the "
         "existing agent-decision format: {\"action\":\"call_tool\",\"tool_name\":\"...\",\"arguments\":{},\"decision_summary\":\"...\"}, "
         "or {\"action\":\"finish\",\"answer\":\"...\",\"decision_summary\":\"...\"}, or request_information.\n\n"
-        + _workspace_answer_guidance(state)
-        + "STATE (domain status is source data; observations are authoritative):\n"
-        f"{json.dumps(_decision_prompt_state(state), ensure_ascii=False, default=_json_default)}\n\nAVAILABLE TOOLS:\n"
-        f"{json.dumps(tools, ensure_ascii=False)}\n\n"
-        + _final_question_instruction(question, state)
+    )
+    agent_instructions = _workspace_answer_guidance(state)
+    documentary_only = _is_documentary_only_turn(question, state)
+    prompt_state = _decision_prompt_state(
+        state, question=question,
+        project_documentary=project_documentary,
+    )
+    prompt_tools = [] if documentary_only and project_documentary else tools
+    state_json = json.dumps(prompt_state, ensure_ascii=False, default=_json_default)
+    tools_json = json.dumps(prompt_tools, ensure_ascii=False)
+    state_section = "STATE (domain status is source data; observations are authoritative):\n" + state_json
+    tools_section = "AVAILABLE TOOLS:\n" + tools_json
+    question_section = f"USER QUESTION:\n{question}\n"
+    output_contract = (
+        _documentary_citation_guidance(state)
+        if state.get("documentary_evidence_required")
+        else "\nAnswer the user's question now in the finish answer field.\n"
+    )
+    prompt = (
+        base_instructions + agent_instructions + state_section
+        + "\n\n" + tools_section + "\n\n"
+        + question_section + output_contract
     )
 
+    component_counts = _prompt_state_component_counts(prompt_state, state_json)
+    component_counts.update({
+        "system_base_instructions": len(base_instructions),
+        "agent_instructions": len(agent_instructions),
+        "tool_schemas": len(tools_json),
+        "user_question": len(question),
+        "citation_output_contract": len(output_contract),
+    })
+    accounted = sum(component_counts.values())
+    component_counts["prompt_formatting_and_separators"] = len(prompt) - accounted
+    total = len(prompt)
+    percentages = {
+        component: (count * 100.0 / total if total else 0.0)
+        for component, count in component_counts.items()
+    }
+    return prompt, {
+        "character_counts": component_counts,
+        "percentages": percentages,
+        "accounting_delta": len(prompt) - sum(component_counts.values()),
+    }
 
-def _decision_prompt_state(state: dict[str, Any]) -> dict[str, Any]:
-    """Avoid repeating the question and documentary citation aliases in JSON."""
+
+_PROMPT_OPERATIONAL_STATE_FIELDS = frozenset({
+    "projection", "attention_findings", "attention_facts", "missing_inputs",
+    "validation_errors", "evaluation_status", "domain_status", "tool_observations",
+})
+_PROMPT_CONTEXT_STATE_FIELDS = frozenset({
+    "portfolio_selection", "selected_item_id", "selected_item_ids", "position_identity",
+    "session_context", "conversation_context", "scenario_history", "focused_item_id",
+})
+
+
+def _prompt_state_component_counts(
+    prompt_state: dict[str, Any], serialized_state: str,
+) -> dict[str, int]:
+    """Attribute serialized state values to disjoint buckets; leave JSON syntax in other state."""
+    counts = {
+        "structured_portfolio_state": 0,
+        "operational_structured_evidence": 0,
+        "retrieved_rag_source_text": 0,
+        "retrieved_source_metadata": 0,
+        "conversation_session_context": 0,
+        "other_serialized_state": 0,
+    }
+
+    def encoded_length(value: Any) -> int:
+        return len(json.dumps(value, ensure_ascii=False, default=_json_default))
+
+    def add_source_record(source: Any) -> None:
+        if not isinstance(source, dict):
+            counts["retrieved_source_metadata"] += encoded_length(source)
+            return
+        for source_key, source_value in source.items():
+            bucket = (
+                "retrieved_rag_source_text" if source_key == "text"
+                else "retrieved_source_metadata"
+            )
+            counts[bucket] += encoded_length(source_value)
+
+    for key, value in prompt_state.items():
+        if key == "portfolio_items" and isinstance(value, (list, tuple)):
+            for item in value:
+                if not isinstance(item, dict):
+                    counts["structured_portfolio_state"] += encoded_length(item)
+                    continue
+                for item_key, item_value in item.items():
+                    if item_key == "knowledge_sources" and isinstance(item_value, (list, tuple)):
+                        for source in item_value:
+                            add_source_record(source)
+                    elif item_key in _PROMPT_OPERATIONAL_STATE_FIELDS:
+                        counts["operational_structured_evidence"] += encoded_length(item_value)
+                    else:
+                        counts["structured_portfolio_state"] += encoded_length(item_value)
+        elif key == "global_knowledge_sources" and isinstance(value, (list, tuple)):
+            for source in value:
+                add_source_record(source)
+        elif key == "tool_observations" and isinstance(value, (list, tuple)):
+            for observation in value:
+                if not isinstance(observation, dict):
+                    counts["operational_structured_evidence"] += encoded_length(observation)
+                    continue
+                for observation_key, observation_value in observation.items():
+                    if observation_key == "result" and isinstance(observation_value, dict):
+                        for result_key, result_value in observation_value.items():
+                            if result_key == "sources" and isinstance(result_value, (list, tuple)):
+                                for source in result_value:
+                                    add_source_record(source)
+                            else:
+                                counts["operational_structured_evidence"] += encoded_length(result_value)
+                    else:
+                        counts["operational_structured_evidence"] += encoded_length(observation_value)
+        elif key in _PROMPT_OPERATIONAL_STATE_FIELDS:
+            counts["operational_structured_evidence"] += encoded_length(value)
+        elif key in _PROMPT_CONTEXT_STATE_FIELDS:
+            counts["conversation_session_context"] += encoded_length(value)
+        else:
+            counts["other_serialized_state"] += encoded_length(value)
+
+    # The remaining characters are JSON keys, separators, and container syntax.
+    # Assign them to other serialized state so component counts partition STATE exactly.
+    attributed_values = sum(counts.values())
+    counts["other_serialized_state"] += max(0, len(serialized_state) - attributed_values)
+    return counts
+
+
+def _decision_prompt_state(
+    state: dict[str, Any], *, question: str = "", project_documentary: bool = True,
+) -> dict[str, Any]:
+    """Project documentary-only state to the facts needed for grounded answers."""
     prompt_state = dict(state)
     prompt_state.pop("question", None)
     prompt_state.pop("available_citations", None)
     if not state.get("documentary_evidence_required"):
         return prompt_state
+
+    if project_documentary and _is_documentary_only_turn(question, state):
+        prompt_state = _project_documentary_state(prompt_state)
 
     # Keep each source record's text and chunk_id together in STATE. The exact
     # bracketed citation token is shown once in the final allowlist.
@@ -1396,6 +1639,247 @@ def _decision_prompt_state(state: dict[str, Any]) -> dict[str, Any]:
         return value
 
     return remove_citation_aliases(prompt_state)
+
+
+def _is_documentary_only_turn(question: str, state: dict[str, Any]) -> bool:
+    """True when the final answer needs documents but no operational/scenario state."""
+    return bool(
+        state.get("documentary_evidence_required")
+        and not _requires_operational_context(question)
+        and not _has_explicit_what_if(question)
+    )
+
+
+_DOCUMENTARY_STOP_WORDS = frozenset({
+    "a", "about", "acerca", "al", "and", "about", "as", "at", "by", "como",
+    "con", "contra", "cual", "cuales", "de", "del", "dice", "do", "does",
+    "el", "en", "es", "esta", "este", "for", "from", "has", "have", "how",
+    "indica", "is", "la", "las", "lo", "los", "of", "on", "or", "para", "por",
+    "que", "sobre", "the", "to", "what", "which", "with", "y",
+})
+_DOCUMENTARY_TERM_EQUIVALENTS = {
+    # Small lexical bridges for the application's Spanish/English documents;
+    # these select evidence only and never generate or paraphrase its facts.
+    "entrega": frozenset({"delivery"}), "delivery": frozenset({"entrega"}),
+    "contrato": frozenset({"contract"}), "contract": frozenset({"contrato", "contractual"}),
+    "contractual": frozenset({"contract", "contrato"}),
+    "suministro": frozenset({"supply"}), "supply": frozenset({"suministro"}),
+    "procedimiento": frozenset({"procedure"}), "procedure": frozenset({"procedimiento"}),
+    "instalacion": frozenset({"installation"}), "installation": frozenset({"instalacion"}),
+}
+_DOCUMENT_TYPE_TERMS = {
+    "supply_contract": frozenset({"contract", "contrato", "contractual"}),
+    "operating_procedure": frozenset({"procedure", "procedimiento"}),
+    "installation_specification": frozenset({
+        "installation", "instalacion", "specification", "especificacion",
+    }),
+}
+_DOCUMENTARY_NEGATIONS = frozenset({
+    "no", "not", "never", "without", "sin", "ningun", "ninguna", "nunca",
+})
+
+
+def _documentary_tokens(value: str) -> frozenset[str]:
+    folded = "".join(
+        character for character in unicodedata.normalize("NFKD", value.casefold())
+        if not unicodedata.combining(character)
+    )
+    return frozenset(re.findall(r"[a-z0-9]+", folded))
+
+
+def _documentary_sentences(value: str) -> tuple[str, ...]:
+    """Split only clear sentence boundaries; uncertain text remains whole/fallback."""
+    return tuple(
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?])\s+(?=[A-ZÁÉÍÓÚÑ0-9\"“])", value.strip())
+        if sentence.strip()
+    )
+
+
+def _strict_document_source_scope_matches(source: RetrievedChunk, item) -> bool:
+    metadata = source.chunk.metadata
+    if metadata.get("scope") == "global":
+        return _is_applicable_global_source(source)
+    expected = _identity(item)
+    return bool(all(expected.get(field) for field in IDENTITY_FIELDS)) and all(
+        metadata.get(field) == expected.get(field)
+        for field in IDENTITY_FIELDS
+    )
+
+
+def _documentary_fact_signature(sentence: str) -> tuple[frozenset[str], frozenset[str]]:
+    numbers = frozenset(re.findall(r"\d+(?:[.,]\d+)*", sentence))
+    negations = _documentary_tokens(sentence) & _DOCUMENTARY_NEGATIONS
+    return numbers, negations
+
+
+def _assess_deterministic_documentary_answer(
+    question: str,
+    selected_matches: tuple[Any, ...] | list[Any],
+    sources_by_item: dict[str, tuple[RetrievedChunk, ...]],
+) -> _DocumentaryEligibility:
+    """Permit only one uniquely scoped, directly extractable source sentence."""
+    if _requires_operational_context(question):
+        return _DocumentaryEligibility(False, "operational_context_required")
+    if _has_explicit_what_if(question):
+        return _DocumentaryEligibility(False, "scenario_requested")
+    if _is_document_list_request(question):
+        return _DocumentaryEligibility(False, "document_inventory_request")
+    if len(selected_matches) != 1:
+        return _DocumentaryEligibility(False, "multiple_or_unresolved_position_scope")
+
+    match = selected_matches[0]
+    sources = tuple(sources_by_item.get(match.item_id, ()))
+    if not sources:
+        return _DocumentaryEligibility(False, "no_retrieved_sources")
+    for source in sources:
+        if not _strict_document_source_scope_matches(source, match.item):
+            return _DocumentaryEligibility(False, "source_scope_unverified")
+
+    identity = match.item.request
+    identity_values = (
+        match.item.item_id, match.item.result.customer_id, match.item.request.customer_id,
+        getattr(identity.site, "site_id", None), getattr(identity.site, "name", None),
+        getattr(identity.application, "application_id", None), getattr(identity.application, "name", None),
+        getattr(identity.gas_product, "gas_product_id", None), getattr(identity.gas_product, "name", None),
+        getattr(identity.installation, "installation_id", None),
+    )
+    identity_tokens = frozenset(
+        token for value in identity_values if isinstance(value, str)
+        for token in _documentary_tokens(value)
+    )
+    query_tokens = _documentary_tokens(question) - _DOCUMENTARY_STOP_WORDS - identity_tokens
+    if not query_tokens:
+        return _DocumentaryEligibility(False, "no_specific_documentary_topic")
+    requested_types = frozenset(
+        document_type for document_type, terms in _DOCUMENT_TYPE_TERMS.items()
+        if query_tokens & terms
+    )
+
+    candidates: list[tuple[RetrievedChunk, str]] = []
+    for source in sources:
+        metadata = source.chunk.metadata
+        if metadata.get("scope") == "global":
+            # Global policy may be cited for genuinely global claims, but this
+            # conservative path is limited to one position-bound document fact.
+            continue
+        if requested_types and metadata.get("document_type") not in requested_types:
+            continue
+        if not _SAFE_CITATION_ID.fullmatch(source.chunk.chunk_id):
+            return _DocumentaryEligibility(False, "citation_id_unverified")
+        doc_tokens = _documentary_tokens(
+            " ".join((source.chunk.document_name, str(metadata.get("document_type", ""))))
+        )
+        topic_tokens = frozenset(
+            token for token in query_tokens
+            if token not in doc_tokens
+            and not (_DOCUMENTARY_TERM_EQUIVALENTS.get(token, frozenset()) & doc_tokens)
+        )
+        if not topic_tokens:
+            continue
+        for sentence in _documentary_sentences(source.chunk.text):
+            sentence_tokens = _documentary_tokens(sentence)
+            if all(
+                token in sentence_tokens
+                or bool(_DOCUMENTARY_TERM_EQUIVALENTS.get(token, frozenset()) & sentence_tokens)
+                for token in topic_tokens
+            ):
+                candidates.append((source, sentence))
+
+    # Overlapping chunks can repeat the same sentence. They represent one fact
+    # only when it is the exact same document and text; keep the first retrieved
+    # record as its deterministic citation source.
+    unique: dict[tuple[str, str], tuple[RetrievedChunk, str]] = {}
+    for source, sentence in candidates:
+        unique.setdefault((source.chunk.document_id, sentence), (source, sentence))
+    candidates = list(unique.values())
+    if not candidates:
+        return _DocumentaryEligibility(False, "no_direct_extractable_fact")
+    if len(candidates) > 1:
+        signatures = {_documentary_fact_signature(sentence) for _, sentence in candidates}
+        numeric_signatures = {numbers for numbers, _ in signatures if numbers}
+        negative_signatures = {negations for _, negations in signatures}
+        reason = (
+            "conflicting_direct_evidence"
+            if len(numeric_signatures) > 1 or len(negative_signatures) > 1
+            else "ambiguous_direct_evidence"
+        )
+        return _DocumentaryEligibility(False, reason)
+
+    source, sentence = candidates[0]
+    citation = f"[chunk_id:{source.chunk.chunk_id}]"
+    # Return only the verbatim evidence and its reference. This avoids adding
+    # any generated or translated claim around the extractive answer.
+    answer = f'“{sentence}” {citation}'
+    return _DocumentaryEligibility(True, "single_direct_extractable_fact", answer,
+                                    (source.chunk.chunk_id,))
+
+
+def _project_documentary_state(state: dict[str, Any]) -> dict[str, Any]:
+    """Keep documentary scope, identities, source provenance, and exact source text."""
+    projected = {
+        key: value for key, value in state.items()
+        if key not in {
+            "question", "available_citations", "position_identity", "domain_status",
+            "tool_observations", "selected_item_ids", "workspace_mode",
+            "documentary_evidence_required",
+        }
+    }
+    selection = state.get("portfolio_selection")
+    if isinstance(selection, dict):
+        projected["portfolio_selection"] = {
+            key: selection[key]
+            for key in ("item_ids", "selection_is_authoritative")
+            if key in selection
+        }
+
+    identity_fields = (
+        "customer_id", "site_id", "application_id", "gas_product_id", "installation_id",
+    )
+
+    def project_source(source: Any) -> Any:
+        if not isinstance(source, dict):
+            return source
+        # Retrieval score is an internal ranking value; source order is already
+        # preserved. It is neither documentary content nor citation provenance.
+        record = {key: value for key, value in source.items() if key != "score"}
+        metadata = record.get("metadata")
+        if isinstance(metadata, dict):
+            # Retain source scope and all identity fields. Other metadata is
+            # kept as received because it may describe document applicability.
+            record["metadata"] = dict(metadata)
+        return record
+
+    items = state.get("portfolio_items")
+    if isinstance(items, (list, tuple)):
+        projected_items = []
+        for item in items:
+            if not isinstance(item, dict):
+                projected_items.append(item)
+                continue
+            projected_item = {
+                key: item[key]
+                for key in ("item_id", "display_identity", "knowledge_status")
+                if key in item
+            }
+            identity = item.get("identity")
+            if isinstance(identity, dict):
+                projected_item["identity"] = {
+                    key: identity.get(key) for key in identity_fields if key in identity
+                }
+            sources = item.get("knowledge_sources", ())
+            if not isinstance(sources, (list, tuple)):
+                sources = ()
+            projected_item["knowledge_sources"] = [project_source(source) for source in sources]
+            projected_items.append(projected_item)
+        projected["portfolio_items"] = projected_items
+
+    global_sources = state.get("global_knowledge_sources")
+    if isinstance(global_sources, (list, tuple)):
+        projected["global_knowledge_sources"] = [
+            project_source(source) for source in global_sources
+        ]
+    return projected
 
 
 def _final_question_instruction(question: str, state: dict[str, Any]) -> str:

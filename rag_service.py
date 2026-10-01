@@ -23,10 +23,12 @@ class RAGService:
         embeddings: EmbeddingProvider,
         store: LocalVectorStore,
         recorder: PerformanceRecorder | None = None,
+        embedding_lifecycle_metadata: dict | None = None,
     ) -> None:
         self.embeddings = embeddings
         self.store = store
         self.recorder = recorder
+        self.embedding_lifecycle_metadata = dict(embedding_lifecycle_metadata or {})
 
     def ingest(
         self,
@@ -74,9 +76,14 @@ class RAGService:
             chunk_count=len(chunks),
         )
         try:
-            vectors = self.embeddings.embed_documents(
-                [chunk.text for chunk in chunks]
-            )
+            texts = [chunk.text for chunk in chunks]
+            embed_with_recorder = getattr(self.embeddings, "embed_documents_with_recorder", None)
+            if callable(embed_with_recorder):
+                vectors = embed_with_recorder(
+                    texts, self.recorder, self.embedding_lifecycle_metadata,
+                )
+            else:
+                vectors = self.embeddings.embed_documents(texts)
         except Exception:
             self._fail(embedding_event)
             raise
@@ -148,7 +155,13 @@ class RAGService:
             "query_embedding", embedding_model=self.embeddings.model
         )
         try:
-            query_vector = self.embeddings.embed_query(question)
+            embed_with_recorder = getattr(self.embeddings, "embed_query_with_recorder", None)
+            if callable(embed_with_recorder):
+                query_vector = embed_with_recorder(
+                    question, self.recorder, self.embedding_lifecycle_metadata,
+                )
+            else:
+                query_vector = self.embeddings.embed_query(question)
         except Exception:
             self._fail(embedding_event)
             raise

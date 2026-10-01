@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+import re
 import subprocess
 import sys
 from time import perf_counter
@@ -269,8 +270,16 @@ def _check_turn(number: int, response, snapshot: PerformanceSnapshot, prior_resp
             if q8_view is not None:
                 expect(any(event.stage == "portfolio_knowledge_retrieval" for event in q8_view.snapshot.events),
                        "q9_q8_retrieval_stages_retained")
-                expect(any(event.stage == "llm_call" for event in q8_view.snapshot.events),
-                       "q9_q8_llm_stage_retained")
+                eligibility = next((event for event in q8_view.snapshot.events
+                                    if event.stage == "deterministic_documentary_eligibility"), None)
+                response_event = next((event for event in q8_view.snapshot.events
+                                       if event.stage == "deterministic_documentary_response"), None)
+                expect(eligibility is not None and eligibility.metadata.get(
+                    "deterministic_documentary_eligibility") is True,
+                    "q9_q8_deterministic_eligibility_retained")
+                expect(response_event is not None and response_event.metadata.get(
+                    "deterministic_documentary_response_used") is True,
+                    "q9_q8_deterministic_response_retained")
                 expect(tuple(q8_view.snapshot.events) == tuple(prior_responses.get("q8_events", ())),
                        "q9_q8_snapshot_not_replaced")
     elif number == 6:
@@ -312,7 +321,23 @@ def _check_turn(number: int, response, snapshot: PerformanceSnapshot, prior_resp
             expect(source.source.chunk.metadata.get("applicable_domain") == "industrial_gases",
                    "q8_global_source_domain")
         metrics = build_operation_metrics(snapshot)
-        expect(metrics.llm_call_count >= 1, "q8_real_llm_call_recorded")
+        eligibility = next((event for event in snapshot.events
+                            if event.stage == "deterministic_documentary_eligibility"), None)
+        deterministic_response = next((event for event in snapshot.events
+                                       if event.stage == "deterministic_documentary_response"), None)
+        expect(eligibility is not None and eligibility.metadata.get(
+            "deterministic_documentary_eligibility") is True,
+            "q8_deterministic_documentary_eligible")
+        expect(eligibility is not None and eligibility.metadata.get(
+            "eligibility_reason") == "single_direct_extractable_fact",
+            "q8_single_direct_documentary_fact")
+        expect(deterministic_response is not None and deterministic_response.metadata.get(
+            "deterministic_documentary_response_used") is True,
+            "q8_deterministic_documentary_response_used")
+        expect(deterministic_response is not None and deterministic_response.metadata.get(
+            "llm_calls_avoided") is True,
+            "q8_generation_llm_avoided")
+        expect(metrics.llm_call_count == 0, "q8_no_llm_call")
         citation = [event for event in snapshot.events if event.stage == "citation_validation"]
         expect(bool(citation) and any(
             event.status is PerformanceStatus.COMPLETED and event.metadata.get("valid") is True
@@ -518,6 +543,51 @@ def render_safe_report(result: AcceptanceResult, *, provider: str, model: str, t
             f"citation={turn.citation_status}; semantic_guard={turn.semantic_guard_status}"
         )
         lines.append(f"  Question: {turn.question}")
+        if turn.snapshot is not None:
+            eligibility_event = next((
+                event for event in turn.snapshot.events
+                if event.stage == "deterministic_documentary_eligibility"
+            ), None)
+            response_event = next((
+                event for event in turn.snapshot.events
+                if event.stage == "deterministic_documentary_response"
+            ), None)
+            if eligibility_event is not None or response_event is not None:
+                eligible = (eligibility_event.metadata.get("eligibility_decision", "unavailable")
+                            if eligibility_event is not None else "unavailable")
+                reason = (eligibility_event.metadata.get("eligibility_reason", "unavailable")
+                          if eligibility_event is not None else "unavailable")
+                chunk_ids = (response_event.metadata.get("selected_supporting_chunk_ids", ())
+                             if response_event is not None else ())
+                chunk_summary = ",".join(
+                    item if isinstance(item, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,120}", item)
+                    else "[redacted-id]"
+                    for item in chunk_ids[:8]
+                ) or "none"
+                used = (response_event.metadata.get("deterministic_documentary_response_used", False)
+                        if response_event is not None else False)
+                avoided = (response_event.metadata.get("llm_calls_avoided", False)
+                           if response_event is not None else False)
+                lines.append(
+                    f"  Deterministic documentary: eligible={eligible}; reason={reason}; "
+                    f"supporting_chunks={chunk_summary}; deterministic_response_used={used}; "
+                    f"llm_calls_avoided={avoided}"
+                )
+            prompt_event = next((
+                event for event in reversed(turn.snapshot.events)
+                if event.stage == "prompt_build"
+                and isinstance(event.metadata.get("prompt_component_character_counts"), dict)
+            ), None)
+            if prompt_event is not None:
+                counts = prompt_event.metadata["prompt_component_character_counts"]
+                percentages = prompt_event.metadata.get("prompt_component_percentages", {})
+                total_chars = prompt_event.metadata.get("prompt_character_count", 0)
+                delta = prompt_event.metadata.get("prompt_composition_accounting_delta", "unavailable")
+                lines.append(f"  Prompt composition: {total_chars} chars; accounting delta={delta}")
+                for component, characters in counts.items():
+                    percent = percentages.get(component)
+                    percent_text = f"{percent:.2f}%" if isinstance(percent, (int, float)) else "unavailable"
+                    lines.append(f"    {component}: {characters} chars ({percent_text})")
         if turn.failed_checks:
             lines.append(f"  Failed checks: {', '.join(turn.failed_checks)}")
     lines.append("")

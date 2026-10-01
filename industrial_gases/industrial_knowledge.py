@@ -4,12 +4,13 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
-from typing import Any
+from time import perf_counter
+from typing import Any, Callable
 
 from openai import APIError
 
-from diagnostics import PerformanceRecorder
-from embeddings import EmbeddingProvider
+from diagnostics import PerformanceRecorder, PerformanceStatus
+from embeddings import EmbeddingProvider, LMStudioEmbeddingProviderPool
 from rag_models import RetrievedChunk
 from rag_service import RAGService
 from vector_store import LocalVectorStore
@@ -139,6 +140,7 @@ def demo_knowledge_service(
     embeddings: EmbeddingProvider,
     recorder: PerformanceRecorder | None = None,
     root: str | Path | None = None,
+    embedding_lifecycle_metadata: dict[str, Any] | None = None,
 ) -> IndustrialKnowledgeService:
     model = embeddings.model
     if root is None:
@@ -147,4 +149,61 @@ def demo_knowledge_service(
         model_id = hashlib.sha256(model.encode("utf-8")).hexdigest()[:12]
         root = base.parent / "industrial_knowledge_demo" / model_id
     store = LocalVectorStore(root, model)
-    return IndustrialKnowledgeService(RAGService(embeddings, store, recorder))
+    return IndustrialKnowledgeService(RAGService(
+        embeddings, store, recorder,
+        embedding_lifecycle_metadata=embedding_lifecycle_metadata,
+    ))
+
+
+def lazy_demo_knowledge_service(
+    provider_pool: LMStudioEmbeddingProviderPool,
+    *,
+    model: str,
+    base_url: str | None,
+    api_key: str,
+    recorder: PerformanceRecorder | None = None,
+    root: str | Path | None = None,
+) -> Callable[[], IndustrialKnowledgeService]:
+    """Return an operation-scoped knowledge service factory with pooled embeddings."""
+    def create() -> IndustrialKnowledgeService:
+        started = perf_counter()
+        try:
+            embeddings, lifecycle = provider_pool.get_or_create_with_status(
+                model=model, base_url=base_url, api_key=api_key,
+            )
+        except Exception:
+            _record_pool_lookup(
+                recorder, PerformanceStatus.FAILED, perf_counter() - started,
+                provider_pool_lookup_occurred=True,
+                provider_pool_hit=False,
+                provider_pool_size=provider_pool.provider_count,
+            )
+            raise
+        lifecycle = {**lifecycle, "provider_pool_lookup_occurred": True}
+        _record_pool_lookup(
+            recorder, PerformanceStatus.COMPLETED, perf_counter() - started, **lifecycle,
+        )
+        # Keep the RAG service, vector-store wrapper and recorder operation-scoped.
+        return demo_knowledge_service(
+            embeddings, recorder, root, embedding_lifecycle_metadata=lifecycle,
+        )
+
+    return create
+
+
+def _record_pool_lookup(
+    recorder: PerformanceRecorder | None,
+    status: PerformanceStatus,
+    duration_seconds: float,
+    **metadata: Any,
+) -> None:
+    if recorder is None:
+        return
+    try:
+        recorder.record_stage(
+            "embedding_provider_pool_lookup", status=status,
+            duration_seconds=max(0.0, duration_seconds), **metadata,
+        )
+    except Exception:
+        # Diagnostics must never change provider lookup or retrieval behavior.
+        return

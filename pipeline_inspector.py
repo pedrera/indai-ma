@@ -41,6 +41,8 @@ STAGE_PRESENTATION = {
     "portfolio_query": ("⌕", "Portfolio Query / Selection"),
     "session_reference_resolution": ("↪", "Session Reference Resolution"),
     "portfolio_knowledge_retrieval": ("📚", "Scoped Portfolio Retrieval"),
+    "embedding_provider_pool_lookup": ("♻️", "Embedding Provider Pool Lookup"),
+    "embedding_request": ("🧬", "Embedding HTTP Request"),
     "scenario_execution": ("Δ", "Explicit Scenario Execution"),
     "citation_validation": ("✓", "Citation / Scope Validation"),
     "document_parsing": ("📄", "Document Parsing"),
@@ -537,6 +539,10 @@ def _render_supply_agent_timeline(snapshot: PerformanceSnapshot) -> list[str]:
                 f'<small>Capabilities: {escape(str(event.metadata.get("capabilities", ())))}</small>'
                 '</div></div>'
             )
+        elif event.stage == "prompt_build":
+            composition = _render_prompt_composition(event.metadata)
+            if composition:
+                parts.append(composition)
         elif event.stage == "portfolio_query":
             parts.append(
                 '<div class="pi-tools"><div class="pi-tool">'
@@ -552,6 +558,8 @@ def _render_supply_agent_timeline(snapshot: PerformanceSnapshot) -> list[str]:
                 f'<small>Selected: {escape(str(event.metadata.get("selected_item_ids", ())))}</small>'
                 '</div></div>'
             )
+        elif event.stage in {"embedding_provider_pool_lookup", "embedding_request"}:
+            parts.append(_render_embedding_lifecycle_details(event))
         elif event.stage == "workspace_reference_resolution":
             parts.append(
                 '<div class="pi-tools"><div class="pi-tool">'
@@ -697,6 +705,65 @@ def _render_supply_agent_timeline(snapshot: PerformanceSnapshot) -> list[str]:
                     f'Server inference: {inference}</small></div></div>'
                 )
     return parts
+
+
+def _render_embedding_lifecycle_details(event: PerformanceEvent) -> str:
+    """Render only allowlisted, non-secret embedding lifecycle diagnostics."""
+    metadata = event.metadata
+    fields = (
+        ("Pool lookup", "provider_pool_lookup_occurred"),
+        ("Pool hit", "provider_pool_hit"),
+        ("Pool size", "provider_pool_size"),
+        ("Pool key fingerprint", "provider_pool_key_fingerprint"),
+        ("Provider instance", "embedding_provider_instance_id"),
+        ("Client instance", "embedding_client_instance_id"),
+        ("Client reused", "client_reused"),
+        ("Client initialization", "client_initialization_seconds"),
+        ("Client pre-HTTP", "client_pre_http_seconds"),
+        ("HTTP request to response headers", "http_request_to_response_headers_seconds"),
+        ("Response body and SDK parse", "response_body_and_sdk_parse_seconds"),
+        ("Total embedding request", "total_embedding_request_seconds"),
+    )
+    visible = []
+    for label, key in fields:
+        if key not in metadata:
+            continue
+        value = metadata[key]
+        if key.endswith("_seconds") and isinstance(value, (int, float)):
+            rendered = _format_duration(float(value))
+        else:
+            rendered = str(value) if value is not None else "unavailable"
+        visible.append(f"<small>{escape(label)}: {escape(rendered)}</small>")
+    if not visible:
+        return ""
+    return '<div class="pi-tools"><div class="pi-tool">' + "".join(visible) + "</div></div>"
+
+
+def _render_prompt_composition(metadata) -> str:
+    counts = metadata.get("prompt_component_character_counts")
+    percentages = metadata.get("prompt_component_percentages")
+    total = metadata.get("prompt_character_count")
+    if not isinstance(counts, dict) or not isinstance(percentages, dict) or not isinstance(total, int):
+        return ""
+    rows = []
+    for name, characters in counts.items():
+        percentage = percentages.get(name)
+        if (
+            isinstance(characters, int) and not isinstance(characters, bool)
+            and isinstance(percentage, (int, float)) and not isinstance(percentage, bool)
+        ):
+            rows.append(
+                f'<small>{escape(str(name))}: {characters:,} chars · {percentage:.2f}%</small>'
+            )
+    if not rows:
+        return ""
+    delta = metadata.get("prompt_composition_accounting_delta")
+    delta_text = f'<small>Accounting delta: {delta}</small>' if isinstance(delta, int) else ""
+    return (
+        '<div class="pi-tools"><div class="pi-tool"><strong>Prompt composition</strong>'
+        f'<small>Total: {total:,} chars</small>{"".join(rows)}{delta_text}'
+        '</div></div>'
+    )
 
 
 def _render_risk_timeline(snapshot):

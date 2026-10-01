@@ -55,7 +55,12 @@ from llm_client import (
     get_llm_provider,
     get_supported_providers,
 )
-from embeddings import LMStudioEmbeddingProvider, get_embedding_model_name
+from embeddings import (
+    LMStudioEmbeddingProvider,
+    LMStudioEmbeddingProviderPool,
+    get_embedding_model_name,
+    get_lmstudio_embedding_api_key,
+)
 from pipeline_inspector import (
     inject_pipeline_styles, render_pipeline_inspector, render_workspace_pipeline_history,
 )
@@ -74,7 +79,7 @@ from industrial_gases.food_beverage_ui import render_food_beverage_supply_assura
 from industrial_gases.portfolio_ui import evaluate_demo_supply_portfolio, render_supply_portfolio
 from industrial_gases.conversational_workspace import ConversationalWorkspaceOrchestrator, WorkspaceResponse
 from industrial_gases.conversational_workspace_ui import render_conversational_workspace
-from industrial_gases.industrial_knowledge import demo_knowledge_service
+from industrial_gases.industrial_knowledge import demo_knowledge_service, lazy_demo_knowledge_service
 from industrial_gases.supply_agent import (
     ProviderSupplyDecisionModel,
     SupplyAgent,
@@ -146,6 +151,8 @@ if "workspace_messages" not in st.session_state:
     st.session_state.workspace_messages = []
 if "workspace_context" not in st.session_state:
     st.session_state.workspace_context = SupplyAgentSessionContext()
+if "workspace_embedding_provider_pool" not in st.session_state:
+    st.session_state.workspace_embedding_provider_pool = LMStudioEmbeddingProviderPool()
 if "workspace_pending_prompt" not in st.session_state:
     st.session_state.workspace_pending_prompt = None
 if "workspace_execution_history" not in st.session_state:
@@ -1167,8 +1174,12 @@ def start_conversational_workspace(question: str, session_context: SupplyAgentSe
                 # will surface the existing provider-unavailable boundary.
                 provider = None
         decision_model = ProviderSupplyDecisionModel(provider) if provider is not None else None
-        knowledge = lambda: demo_knowledge_service(
-            LMStudioEmbeddingProvider(model=get_embedding_model_name()), recorder,
+        knowledge = lazy_demo_knowledge_service(
+            st.session_state.workspace_embedding_provider_pool,
+            model=get_embedding_model_name(),
+            base_url=os.getenv("LMSTUDIO_BASE_URL"),
+            api_key=get_lmstudio_embedding_api_key(),
+            recorder=recorder,
         )
         orchestrator = ConversationalWorkspaceOrchestrator(
             portfolio=portfolio,

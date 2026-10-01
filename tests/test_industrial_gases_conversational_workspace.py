@@ -1081,7 +1081,8 @@ class ConversationalWorkspaceTests(unittest.TestCase):
             def search(inner, *, identity, query, top_k=4):
                 source = _chunk(
                     "hospital-delivery-contract", "hospital_o2_supply_contract.txt",
-                    "The planned delivery record is 4,000 kg, scheduled four days after the reference time.",
+                    "The planned delivery record is 4,000 kg, scheduled four days after the reference time. "
+                    "The planned delivery process is reviewed before dispatch.",
                     {
                         "customer_id": "hospital-costa-sur", "site_id": "hospital-costa-sur-site",
                         "application_id": "hospital-costa-sur-medical-oxygen",
@@ -1133,7 +1134,8 @@ class ConversationalWorkspaceTests(unittest.TestCase):
             def search(inner, *, identity, query, top_k=4):
                 source = _chunk(
                     "hospital-delivery-contract", "hospital_o2_supply_contract.txt",
-                    "The planned delivery record is 4,000 kg, scheduled four days after the reference time.",
+                    "The planned delivery record is 4,000 kg, scheduled four days after the reference time. "
+                    "The planned delivery process is reviewed before dispatch.",
                     {
                         "customer_id": "hospital-costa-sur", "site_id": "hospital-costa-sur-site",
                         "application_id": "hospital-costa-sur-medical-oxygen",
@@ -1330,7 +1332,8 @@ class ConversationalWorkspaceTests(unittest.TestCase):
                 self.calls.append((dict(identity), query))
                 source = _chunk(
                     "hospital-contract", "hospital_o2_supply_contract.txt",
-                    "The Hospital Costa Sur oxygen supply contract describes its planned delivery.",
+                    "The Hospital Costa Sur oxygen supply contract describes its planned delivery. "
+                    "The planned delivery process is reviewed before dispatch.",
                     {
                         "customer_id": "hospital-costa-sur",
                         "site_id": "hospital-costa-sur-site",

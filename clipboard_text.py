@@ -553,6 +553,37 @@ def build_diagnostics_clipboard_text(
                 if source.get("score") is not None:
                     lines.append(f"   Score: {_number(source['score'])}")
 
+    embedding_events = [event for event in events if event.stage in {
+        "embedding_provider_pool_lookup", "embedding_request",
+    }]
+    if embedding_events:
+        lines.extend(["", "Embedding client lifecycle", "--------------------------"])
+        embedding_labels = (
+            ("provider_pool_lookup_occurred", "Pool lookup occurred"),
+            ("provider_pool_hit", "Pool hit"),
+            ("provider_pool_size", "Pool size"),
+            ("provider_pool_key_fingerprint", "Pool key fingerprint"),
+            ("embedding_provider_instance_id", "Provider instance ID"),
+            ("embedding_client_instance_id", "Client instance ID"),
+            ("client_reused", "Client reused"),
+            ("client_initialization_seconds", "Client initialization"),
+            ("client_pre_http_seconds", "Client pre-HTTP"),
+            ("http_request_to_response_headers_seconds", "HTTP request to response headers"),
+            ("response_body_and_sdk_parse_seconds", "Response body and SDK parse"),
+            ("total_embedding_request_seconds", "Total embedding request"),
+        )
+        for event in embedding_events:
+            lines.append(f"- {event.stage} [{event.status.value}]")
+            for key, label in embedding_labels:
+                if key not in event.metadata:
+                    continue
+                value = event.metadata[key]
+                rendered = (
+                    _duration(value) if key.endswith("_seconds") and isinstance(value, (int, float))
+                    else str(value) if value is not None else "unavailable"
+                )
+                lines.append(f"  {label}: {_redact_text(rendered)}")
+
     tool_events = [event for event in events if event.stage == "tool_execution"]
     skipped_tool_events = [
         event
@@ -628,6 +659,10 @@ def build_diagnostics_clipboard_text(
 
 _WORKSPACE_EVENT_FIELDS = {
     "workspace_intent_routing": ("intent", "capabilities"),
+    "prompt_build": (
+        "prompt_character_count", "prompt_component_character_counts",
+        "prompt_component_percentages", "prompt_composition_accounting_delta",
+    ),
     "workspace_reference_resolution": (
         "previous_selected_item_ids", "selected_item_ids", "previous_focused_item_id",
         "focused_item_id", "previous_intent", "resolved_intent", "document_scope_item_ids",
@@ -699,6 +734,18 @@ def _append_workspace_execution_copy(lines: list[str], events: tuple[Performance
                 phrase = safe.get("semantic_guard_matched_phrase")
                 if phrase is not None:
                     safe["semantic_guard_matched_phrase"] = str(phrase)[:120]
+        if event.stage == "prompt_build":
+            counts = event.metadata.get("prompt_component_character_counts")
+            percentages = event.metadata.get("prompt_component_percentages")
+            if isinstance(counts, dict) and isinstance(percentages, dict):
+                safe = {
+                    "prompt_character_count": event.metadata.get("prompt_character_count"),
+                    "prompt_component_character_counts": counts,
+                    "prompt_component_percentages": percentages,
+                    "prompt_composition_accounting_delta": event.metadata.get(
+                        "prompt_composition_accounting_delta"
+                    ),
+                }
         if event.stage == "tool_execution":
             args = _workspace_safe_mapping(event.metadata.get("tool_arguments"))
             result = _workspace_safe_mapping(event.metadata.get("tool_result"))

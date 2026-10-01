@@ -28,6 +28,25 @@ RISK_QUERY = 'Demanda 4,8 GWh. Tenemos 4,3 GWh aprovisionados. Precio spot 42 EU
 
 
 class ExecutionUXTests(unittest.TestCase):
+    def test_workspace_embedding_pool_is_lazy_and_isolated_per_streamlit_session(self):
+        from embeddings import LMStudioEmbeddingProviderPool
+
+        with patch('llm_client.get_available_models', return_value=[]):
+            first_app = AppTest.from_file(APP, default_timeout=20).run()
+            second_app = AppTest.from_file(APP, default_timeout=20).run()
+        self.assertFalse(first_app.exception)
+        self.assertFalse(second_app.exception)
+        first_pool = first_app.session_state['workspace_embedding_provider_pool']
+        second_pool = second_app.session_state['workspace_embedding_provider_pool']
+        self.assertIsInstance(first_pool, LMStudioEmbeddingProviderPool)
+        self.assertIsInstance(second_pool, LMStudioEmbeddingProviderPool)
+        self.assertIsNot(first_pool, second_pool)
+        self.assertEqual(first_pool.provider_count, 0)
+        self.assertEqual(second_pool.provider_count, 0)
+        first_app.run()
+        self.assertFalse(first_app.exception)
+        self.assertIs(first_app.session_state['workspace_embedding_provider_pool'], first_pool)
+
     def test_workspace_execution_history_is_ordered_bounded_and_redacts_query_labels(self):
         history = ()
         for index in range(1, 4):

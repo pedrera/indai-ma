@@ -7,9 +7,10 @@ from datetime import timedelta
 from unittest.mock import Mock, patch
 
 from agent_models import AgentDecision
+from clipboard_text import build_diagnostics_clipboard_text
 from diagnostics import PerformanceRecorder, PerformanceStatus
 from embeddings import EmbeddingProvider
-from industrial_gases.industrial_knowledge import IndustrialKnowledgeService
+from industrial_gases.industrial_knowledge import IndustrialKnowledgeService, lazy_demo_knowledge_service
 from industrial_gases.operational_attention import OperationalAttentionService
 from industrial_gases.portfolio import SupplyPortfolioResult, SupplyPortfolioService
 from industrial_gases.portfolio_ui import _canonical_portfolio_request
@@ -22,8 +23,11 @@ from industrial_gases.supply_agent import (
     SupplyAgentTools,
     _documentary_citation_guidance,
     _decision_prompt,
+    _decision_prompt_with_composition,
 )
+from pipeline_inspector import _render_supply_agent_timeline
 from llm_client import LLMResponse
+from rag_models import DocumentChunk, RetrievedChunk
 from rag_service import RAGService
 from streamlit.testing.v1 import AppTest
 from vector_store import LocalVectorStore
@@ -63,9 +67,11 @@ class ObservedKnowledgeDecisionModel:
         self.attention_first = attention_first
         self.fabricate = fabricate
         self.calls = []
+        self.available_tools = None
 
     def decide(self, question, state, tools, timeout_seconds=None):
         self.calls.append((question, state, tools))
+        self.available_tools = tools
         if self.attention_first and not any(
             observation.get("name") == "get_operational_attention"
             for observation in state["tool_observations"]
@@ -140,6 +146,40 @@ class SupplyAgentTests(unittest.TestCase):
             service=service,
         )
 
+    def run_deterministic_documentary_fixture(self, texts, *, metadata_override=None, question=None):
+        item = self.baseline_item
+        result = item.result
+        metadata = {
+            "customer_id": result.customer_id,
+            "site_id": result.site_id,
+            "application_id": result.application_id,
+            "gas_product_id": result.gas_product_id,
+            "installation_id": result.installation_id,
+            "document_type": "supply_contract",
+        }
+        metadata.update(metadata_override or {})
+        sources = tuple(
+            RetrievedChunk(DocumentChunk(
+                chunk_id=f"contract-chunk-{index}", document_id="hospital-contract-document",
+                document_name="hospital_o2_supply_contract.txt", section="Delivery",
+                page_start=1, page_end=1, ordinal=index, text=text, metadata=dict(metadata),
+            ), score=0.99 - index / 100)
+            for index, text in enumerate(texts)
+        )
+
+        class FixedKnowledge:
+            def search(_self, *, identity, query, top_k=4):
+                return "retrieved", sources[:top_k]
+
+        decision = AgentDecision("finish", "finish", answer="Fallback response.")
+        model = QueueDecisionModel(decision)
+        recorder = PerformanceRecorder("documentary-eligibility", "fixture", "model", "supply_agent")
+        result = self.agent(
+            question or "¿Qué dice el contrato sobre la entrega?", model,
+            knowledge=FixedKnowledge(), recorder=recorder,
+        ).run()
+        return result, model, recorder.snapshot(), sources
+
     def test_domain_only_answer_uses_original_projection_without_rag_or_recalculation(self):
         decisions = QueueDecisionModel(
             _call("get_supply_position", item_id=self.item_id),
@@ -213,8 +253,154 @@ class SupplyAgentTests(unittest.TestCase):
         self.assertTrue(any(reference.evidence_type == "knowledge" for reference in result.evidence_references))
         self.assertEqual([entry["name"] for entry in result.tool_executions],
                          ["search_industrial_knowledge"])
+        self.assertEqual(model.available_tools, [])
         cited_id = result.answer.split("[chunk_id:", 1)[1].split("]", 1)[0]
         self.assertIn(cited_id, {source.chunk.chunk_id for source in result.knowledge_sources})
+
+    def test_single_direct_documentary_fact_is_answered_extractively_without_llm(self):
+        sentence = "The planned delivery record is 4,000 kg."
+        result, model, snapshot, sources = self.run_deterministic_documentary_fixture([sentence])
+        self.assertEqual(result.status, SupplyAgentStatus.COMPLETED)
+        self.assertEqual(
+            result.answer,
+            f'“{sentence}” [chunk_id:{sources[0].chunk.chunk_id}]',
+        )
+        self.assertEqual(model.calls, [])
+        eligibility = next(event for event in snapshot.events
+                           if event.stage == "deterministic_documentary_eligibility")
+        response = next(event for event in snapshot.events
+                        if event.stage == "deterministic_documentary_response")
+        citation = next(event for event in snapshot.events if event.stage == "citation_validation")
+        self.assertTrue(eligibility.metadata["deterministic_documentary_eligibility"])
+        self.assertEqual(eligibility.metadata["eligibility_reason"], "single_direct_extractable_fact")
+        self.assertEqual(eligibility.metadata["selected_supporting_chunk_ids"],
+                         (sources[0].chunk.chunk_id,))
+        self.assertTrue(response.metadata["deterministic_documentary_response_used"])
+        self.assertTrue(response.metadata["llm_calls_avoided"])
+        self.assertTrue(citation.metadata["valid"])
+        self.assertIn(sources[0].chunk.chunk_id,
+                      {reference.source_id for reference in result.evidence_references})
+
+    def test_pooled_operation_factory_keeps_deterministic_documentary_response_unchanged(self):
+        item = self.baseline_item
+        position = item.result
+        metadata = {
+            "customer_id": position.customer_id, "site_id": position.site_id,
+            "application_id": position.application_id, "gas_product_id": position.gas_product_id,
+            "installation_id": position.installation_id, "document_type": "supply_contract",
+        }
+        sentence = "The planned delivery record is 4,000 kg."
+        source = RetrievedChunk(DocumentChunk(
+            chunk_id="pooled-contract-chunk", document_id="contract-document",
+            document_name="hospital_contract.txt", section="Delivery", page_start=1,
+            page_end=1, ordinal=0, text=sentence, metadata=metadata,
+        ), score=0.99)
+
+        class FixedKnowledge:
+            def search(_self, *, identity, query, top_k=4):
+                return "retrieved", (source,)
+
+        class SharedPool:
+            def __init__(self):
+                self.provider = type("Provider", (), {"model": "pooled-fixture"})()
+                self.requests = 0
+
+            def get_or_create(self, **_configuration):
+                self.requests += 1
+                return self.provider
+
+            def get_or_create_with_status(self, **_configuration):
+                provider = self.get_or_create(**_configuration)
+                return provider, {
+                    "provider_pool_hit": self.requests > 1,
+                    "provider_pool_size": 1,
+                    "provider_pool_key_fingerprint": "safe-test-fingerprint",
+                    "embedding_provider_instance_id": "provider-test-instance",
+                    "embedding_client_instance_id": "client-test-instance",
+                }
+
+        pool = SharedPool()
+        answers = []
+        decisions = []
+        with patch("industrial_gases.industrial_knowledge.demo_knowledge_service",
+                   side_effect=lambda *_args, **_kwargs: FixedKnowledge()):
+            for index in (1, 2):
+                recorder = PerformanceRecorder(
+                    f"pooled-documentary-{index}", "fixture", "model", "workspace",
+                )
+                knowledge = lazy_demo_knowledge_service(
+                    pool, model="pooled-fixture", base_url="http://fixture/v1",
+                    api_key="fixture-key", recorder=recorder,
+                )()
+                model = QueueDecisionModel(AgentDecision("finish", "finish", answer="fallback"))
+                result = self.agent(
+                    "¿Qué dice el contrato sobre la entrega?", model, knowledge=knowledge,
+                ).run()
+                answers.append(result.answer)
+                decisions.append(model.calls)
+
+        expected = f'“{sentence}” [chunk_id:{source.chunk.chunk_id}]'
+        self.assertEqual(answers, [expected, expected])
+        self.assertEqual(decisions, [[], []])
+        self.assertEqual(pool.requests, 2)
+
+    def test_ambiguous_documentary_sources_fall_back_to_existing_llm_path(self):
+        result, model, snapshot, _ = self.run_deterministic_documentary_fixture([
+            "The planned delivery is reviewed before dispatch.",
+            "The planned delivery follows the agreed schedule.",
+        ])
+        self.assertEqual(len(model.calls), 1)
+        eligibility = next(event for event in snapshot.events
+                           if event.stage == "deterministic_documentary_eligibility")
+        response = next(event for event in snapshot.events
+                        if event.stage == "deterministic_documentary_response")
+        self.assertFalse(eligibility.metadata["deterministic_documentary_eligibility"])
+        self.assertEqual(eligibility.metadata["eligibility_reason"], "ambiguous_direct_evidence")
+        self.assertFalse(response.metadata["deterministic_documentary_response_used"])
+        self.assertFalse(response.metadata["llm_calls_avoided"])
+
+    def test_conflicting_documentary_facts_fall_back_to_existing_llm_path(self):
+        result, model, snapshot, _ = self.run_deterministic_documentary_fixture([
+            "The planned delivery quantity is 4,000 kg.",
+            "The planned delivery quantity is 5,000 kg.",
+        ])
+        self.assertEqual(len(model.calls), 1)
+        eligibility = next(event for event in snapshot.events
+                           if event.stage == "deterministic_documentary_eligibility")
+        self.assertFalse(eligibility.metadata["deterministic_documentary_eligibility"])
+        self.assertEqual(eligibility.metadata["eligibility_reason"], "conflicting_direct_evidence")
+
+    def test_insufficient_documentary_evidence_falls_back_to_existing_llm_path(self):
+        _, model, snapshot, _ = self.run_deterministic_documentary_fixture([
+            "This document describes the covered oxygen installation.",
+        ])
+        self.assertEqual(len(model.calls), 1)
+        eligibility = next(event for event in snapshot.events
+                           if event.stage == "deterministic_documentary_eligibility")
+        self.assertFalse(eligibility.metadata["deterministic_documentary_eligibility"])
+        self.assertEqual(eligibility.metadata["eligibility_reason"], "no_direct_extractable_fact")
+
+    def test_wrong_item_source_scope_never_produces_deterministic_documentary_answer(self):
+        _, model, snapshot, _ = self.run_deterministic_documentary_fixture(
+            ["The planned delivery record is 4,000 kg."],
+            metadata_override={"installation_id": "another-installation"},
+        )
+        self.assertEqual(len(model.calls), 1)
+        eligibility = next(event for event in snapshot.events
+                           if event.stage == "deterministic_documentary_eligibility")
+        self.assertFalse(eligibility.metadata["deterministic_documentary_eligibility"])
+        self.assertEqual(eligibility.metadata["eligibility_reason"], "source_scope_unverified")
+
+    def test_wrong_document_type_never_produces_deterministic_documentary_answer(self):
+        _, model, snapshot, _ = self.run_deterministic_documentary_fixture(
+            ["The planned delivery record is 4,000 kg."],
+            metadata_override={"document_type": "operating_procedure"},
+        )
+        self.assertEqual(len(model.calls), 1)
+        eligibility = next(event for event in snapshot.events
+                           if event.stage == "deterministic_documentary_eligibility")
+        self.assertFalse(eligibility.metadata["deterministic_documentary_eligibility"])
+        self.assertEqual(eligibility.metadata["eligibility_reason"], "no_direct_extractable_fact")
 
     def test_combined_query_uses_domain_attention_and_knowledge_without_fusing_sources(self):
         question = "¿Por qué requiere atención y qué información contractual es relevante?"
@@ -233,7 +419,8 @@ class SupplyAgentTests(unittest.TestCase):
                         f"revisar los datos de la entrega. [chunk_id:{matching_sources[0].chunk.chunk_id}]"),
             )
         )
-        result = self.agent(question, model).run()
+        recorder = PerformanceRecorder("combined-documentary", "fixture", "model", "supply_agent")
+        result = self.agent(question, model, recorder=recorder).run()
         self.assertEqual([entry["name"] for entry in result.tool_executions],
                          ["search_industrial_knowledge", "get_supply_position", "get_operational_attention"])
         self.assertEqual({reference.evidence_type for reference in result.evidence_references}, {"domain", "knowledge"})
@@ -250,6 +437,13 @@ class SupplyAgentTests(unittest.TestCase):
             for source in result.knowledge_sources
         ))
         self.assertEqual(len(model.calls), 1)
+        snapshot = recorder.snapshot()
+        eligibility = next(event for event in snapshot.events
+                           if event.stage == "deterministic_documentary_eligibility")
+        self.assertEqual(eligibility.metadata["eligibility_reason"], "operational_context_required")
+        documentary_response = next(event for event in snapshot.events
+                                    if event.stage == "deterministic_documentary_response")
+        self.assertFalse(documentary_response.metadata["deterministic_documentary_response_used"])
         observations = model.calls[0][1]["tool_observations"]
         self.assertEqual([observation["name"] for observation in observations],
                          ["search_industrial_knowledge", "get_supply_position",
@@ -398,6 +592,227 @@ class SupplyAgentTests(unittest.TestCase):
                     "Question", {"documentary_evidence_required": documentary}, [],
                 )
                 self.assertEqual(provider.options.temperature, expected)
+
+    def test_prompt_composition_telemetry_is_disjoint_and_preserves_prompt(self):
+        question = "¿Qué dice el contrato?"
+        state = {
+            "workspace_mode": True,
+            "documentary_evidence_required": True,
+            "portfolio_selection": {"item_ids": ["position-a"]},
+            "session_context": {"focused_item_id": "position-a", "scenario_history": []},
+            "selected_item_id": "position-a",
+            "portfolio_items": [{
+                "item_id": "position-a",
+                "display_identity": "Hospital Costa Sur / O2",
+                "projection": {"inventory_immediately_before_delivery": {"value": 400, "unit": "kg"}},
+                "attention_findings": [{"code": "safety_stock_breach"}],
+                "knowledge_sources": [{
+                    "chunk_id": "hospital-contract",
+                    "document_name": "hospital_contract.txt",
+                    "metadata": {"document_type": "supply_contract"},
+                    "text": "The contract specifies delivery conditions.",
+                }],
+            }],
+            "tool_observations": [{
+                "name": "get_supply_position",
+                "result": {"inventory_immediately_before_delivery": 400},
+            }],
+            "available_citations": [{
+                "citation": "[chunk_id:hospital-contract]", "chunk_id": "hospital-contract",
+            }],
+        }
+        expected_prompt = _decision_prompt(question, state, [])
+        recorder = PerformanceRecorder("prompt-composition", "fixture", "fixture-model", "conversational_workspace")
+
+        class CapturingProvider:
+            provider_name = "fixture"
+            model = "fixture-model"
+
+            def __init__(self):
+                self.recorder = recorder
+                self.prompt = None
+
+            def generate_response(self, messages, **_kwargs):
+                self.prompt = messages[0]["content"]
+                return LLMResponse(json.dumps({
+                    "action": "finish", "answer": "Fixture answer.", "decision_summary": "answer",
+                }))
+
+        provider = CapturingProvider()
+        ProviderSupplyDecisionModel(provider).decide(question, state, [])
+        self.assertEqual(provider.prompt, expected_prompt)
+        event = next(event for event in recorder.snapshot().events if event.stage == "prompt_build")
+        counts = event.metadata["prompt_component_character_counts"]
+        percentages = event.metadata["prompt_component_percentages"]
+        self.assertEqual(sum(counts.values()), len(provider.prompt))
+        self.assertEqual(event.metadata["prompt_character_count"], len(provider.prompt))
+        self.assertEqual(event.metadata["prompt_composition_accounting_delta"], 0)
+        self.assertAlmostEqual(sum(percentages.values()), 100.0)
+        for component in (
+            "system_base_instructions", "agent_instructions", "structured_portfolio_state",
+            "operational_structured_evidence", "retrieved_rag_source_text",
+            "retrieved_source_metadata", "citation_output_contract", "user_question",
+            "conversation_session_context", "other_serialized_state", "tool_schemas",
+        ):
+            self.assertIn(component, counts)
+        for component in (
+            "retrieved_rag_source_text", "retrieved_source_metadata",
+            "operational_structured_evidence", "conversation_session_context",
+        ):
+            if component == "operational_structured_evidence":
+                self.assertEqual(counts[component], 0)
+            else:
+                self.assertGreater(counts[component], 0)
+
+        copied = build_diagnostics_clipboard_text(recorder.snapshot())
+        self.assertIn("prompt_component_character_counts", copied)
+        self.assertIn("retrieved_rag_source_text", copied)
+        timeline = "".join(_render_supply_agent_timeline(recorder.snapshot()))
+        self.assertIn("Prompt composition", timeline)
+        self.assertIn("retrieved_source_metadata", timeline)
+
+    def test_documentary_projection_preserves_scoped_evidence_and_removes_irrelevant_state(self):
+        question = "¿Qué dice el contrato sobre la entrega?"
+        chunk_ids = [f"hospital-contract-{index}" for index in range(4)]
+        source_texts = [f"Contrato {index}: entrega conforme a la sección {index}." * 12
+                        for index in range(4)]
+        source_records = [{
+            "chunk_id": chunk_id,
+            "citation": f"[chunk_id:{chunk_id}]",
+            "document_id": "hospital-contract-document",
+            "document_name": "hospital_contract.txt",
+            "document_type": "supply_contract",
+            "metadata": {
+                "scope": "position", "customer_id": "hospital-costa-sur",
+                "site_id": "hospital-costa-sur-site",
+                "application_id": "hospital-costa-sur-medical-oxygen",
+                "gas_product_id": "medical-oxygen",
+                "installation_id": "hospital-costa-sur-bulk-cryogenic-o2",
+                "document_type": "supply_contract",
+            },
+            "section": f"Section {index}", "page_start": index + 1,
+            "page_end": index + 1, "score": 0.9 - index / 10,
+            "text": source_text,
+        } for index, (chunk_id, source_text) in enumerate(zip(chunk_ids, source_texts))]
+        state_identity = {
+            "customer_id": "hospital-costa-sur", "site_id": "hospital-costa-sur-site",
+            "application_id": "hospital-costa-sur-medical-oxygen",
+            "gas_product_id": "medical-oxygen",
+            "installation_id": "hospital-costa-sur-bulk-cryogenic-o2",
+        }
+        state = {
+            "workspace_mode": True,
+            "documentary_evidence_required": True,
+            "portfolio_selection": {
+                "query": {"gas_product_id": "medical-oxygen", "internal_filter": "redundant"},
+                "item_ids": ["position-a"],
+                "matched_by": {"position-a": ["contract", "hospital"]},
+                "selection_is_authoritative": True,
+            },
+            "selected_item_id": "position-a",
+            "position_identity": {
+                "customer_id": "hospital-costa-sur", "site_id": "hospital-costa-sur-site",
+                "application_id": "hospital-costa-sur-medical-oxygen",
+                "gas_product_id": "medical-oxygen",
+                "installation_id": "hospital-costa-sur-bulk-cryogenic-o2",
+            },
+            "portfolio_items": [{
+                "item_id": "position-a", "display_identity": "Hospital Costa Sur / O₂",
+                "identity": state_identity,
+                "evaluation_status": "COMPLETED",
+                "projection": {"inventory_immediately_before_delivery": {"value": 400, "unit": "kg"}},
+                "attention_findings": [{"code": "safety_stock_breach", "gap": -1100}],
+                "missing_inputs": [], "validation_errors": [],
+                "knowledge_status": "retrieved", "knowledge_sources": source_records,
+            }],
+            "tool_observations": [{"name": "get_supply_position", "result": {"value": 400}}],
+            "available_citations": [{
+                "citation": f"[chunk_id:{chunk_id}]", "chunk_id": chunk_id,
+                "item_ids": ["position-a"], "global_scope": False,
+            } for chunk_id in chunk_ids],
+            "session_context": {"focused_item_id": "position-a", "last_intent": "documentary"},
+        }
+        tools = [{"name": "evaluate_supply_what_if", "description": "scenario tool"}]
+
+        before_prompt, before = _decision_prompt_with_composition(
+            question, state, tools, project_documentary=False,
+        )
+        after_prompt, after = _decision_prompt_with_composition(question, state, tools)
+        projected = json.loads(after_prompt.split(
+            "STATE (domain status is source data; observations are authoritative):\n", 1,
+        )[1].split("\n\nAVAILABLE TOOLS:", 1)[0])
+
+        self.assertGreater(len(before_prompt), len(after_prompt))
+        self.assertEqual(after["character_counts"]["operational_structured_evidence"], 0)
+        self.assertGreater(after["character_counts"]["retrieved_rag_source_text"], 0)
+        self.assertGreater(after["character_counts"]["retrieved_source_metadata"], 0)
+        self.assertNotIn("projection", projected["portfolio_items"][0])
+        self.assertNotIn("attention_findings", projected["portfolio_items"][0])
+        self.assertNotIn("tool_observations", projected)
+        self.assertNotIn("score", projected["portfolio_items"][0]["knowledge_sources"][0])
+        self.assertIn("AVAILABLE TOOLS:\n[]", after_prompt)
+        self.assertIn('"item_id": "position-a"', after_prompt)
+        self.assertIn('"display_identity": "Hospital Costa Sur / O₂"', after_prompt)
+        self.assertEqual(projected["portfolio_items"][0]["identity"], state_identity)
+        prompted_sources = projected["portfolio_items"][0]["knowledge_sources"]
+        self.assertEqual([source["chunk_id"] for source in prompted_sources], chunk_ids)
+        self.assertEqual([source["text"] for source in prompted_sources], source_texts)
+        self.assertTrue(all(
+            source["metadata"]["installation_id"] == state_identity["installation_id"]
+            for source in prompted_sources
+        ))
+        self.assertEqual(
+            [source["citation"] for source in state["available_citations"]],
+            [f"[chunk_id:{chunk_id}]" for chunk_id in chunk_ids],
+        )
+        for chunk_id in chunk_ids:
+            self.assertIn(f"- [chunk_id:{chunk_id}]", after_prompt)
+        for prompt, composition in ((before_prompt, before), (after_prompt, after)):
+            counts = composition["character_counts"]
+            self.assertEqual(composition["accounting_delta"], 0)
+            self.assertEqual(sum(counts.values()), len(prompt))
+            self.assertAlmostEqual(sum(composition["percentages"].values()), 100.0)
+
+    def test_documentary_projection_preserves_operational_context_and_non_documentary_prompt(self):
+        tools = [{"name": "evaluate_supply_what_if", "description": "scenario tool"}]
+        state = {
+            "workspace_mode": True,
+            "documentary_evidence_required": True,
+            "portfolio_items": [{
+                "item_id": "position-a", "display_identity": "Hospital / O₂",
+                "identity": {"installation_id": "installation-a"},
+                "projection": {"inventory_immediately_before_delivery": 400},
+                "attention_findings": [{"code": "safety_stock_breach"}],
+                "knowledge_sources": [{"chunk_id": "chunk-a", "text": "Delivery terms."}],
+            }],
+            "available_citations": [{"citation": "[chunk_id:chunk-a]"}],
+            "tool_observations": [{"name": "get_supply_position", "result": {"value": 400}}],
+        }
+        combined = _decision_prompt(
+            "¿Qué dice el contrato sobre el inventario y por qué requiere atención?", state, tools,
+        )
+        self.assertIn('"inventory_immediately_before_delivery": 400', combined)
+        self.assertIn('"safety_stock_breach"', combined)
+        self.assertIn('"name": "get_supply_position"', combined)
+        self.assertIn('"evaluate_supply_what_if"', combined)
+
+        ordinary_state = {"workspace_mode": True, "portfolio_items": [{"projection": {"value": 42}}]}
+        ordinary_before = _decision_prompt_with_composition(
+            "¿Cuál es el valor?", ordinary_state, tools, project_documentary=False,
+        )[0]
+        ordinary_after = _decision_prompt("¿Cuál es el valor?", ordinary_state, tools)
+        self.assertEqual(ordinary_after, ordinary_before)
+
+    def test_prompt_composition_handles_absent_optional_components(self):
+        prompt, composition = _decision_prompt_with_composition("Status?", {}, [])
+        counts = composition["character_counts"]
+        self.assertTrue(prompt)
+        self.assertEqual(composition["accounting_delta"], 0)
+        self.assertEqual(sum(counts.values()), len(prompt))
+        self.assertEqual(counts["retrieved_rag_source_text"], 0)
+        self.assertEqual(counts["retrieved_source_metadata"], 0)
+        self.assertEqual(counts["conversation_session_context"], 0)
+        self.assertNotIn("DOCUMENTARY ANSWER CONTRACT", prompt)
 
     def test_documentary_claim_without_citation_is_rejected_even_with_retrieval(self):
         model = QueueDecisionModel(AgentDecision(
