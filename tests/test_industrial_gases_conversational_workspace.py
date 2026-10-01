@@ -317,7 +317,7 @@ class ConversationalWorkspaceTests(unittest.TestCase):
         q6_events = recorder.snapshot().events
         q6_stages = [event.stage for event in q6_events]
         for stage in (
-            "workspace_intent_routing", "session_reference_resolution",
+            "workspace_intent_routing", "session_reference_resolution", "documentary_scope_resolution",
             "portfolio_knowledge_retrieval", "agent_decision", "citation_validation",
             "workspace_structured_evidence", "workspace_response_projection",
         ):
@@ -329,6 +329,12 @@ class ConversationalWorkspaceTests(unittest.TestCase):
         citation_events = [event for event in q6_events if event.stage == "citation_validation"]
         self.assertEqual(len(citation_events), 1)
         self.assertEqual(citation_events[0].status, PerformanceStatus.COMPLETED)
+        scope_event = next(event for event in q6_events if event.stage == "documentary_scope_resolution")
+        self.assertEqual(scope_event.metadata["decision"], "resolved")
+        self.assertEqual(scope_event.metadata["resolution_source"], "focused_conversation_item")
+        self.assertEqual(scope_event.metadata["resolved_item_ids"], ("hospital-costa-sur-o2",))
+        self.assertFalse(scope_event.metadata["rag_avoided"])
+        self.assertFalse(scope_event.metadata["generation_llm_avoided"])
 
         baseline_delivery = q6.positions[0].item.request.delivery_plan.planned_delivery_at
         q7 = conversation.ask("¿Y dos días antes?")
@@ -765,6 +771,98 @@ class ConversationalWorkspaceTests(unittest.TestCase):
         self.assertEqual(response.status, SupplyAgentStatus.NEEDS_INPUT)
         self.assertEqual(response.selected_item_ids, ())
         self.assertEqual(knowledge.calls, [])
+        self.assertIn("Hospital Costa Sur", response.explanation)
+        self.assertIn("alimentos-sur-malaga-co2", response.explanation)
+
+    def test_contract_delivery_without_focus_across_three_positions_clarifies_before_any_retrieval(self):
+        class NeverModel:
+            def decide(self, *args, **kwargs):
+                raise AssertionError("ambiguous documentary scope must not invoke generation")
+
+        item_ids = (
+            "hospital-costa-sur-o2", "alimentos-sur-malaga-co2", "alimentos-sur-malaga-n2",
+        )
+        context = SupplyAgentSessionContext(item_ids, None)
+        knowledge = ScopedFixtureKnowledge()
+        recorder = PerformanceRecorder("ambiguous-documentary", "fixture", "fixture-model", "conversational_workspace")
+        response = ConversationalWorkspaceOrchestrator(
+            self.portfolio, self.attention, knowledge, NeverModel(), context, recorder=recorder,
+        ).run("¿Qué dice el contrato sobre la entrega?")
+
+        self.assertEqual(response.status, SupplyAgentStatus.NEEDS_INPUT)
+        self.assertTrue(response.clarification_required)
+        self.assertEqual(knowledge.calls, [])
+        self.assertEqual(response.tool_executions, ())
+        self.assertEqual(response.session_context.selected_item_ids, item_ids)
+        self.assertIsNone(response.session_context.focused_item_id)
+        for choice in ("Hospital Costa Sur", "O2", "CO2", "N2"):
+            self.assertIn(choice, response.explanation)
+        snapshot = recorder.snapshot()
+        resolution = next(event for event in snapshot.events
+                          if event.stage == "documentary_scope_resolution")
+        self.assertEqual(resolution.metadata["decision"], "needs_input")
+        self.assertEqual(resolution.metadata["candidate_item_ids"], item_ids)
+        self.assertEqual(resolution.metadata["resolved_item_ids"], ())
+        self.assertEqual(resolution.metadata["resolution_source"], "unresolved_candidates")
+        self.assertTrue(resolution.metadata["rag_avoided"])
+        self.assertTrue(resolution.metadata["generation_llm_avoided"])
+        self.assertFalse(any(event.stage in {
+            "portfolio_knowledge_retrieval", "query_embedding", "embedding_request",
+            "vector_search", "tool_execution", "llm_call",
+        } for event in snapshot.events))
+
+    def test_explicit_hospital_identity_resolves_document_scope_from_multiple_positions(self):
+        knowledge = ScopedFixtureKnowledge()
+        context = SupplyAgentSessionContext(
+            ("hospital-costa-sur-o2", "alimentos-sur-malaga-co2", "alimentos-sur-malaga-n2"), None,
+        )
+        response = ConversationalWorkspaceOrchestrator(
+            self.portfolio, self.attention, knowledge, CanonicalContinuityDecisionModel(), context,
+        ).run("¿Qué dice el contrato del Hospital Costa Sur sobre la entrega?")
+        self.assertEqual(response.status, SupplyAgentStatus.COMPLETED)
+        self.assertEqual(response.selected_item_ids, ("hospital-costa-sur-o2",))
+        self.assertEqual(len(knowledge.calls), 1)
+        self.assertEqual(knowledge.calls[0][0]["gas_product_id"], "medical-oxygen")
+
+    def test_explicit_global_documentary_scope_is_not_mistaken_for_item_ambiguity(self):
+        class GlobalPolicyModel:
+            def decide(self, question, state, tools, timeout_seconds=None):
+                source = next(item for item in state["available_citations"] if item["global_scope"])
+                return AgentDecision("finish", "finish", answer=f"The global supply policy applies. {source['citation']}")
+
+        knowledge = ScopedFixtureKnowledge()
+        context = SupplyAgentSessionContext(
+            ("hospital-costa-sur-o2", "alimentos-sur-malaga-co2", "alimentos-sur-malaga-n2"), None,
+        )
+        recorder = PerformanceRecorder("global-documentary", "fixture", "fixture-model", "conversational_workspace")
+        response = ConversationalWorkspaceOrchestrator(
+            self.portfolio, self.attention, knowledge, GlobalPolicyModel(), context, recorder=recorder,
+        ).run("¿Qué establece la política global de suministro?")
+        self.assertFalse(response.clarification_required)
+        event = next(event for event in recorder.snapshot().events
+                     if event.stage == "documentary_scope_resolution")
+        self.assertEqual(event.metadata["decision"], "global")
+        self.assertEqual(response.selected_item_ids, context.selected_item_ids)
+        self.assertEqual(len(knowledge.calls), 3)
+
+    def test_combined_documentary_and_operational_request_keeps_existing_scoped_path(self):
+        context = SupplyAgentSessionContext(
+            ("hospital-costa-sur-o2", "alimentos-sur-malaga-co2", "alimentos-sur-malaga-n2"),
+            "hospital-costa-sur-o2",
+        )
+        knowledge = ScopedFixtureKnowledge()
+        recorder = PerformanceRecorder("combined-documentary", "fixture", "fixture-model", "conversational_workspace")
+        response = ConversationalWorkspaceOrchestrator(
+            self.portfolio, self.attention, knowledge, WorkspaceDecisionModel(),
+            context, recorder=recorder,
+        ).run("¿Qué dice el contrato y cuál es el inventario antes de la entrega?")
+        self.assertEqual(response.route.intent, WorkspaceIntent.COMBINED)
+        self.assertNotEqual(response.status, SupplyAgentStatus.NEEDS_INPUT)
+        self.assertEqual(response.selected_item_ids, ("hospital-costa-sur-o2",))
+        self.assertEqual(len(knowledge.calls), 1)
+        scope = next(event for event in recorder.snapshot().events
+                     if event.stage == "documentary_scope_resolution")
+        self.assertEqual(scope.metadata["decision"], "resolved")
 
     def test_failed_direct_retrieval_does_not_create_document_scope(self):
         knowledge = ScopedFixtureKnowledge(fail=True)

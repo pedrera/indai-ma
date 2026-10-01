@@ -451,6 +451,47 @@ class SupplyAgent:
         )
         selected_matches = query_result.matches
         selected_ids = query_result.item_ids
+        documentary_required = _requires_documentary_evidence(question) or _is_documentary_followup(
+            question, self.request.session_context,
+        )
+        operational_context_required = _requires_operational_context(question)
+        explicit_global_scope = _requests_global_documentary_scope(question)
+        explicit_multi_scope = _requests_multiple_documentary_items(question)
+        documentary_only = (
+            documentary_required and not operational_context_required
+            and not _has_explicit_what_if(question)
+            and not is_factual_comparison_question(question)
+        )
+        scope_source, scope_reason = _documentary_scope_source(
+            question, self.request, query_result, focused_item_id, used_context,
+            explicit_global_scope=explicit_global_scope,
+            explicit_multi_scope=explicit_multi_scope,
+        )
+        clarification_matches = selected_matches
+        if (documentary_only and clarification and not clarification_matches
+                and not self.request.portfolio_item_id
+                and not any((query_result.query.customer, query_result.query.site,
+                             query_result.query.application, query_result.query.gas_product,
+                             query_result.query.installation))):
+            clarification_matches = SupplyPortfolioQueryService().select(
+                self.portfolio, self.attention, PortfolioQuery(),
+            ).matches
+        documentary_scope_needs_input = False
+        if documentary_only and len(selected_ids) > 1 and not focused_item_id:
+            if explicit_global_scope:
+                scope_source, scope_reason = "explicit_global_scope", "global_documentary_scope_requested"
+            elif explicit_multi_scope:
+                scope_source, scope_reason = "explicit_multi_item_scope", "multiple_items_requested_explicitly"
+            else:
+                documentary_scope_needs_input = True
+                scope_source, scope_reason = "unresolved_candidates", "multiple_item_scopes_remain_plausible"
+                clarification = _documentary_scope_clarification(question, clarification_matches)
+        elif documentary_required and clarification:
+            documentary_scope_needs_input = True
+            scope_source, scope_reason = "existing_reference_resolution", "scope_resolution_requested_clarification"
+            if documentary_only and clarification_matches:
+                clarification = _documentary_scope_clarification(question, clarification_matches)
+
         selected_by_id = {match.item_id: match for match in selected_matches}
         self.position = selected_by_id[focused_item_id].item if focused_item_id in selected_by_id else None
         self.attention_item = selected_by_id[focused_item_id].attention if focused_item_id in selected_by_id else None
@@ -473,6 +514,19 @@ class SupplyAgent:
                 selected_item_ids=selected_ids, focused_item_id=focused_item_id,
                 resolution="structured_context",
             )
+        if documentary_required and self.recorder:
+            scope_event = self.recorder.start_stage("documentary_scope_resolution")
+            self.recorder.complete_stage(
+                scope_event,
+                decision=("needs_input" if documentary_scope_needs_input else
+                          "global" if explicit_global_scope else "resolved"),
+                candidate_item_ids=tuple(match.item_id for match in clarification_matches),
+                resolved_item_ids=() if documentary_scope_needs_input else selected_ids,
+                resolution_source=scope_source,
+                reason=scope_reason,
+                rag_avoided=documentary_scope_needs_input,
+                generation_llm_avoided=documentary_scope_needs_input,
+            )
         # Knowledge retrieval is a deterministic, intent-gated capability. It
         # is never exposed as an optional model choice for operational-only
         # questions (nor a second search after the required preflight lookup).
@@ -486,10 +540,6 @@ class SupplyAgent:
                  if tool["name"] not in excluded_tools]
         if len(selected_matches) != 1:
             tools = [tool for tool in tools if tool["name"] != "evaluate_supply_what_if"]
-        documentary_required = _requires_documentary_evidence(question) or _is_documentary_followup(
-            question, self.request.session_context,
-        )
-        operational_context_required = _requires_operational_context(question)
         deterministic_portfolio_selection = (
             not documentary_required
             and _has_portfolio_filter(query_result.query)
@@ -736,7 +786,7 @@ class SupplyAgent:
                 tools = []
 
             documentary_eligibility = None
-            if documentary_required:
+            if documentary_required and not clarification:
                 documentary_eligibility = _assess_deterministic_documentary_answer(
                     question, selected_matches, self.tools._knowledge_sources_by_item,
                 )
@@ -1045,6 +1095,12 @@ class SupplyAgent:
         if agent_event:
             self.recorder.complete_stage(agent_event, agent_status=status.value,
                                          tool_count=len(executions))
+        if documentary_required and self.recorder:
+            self.recorder.update_latest_stage(
+                "documentary_scope_resolution",
+                rag_avoided=not bool(self.tools._knowledge_status_by_item),
+                generation_llm_avoided=decision_count == 0,
+            )
         if not self.workspace_mode:
             self._mark_unused_knowledge_stages()
         return result
@@ -1080,6 +1136,17 @@ def _resolve_portfolio_scope(question, portfolio, attention, request):
         query = PortfolioQuery(**{**asdict(query), "item_id": "__unavailable_context__"})
     elif request.portfolio_item_id and not has_explicit_identity and not new_portfolio_query and not _has_portfolio_filter(query):
         query = PortfolioQuery(**{**asdict(query), "item_id": request.portfolio_item_id})
+    elif (not has_explicit_identity and context.selected_item_ids
+          and (_requires_documentary_evidence(question)
+               or _is_documentary_followup(question, context))
+          and not _requires_operational_context(question)
+          and not _has_explicit_what_if(question)
+          and (_requests_global_documentary_scope(question)
+               or _requests_multiple_documentary_items(question))):
+        available = {item.item_id for item in portfolio.items}
+        valid_context_ids = tuple(item_id for item_id in context.selected_item_ids if item_id in available)
+        context_used = True
+        query = PortfolioQuery(**{**asdict(query), "item_ids": valid_context_ids})
     elif not has_explicit_identity and not new_portfolio_query and context.selected_item_ids:
         available = {item.item_id for item in portfolio.items}
         valid_context_ids = tuple(item_id for item_id in context.selected_item_ids if item_id in available)
@@ -1186,6 +1253,81 @@ def _resolve_portfolio_scope(question, portfolio, attention, request):
     elif context.focused_item_id in ids and context_used:
         focused = context.focused_item_id
     return selected, focused, context_used, clarification
+
+
+def _requests_global_documentary_scope(question: str) -> bool:
+    """Recognize only explicit requests for genuinely global documentary material."""
+    return bool(re.search(
+        r"\b(?:company[- ]wide|corporate[- ]wide|global\s+(?:policy|standard|procedure|guideline)|"
+        r"(?:global|general)\s+(?:pol[ií]tica|normativa|pol[ií]tica\s+de\s+suministro)|"
+        r"pol[ií]tica\s+(?:general|global)|normativa\s+(?:general|global))\b",
+        question, re.IGNORECASE,
+    ))
+
+
+def _requests_multiple_documentary_items(question: str) -> bool:
+    """Recognize explicit set scope; grammatical number alone is not sufficient."""
+    return bool(
+        _is_current_set_reference(question)
+        or re.search(
+            r"\b(?:todas?\s+(?:las\s+)?posiciones|todos?\s+(?:los\s+)?(?:contratos|documentos)|"
+            r"all\s+(?:portfolio\s+)?positions?|both\s+(?:contracts|documents))\b",
+            question, re.IGNORECASE,
+        )
+    )
+
+
+def _documentary_scope_source(
+    question: str,
+    request: SupplyAgentRequest,
+    query_result: PortfolioQueryResult,
+    focused_item_id: str | None,
+    used_context: bool,
+    *,
+    explicit_global_scope: bool,
+    explicit_multi_scope: bool,
+) -> tuple[str, str]:
+    ids = query_result.item_ids
+    context = request.session_context
+    if explicit_global_scope:
+        return "explicit_global_scope", "global_documentary_scope_requested"
+    if request.portfolio_item_id and request.portfolio_item_id in ids:
+        return "explicit_item_selection", "request_item_id_resolved"
+    explicit = any((query_result.query.customer, query_result.query.site,
+                    query_result.query.application, query_result.query.gas_product,
+                    query_result.query.installation))
+    if explicit and len(ids) == 1:
+        return "explicit_identity_reference", "identity_filter_resolved_one_item"
+    if focused_item_id and focused_item_id in ids:
+        if used_context and context.focused_item_id == focused_item_id:
+            return "focused_conversation_item", "focused_item_resolved"
+        return "unique_resolved_item", "selection_resolved_one_item"
+    if explicit_multi_scope:
+        return "explicit_multi_item_scope", "multiple_items_requested_explicitly"
+    if used_context and len(context.selected_item_ids) == 1 and len(ids) == 1:
+        return "conversation_context", "single_context_item_resolved"
+    if len(ids) == 1:
+        return "unique_candidate", "one_matching_item"
+    return "unresolved_candidates", "scope_not_uniquely_resolved"
+
+
+def _documentary_scope_clarification(question: str, matches) -> str:
+    spanish = bool(re.search(r"\b(?:qu[eé]|contrato|posici[oó]n|hospital)\b", question, re.I))
+    choices = []
+    for match in matches:
+        item = match.item
+        site = getattr(item.request.site, "name", None) or item.result.site_id or "Site unavailable"
+        product = getattr(item.request.gas_product, "name", None) or item.result.gas_product_id or "Gas unavailable"
+        choices.append(f"{site} / {product} ({item.item_id})")
+    if spanish:
+        message = "¿De qué posición quieres consultar la documentación? Hay varias posibles."
+        if choices:
+            message += " Elige una: " + "; ".join(choices)
+        return message
+    message = "Which position's documents should I use? More than one position is possible."
+    if choices:
+        message += " Choose one: " + "; ".join(choices)
+    return message
 
 
 def _identity_filters_from_question(question, portfolio) -> dict[str, str]:

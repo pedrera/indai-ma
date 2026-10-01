@@ -31,6 +31,7 @@ from diagnostics import (
 STAGE_PRESENTATION = {
     "workspace_intent_routing": ("⌖", "Workspace Intent / Routing"),
     "workspace_reference_resolution": ("↪", "Workspace Reference Resolution"),
+    "documentary_scope_resolution": ("⌕", "Documentary Scope Resolution"),
     "deterministic_comparison": ("⇄", "Deterministic Factual Comparison"),
     "scenario_history_resolution": ("◷", "Scenario History Resolution"),
     "scenario_reference_resolution": ("↔", "Scenario Reference Resolution"),
@@ -556,6 +557,18 @@ def _render_supply_agent_timeline(snapshot: PerformanceSnapshot) -> list[str]:
                 f'<small>Resolution: {escape(str(event.metadata.get("resolution", "structured_context")))}</small>'
                 f'<small>Focused item: {escape(str(event.metadata.get("focused_item_id") or "none"))}</small>'
                 f'<small>Selected: {escape(str(event.metadata.get("selected_item_ids", ())))}</small>'
+                '</div></div>'
+            )
+        elif event.stage == "documentary_scope_resolution":
+            parts.append(
+                '<div class="pi-tools"><div class="pi-tool">'
+                f'<small>Decision: {escape(str(event.metadata.get("decision", "unknown")))}</small>'
+                f'<small>Candidates: {escape(str(event.metadata.get("candidate_item_ids", ())))}</small>'
+                f'<small>Resolved: {escape(str(event.metadata.get("resolved_item_ids", ())))}</small>'
+                f'<small>Resolution: {escape(str(event.metadata.get("resolution_source", "unknown")))}</small>'
+                f'<small>Reason: {escape(str(event.metadata.get("reason", "unknown")))}</small>'
+                f'<small>RAG avoided: {escape(str(event.metadata.get("rag_avoided", False)))}</small>'
+                f'<small>Generation LLM avoided: {escape(str(event.metadata.get("generation_llm_avoided", False)))}</small>'
                 '</div></div>'
             )
         elif event.stage in {"embedding_provider_pool_lookup", "embedding_request"}:

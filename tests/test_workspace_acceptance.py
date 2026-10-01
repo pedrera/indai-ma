@@ -24,6 +24,9 @@ from tests.test_industrial_gases_conversational_workspace import (
     ScopedFixtureKnowledge,
 )
 from industrial_gases.portfolio_ui import evaluate_demo_supply_portfolio
+from industrial_gases.conversational_workspace import ConversationalWorkspaceOrchestrator
+from industrial_gases.portfolio_query import SupplyAgentSessionContext
+from industrial_gases.supply_agent import SupplyAgentStatus
 from rag_models import RetrievedChunk
 
 
@@ -89,6 +92,60 @@ class _OfflineDocumentaryModel:
 
 
 class WorkspaceAcceptanceTests(unittest.TestCase):
+    def test_q8_ambiguous_three_position_scope_is_clarified_before_rag_acceptance_regression(self):
+        class NeverModel:
+            def decide(self, *args, **kwargs):
+                raise AssertionError("scope ambiguity must exit before generation")
+
+        portfolio, attention = evaluate_demo_supply_portfolio()
+        item_ids = (
+            "hospital-costa-sur-o2", "alimentos-sur-malaga-co2", "alimentos-sur-malaga-n2",
+        )
+        recorder = PerformanceRecorder(
+            "acceptance-ambiguous-document-scope", "fixture", "fixture-model",
+            "conversational_workspace",
+        )
+        knowledge_factory_calls = []
+
+        def knowledge_factory():
+            knowledge_factory_calls.append(True)
+            return ScopedFixtureKnowledge()
+
+        response = ConversationalWorkspaceOrchestrator(
+            portfolio, attention, knowledge_factory, NeverModel(),
+            SupplyAgentSessionContext(item_ids, None), recorder=recorder,
+        ).run("¿Qué dice el contrato sobre la entrega?")
+
+        self.assertEqual(response.status, SupplyAgentStatus.NEEDS_INPUT)
+        self.assertTrue(response.clarification_required)
+        self.assertEqual(knowledge_factory_calls, [])
+        self.assertTrue(all(label in response.explanation for label in (
+            "Hospital Costa Sur", "O2", "CO2", "N2",
+        )))
+        stages = tuple(event.stage for event in recorder.snapshot().events)
+        self.assertIn("documentary_scope_resolution", stages)
+        self.assertNotIn("portfolio_knowledge_retrieval", stages)
+        self.assertNotIn("query_embedding", stages)
+        self.assertNotIn("embedding_request", stages)
+        self.assertNotIn("tool_execution", stages)
+        self.assertNotIn("llm_call", stages)
+        snapshot = recorder.snapshot()
+        scope_event = next(event for event in snapshot.events
+                           if event.stage == "documentary_scope_resolution")
+        self.assertNotIn("question", scope_event.metadata)
+        from clipboard_text import build_diagnostics_clipboard_text
+        from pipeline_inspector import _render_supply_agent_timeline
+        copied = build_diagnostics_clipboard_text(snapshot)
+        timeline = "".join(_render_supply_agent_timeline(snapshot))
+        for output, stage_name in (
+            (copied, "documentary_scope_resolution"),
+            (timeline, "Documentary Scope Resolution"),
+        ):
+            self.assertIn(stage_name, output)
+            self.assertIn("unresolved_candidates", output)
+            self.assertIn("hospital-costa-sur-o2", output)
+            self.assertIn("needs_input", output)
+
     def test_safe_acceptance_report_includes_prompt_composition_counts(self):
         recorder = PerformanceRecorder("q8-prompt", "lmstudio", "qwen", "conversational_workspace")
         event = recorder.start_stage("prompt_build")

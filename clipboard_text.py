@@ -668,6 +668,10 @@ _WORKSPACE_EVENT_FIELDS = {
         "focused_item_id", "previous_intent", "resolved_intent", "document_scope_item_ids",
         "scenario_target_id",
     ),
+    "documentary_scope_resolution": (
+        "decision", "candidate_item_ids", "resolved_item_ids", "resolution_source",
+        "reason", "rag_avoided", "generation_llm_avoided",
+    ),
     "deterministic_comparison": ("comparison_type", "comparable", "selected_item_ids"),
     "scenario_history_resolution": (
         "focused_item_id", "scenario_ids", "scenario_labels",

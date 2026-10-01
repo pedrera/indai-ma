@@ -113,7 +113,8 @@ PROCUREMENT_DETERMINISTIC_PIPELINE_STAGES = (
     "deterministic_final",
 )
 SUPPLY_AGENT_PIPELINE_STAGES = (
-    "workspace_intent_routing", "workspace_reference_resolution", "deterministic_comparison",
+    "workspace_intent_routing", "workspace_reference_resolution", "documentary_scope_resolution",
+    "deterministic_comparison",
     "scenario_history_resolution", "scenario_reference_resolution", "deterministic_scenario_comparison",
     "scenario_clarification", "workspace_structured_evidence", "workspace_response_projection",
     "portfolio_query", "session_reference_resolution", "embedding_provider_pool_lookup",
