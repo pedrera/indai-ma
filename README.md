@@ -10,8 +10,9 @@ for trading, procurement, CRM, contract-management or enterprise systems.
 
 Product principle: **Simple for the business user, traceable for the technical user.**
 
-**Current state: v1.15.0 release candidate.** v1.14.0 is the published baseline;
-v1.15.0 adds deterministic comparisons across explicitly evaluated scenarios.
+**Current state: v1.16.0 — Efficient & Deterministic Intelligence.** v1.15.0 is
+the stable baseline; v1.16.0 reduces unnecessary generation while preserving
+grounding, validation and deterministic behavior.
 
 ## Energy / Commercial capabilities
 
@@ -61,7 +62,22 @@ The current screens and capabilities are:
   citation checks remain identity-scoped, with only explicitly applicable global
   Industrial Gases sources shared. What-if remains explicit and single-target.
   This does not add portfolio totals, rankings, recommendations or health scores.
-- **Conversational Workspace (v1.15.0 release candidate):** the default
+- **Conversational Workspace (v1.16.0 — Efficient & Deterministic Intelligence):**
+  documentary final-generation prompts project only the state needed for the
+  document scope, evidence, provenance and citation contract. When a conservative
+  eligibility check proves that retrieved documentary evidence directly supports
+  a response, the Workspace can answer deterministically with the exact source
+  citation and zero generative-LLM calls. Strict citation validation remains in
+  place; citations are not injected after generation. Ambiguous item-specific
+  documentary scope can be clarified before RAG, embeddings or generation run.
+  “No-LLM” here means no generative-LLM call: embedding inference may still run
+  for retrieval unless scope resolution exits before retrieval. Embedding
+  telemetry, session-scoped warm provider/client reuse and safe lifecycle
+  diagnostics support inspection. Query-embedding and Workspace-generation
+  benchmark tools characterize local LM Studio use, including Qwen3-8B, without
+  making experimental runtime tuning values production defaults. Generation
+  remains the fallback when a request needs synthesis or operational context.
+- **Conversational Workspace (v1.15.0 capabilities retained):** the default
   conversation-first entry point routes natural-language questions over the
   existing portfolio query, per-position operational evidence, identity-scoped
   Industrial Knowledge and explicit single-position what-if capabilities. Bounded
@@ -133,7 +149,8 @@ remain usable without generation; the workspace can answer deterministic portfol
 list requests without a model call. A safety-stock breach means projected inventory
 is below the configured safety stock and does not itself mean stockout; only the
 structured projection's `stockout_before_delivery` supports that statement.
-v1.14.0 is published. v1.15.0 is a release candidate and is not yet published.
+v1.15.0 is the stable baseline. See [v1.16.0 release notes](RELEASE_NOTES_v1.16.0.md)
+for the efficiency and deterministic-response changes.
 
 See [ARCHITECTURE.md](docs/ARCHITECTURE.md), [DECISIONS.md](docs/DECISIONS.md), [PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md), and [V1_MVP_SPEC.md](docs/V1_MVP_SPEC.md).
 

@@ -2,10 +2,10 @@
 
 ## Current status
 
-The latest published baseline is **v1.14.0**. The current working tree contains
-the **v1.15.0 Conversational Multi-Scenario Decision Support release candidate**.
-This roadmap distinguishes shipped capabilities from future candidates; candidate
-items are not commitments or claims about the current implementation.
+The stable baseline is **v1.15.0**. **v1.16.0 — Efficient & Deterministic
+Intelligence** closes the current release scope. This roadmap distinguishes
+implemented capabilities from future candidates; candidate items are not
+commitments or claims about the current implementation.
 
 ## Completed
 
@@ -56,27 +56,32 @@ items are not commitments or claims about the current implementation.
   resolution; unit-safe factual comparisons over existing projections; scoped
   documentary follow-ups; original-baseline scenario follow-ups; and progressive
   conversational presentation. Published release.
-- **v1.15.0 release candidate — Conversational Multi-Scenario Decision Support:**
+- **v1.15.0 — Conversational Multi-Scenario Decision Support:**
   bounded item-scoped scenario history, original-baseline alternatives,
   deterministic factual comparisons, documentary continuity, Workspace and Copy
   presentation, and safe Pipeline Inspector diagnostics. The default Workspace
   has a persistent right-side Inspector with selectable history bounded to the
   latest 50 operations in the conversation; failures remain inspectable. No
   recommendation, ranking, optimization or automatic scenario search.
+- **v1.16.0 — Efficient & Deterministic Intelligence:** documentary-only prompt
+  projection; conservative deterministic documentary answers when direct evidence
+  eligibility is proven; early documentary scope resolution that can avoid RAG,
+  embedding and generation work when clarification is needed; unchanged strict
+  citation validation with no post-generation citation injection; embedding
+  telemetry, safe lifecycle diagnostics and warm provider/client reuse; and
+  query-embedding plus Workspace-generation benchmark tooling. Local Qwen3-8B /
+  LM Studio performance was characterized. “No-LLM” denotes zero generative-LLM
+  calls; embedding inference may still occur when RAG retrieval is needed.
+  Generation remains the fallback when synthesis or operational context is
+  required. Experimental runtime tuning values are not production defaults.
 
 ## Future direction
 
-Candidate capabilities are not commitments or claims about the current
-implementation unless described in the completed releases above:
+The following forward roadmap is a sequence of candidates for design and
+validation, not a commitment or a claim about current capabilities:
 
-- **Future industrial decision support:** candidate direction only; no additional
-  agents, coordination, cross-position aggregation or decision automation is
-  implied by the current release candidate.
-- **Future decision support:** recommendation, ranking and optimization remain
-  candidates for separate design and validation; they are not implemented in
-  v1.15.0.
-- **v2.0.0 — Industrial Decision Intelligence:** longer-term direction, not a
-  commitment or an existing capability.
-
-These are future candidates; details and boundaries require validation before
-implementation.
+- **v1.17 — Scenario & Alternative Intelligence.**
+- **v1.18 — Objectives & Constraints.**
+- **v1.19 — Decision Engine.** Julia 1 may be evaluated as one possible
+  technology during this work; it is not a committed product dependency.
+- **v2.0 — Industrial Decision Intelligence.**
