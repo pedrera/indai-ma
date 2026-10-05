@@ -4,7 +4,22 @@ This maintained changelog begins with v1.9.0. Earlier release history is recorde
 in annotated Git tags and selected historical release notes; the repository does
 not reconstruct every development milestone as a release.
 
-## v1.15.0 — Conversational Multi-Scenario Decision Support (release candidate)
+## v1.17.0 — Scenario & Alternative Intelligence
+
+- Retain one real baseline and an ordered set of explicitly stated alternatives
+  for one resolved Industrial Gases position. Delivery horizon, planned delivery
+  quantity and consumption rate are supported as same-dimension sets.
+- Evaluate the baseline once and every alternative independently through the
+  existing Supply Assurance service; compare only factual results already
+  calculated by that service.
+- Retain the scenario set in the Conversational Workspace for factual follow-ups
+  such as “Compare A and B”; show Baseline/A/B/... in the response and Copy.
+- Keep evaluation and comparison deterministic: no generation LLM, embedding or
+  RAG calls are made by scenario-set evaluation/comparison.
+- Do not add winner selection, ranking, recommendation, scoring, objectives,
+  constraints, optimization or mixed-dimension scenario sets.
+
+## v1.15.0 — Conversational Multi-Scenario Decision Support
 
 - Retain immutable, item-scoped baseline and explicitly evaluated delivery-time
   alternatives. Every alternative continues to use the original baseline.
@@ -20,7 +35,8 @@ not reconstruct every development milestone as a release.
 - Comparison is factual; recommendation, ranking and optimization remain outside
   this release.
 
-v1.14.0 is the published baseline. v1.15.0 is not yet released.
+v1.17.0 is the current release. See [v1.16.0 release notes](RELEASE_NOTES_v1.16.0.md)
+and [v1.17.0 release notes](RELEASE_NOTES_v1.17.0.md) for release details.
 
 ## v1.14.0 — Conversational Intelligence
 

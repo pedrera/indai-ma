@@ -10,9 +10,10 @@ for trading, procurement, CRM, contract-management or enterprise systems.
 
 Product principle: **Simple for the business user, traceable for the technical user.**
 
-**Current state: v1.16.0 — Efficient & Deterministic Intelligence.** v1.15.0 is
-the stable baseline; v1.16.0 reduces unnecessary generation while preserving
-grounding, validation and deterministic behavior.
+**Current release: v1.17.0 — Scenario & Alternative Intelligence.** It extends
+deterministic Industrial Gases Supply Assurance with ordered, explicit
+multi-alternative evaluation and factual comparison for one focused position.
+It does not select a preferred alternative.
 
 ## Energy / Commercial capabilities
 
@@ -77,6 +78,18 @@ The current screens and capabilities are:
   benchmark tools characterize local LM Studio use, including Qwen3-8B, without
   making experimental runtime tuning values production defaults. Generation
   remains the fallback when a request needs synthesis or operational context.
+- **Scenario & Alternative Intelligence (v1.17.0):** for one resolved
+  Industrial Gases position, retain the current baseline and an ordered set of
+  explicit alternatives for delivery horizon, planned delivery quantity, or
+  consumption rate. Each branch is evaluated independently by the existing
+  `SupplyAssuranceService`; `ScenarioSetComparison` presents only factual
+  consequences from those results. The Workspace retains the set for factual
+  follow-ups such as “Compare A and B” and presents Baseline/A/B/... in the
+  response and Copy output. Deterministic scenario-set evaluation and factual
+  comparison make zero generation-LLM, embedding, and RAG calls; unrelated
+  Workspace paths can have different model or retrieval behavior. No winner,
+  ranking, recommendation, score, objective or optimization semantics are
+  provided.
 - **Conversational Workspace (v1.15.0 capabilities retained):** the default
   conversation-first entry point routes natural-language questions over the
   existing portfolio query, per-position operational evidence, identity-scoped
@@ -149,8 +162,9 @@ remain usable without generation; the workspace can answer deterministic portfol
 list requests without a model call. A safety-stock breach means projected inventory
 is below the configured safety stock and does not itself mean stockout; only the
 structured projection's `stockout_before_delivery` supports that statement.
-v1.15.0 is the stable baseline. See [v1.16.0 release notes](RELEASE_NOTES_v1.16.0.md)
-for the efficiency and deterministic-response changes.
+v1.17.0 is the current release. See [v1.17.0 release notes](RELEASE_NOTES_v1.17.0.md)
+for scenario-set behavior and acceptance evidence, and [v1.16.0 release notes](RELEASE_NOTES_v1.16.0.md)
+for efficiency and deterministic documentary responses.
 
 See [ARCHITECTURE.md](docs/ARCHITECTURE.md), [DECISIONS.md](docs/DECISIONS.md), [PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md), and [V1_MVP_SPEC.md](docs/V1_MVP_SPEC.md).
 

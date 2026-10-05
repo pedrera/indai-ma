@@ -2,10 +2,9 @@
 
 ## Current status
 
-The stable baseline is **v1.15.0**. **v1.16.0 — Efficient & Deterministic
-Intelligence** closes the current release scope. This roadmap distinguishes
-implemented capabilities from future candidates; candidate items are not
-commitments or claims about the current implementation.
+The current release is **v1.17.0 — Scenario & Alternative Intelligence**. This
+roadmap distinguishes implemented capabilities from future candidates;
+candidate items are not commitments or claims about the current implementation.
 
 ## Completed
 
@@ -62,7 +61,8 @@ commitments or claims about the current implementation.
   presentation, and safe Pipeline Inspector diagnostics. The default Workspace
   has a persistent right-side Inspector with selectable history bounded to the
   latest 50 operations in the conversation; failures remain inspectable. No
-  recommendation, ranking, optimization or automatic scenario search.
+  recommendation, ranking, optimization or automatic scenario search. Grounded
+  Intelligence asks: “¿En qué evidencia se basa?”
 - **v1.16.0 — Efficient & Deterministic Intelligence:** documentary-only prompt
   projection; conservative deterministic documentary answers when direct evidence
   eligibility is proven; early documentary scope resolution that can avoid RAG,
@@ -74,14 +74,23 @@ commitments or claims about the current implementation.
   calls; embedding inference may still occur when RAG retrieval is needed.
   Generation remains the fallback when synthesis or operational context is
   required. Experimental runtime tuning values are not production defaults.
+  Its question is: “¿Necesito realmente un LLM?”
+- **v1.17.0 — Scenario & Alternative Intelligence:** evaluate an ordered set of
+  explicit same-dimension alternatives against one current baseline for one
+  resolved Industrial Gases position. The Workspace retains the results for
+  factual A/B follow-ups and presentation. Comparison does not select a winner.
+  Its question is: “¿Qué ocurre con A, B o C?”
 
 ## Future direction
 
 The following forward roadmap is a sequence of candidates for design and
 validation, not a commitment or a claim about current capabilities:
 
-- **v1.17 — Scenario & Alternative Intelligence.**
-- **v1.18 — Objectives & Constraints.**
-- **v1.19 — Decision Engine.** Julia 1 may be evaluated as one possible
-  technology during this work; it is not a committed product dependency.
-- **v2.0 — Industrial Decision Intelligence.**
+- **v1.18 — Objectives & Constraints:** “¿Qué alternativa satisface nuestros
+  objetivos?”
+- **v1.19 — Decision Engine:** “¿Podemos decidir sin escalar al LLM?” Julia 1
+  may be evaluated as one possible technology during this work; it is not a
+  committed product dependency.
+- **v2.0 — Industrial Decision Intelligence:** “¿Qué deberíamos hacer y por
+  qué?”
+- **v2.1 — Decision Lifecycle:** “¿Funcionó nuestra decisión?”
