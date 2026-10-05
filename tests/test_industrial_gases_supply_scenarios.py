@@ -17,9 +17,11 @@ from industrial_gases import (
     Site,
     SupplyAssuranceAlternative,
     SupplyAssuranceRequest,
+    SupplyAssuranceScenarioSet,
     SupplyAssuranceService,
     SupplyInstallation,
     evaluate_supply_assurance_alternative,
+    evaluate_supply_assurance_scenario_set,
 )
 
 
@@ -242,6 +244,169 @@ class IndustrialGasesSupplyScenarioTests(unittest.TestCase):
         self.assertTrue(invalid_baseline_result.baseline_result.validation_errors)
         self.assertIsNone(invalid_baseline_result.baseline_result.projection)
         self.assertEqual(invalid_baseline_result.alternative_result.status, "COMPLETED")
+
+    def test_ordered_scenario_set_assesses_baseline_once_and_preserves_known_results(self):
+        baseline = self.baseline_request
+        alternatives = (
+            alternative(
+                baseline, "delivery-plus-3", "Delivery at +3 days",
+                delivery_plan=replace(
+                    baseline.delivery_plan,
+                    planned_delivery_at=REFERENCE_TIME + timedelta(days=3),
+                ),
+            ),
+            alternative(
+                baseline, "delivery-plus-2", "Delivery at +2 days",
+                delivery_plan=replace(
+                    baseline.delivery_plan,
+                    planned_delivery_at=REFERENCE_TIME + timedelta(days=2),
+                ),
+            ),
+        )
+        scenario_set = SupplyAssuranceScenarioSet(baseline, alternatives)
+        service = Mock(wraps=self.service)
+
+        result = evaluate_supply_assurance_scenario_set(scenario_set, service)
+
+        self.assertEqual(service.assess.call_count, 3)
+        self.assertIs(service.assess.call_args_list[0].args[0], baseline)
+        self.assertEqual(
+            tuple(call.args[0] for call in service.assess.call_args_list[1:]),
+            tuple(item.alternative_request for item in alternatives),
+        )
+        self.assertEqual(tuple(item.alternative.id for item in result.scenario_results),
+                         ("delivery-plus-3", "delivery-plus-2"))
+        self.assertIs(result.scenario_results[0].baseline_result, result.baseline_result)
+        self.assertIs(result.scenario_results[1].baseline_result, result.baseline_result)
+        self.assertEqual(result.baseline_result.projection.inventory_immediately_before_delivery,
+                         Quantity(400, "kg"))
+        self.assertEqual(
+            tuple(item.alternative_result.projection.inventory_immediately_before_delivery
+                  for item in result.scenario_results),
+            (Quantity(1100, "kg"), Quantity(1800, "kg")),
+        )
+
+    def test_scenario_set_rejects_each_cross_identity_mismatch_before_evaluation(self):
+        request = self.baseline_request
+        identity_mismatches = (
+            replace(request, customer_id="another-customer"),
+            replace(
+                request,
+                site=replace(request.site, site_id="another-site"),
+            ),
+            replace(
+                request,
+                application=replace(request.application, application_id="another-application"),
+            ),
+            replace(
+                request,
+                gas_product=replace(request.gas_product, gas_product_id="another-product"),
+            ),
+            replace(
+                request,
+                installation=replace(request.installation, installation_id="another-installation"),
+            ),
+        )
+        for mismatched_request in identity_mismatches:
+            with self.subTest(identity=mismatched_request):
+                with self.assertRaisesRegex(ValueError, "different"):
+                    SupplyAssuranceScenarioSet(
+                        request,
+                        (SupplyAssuranceAlternative("mismatch", "Mismatched", mismatched_request),),
+                    )
+
+    def test_missing_and_invalid_alternatives_are_isolated_between_valid_alternatives(self):
+        baseline = self.baseline_request
+        earlier = alternative(
+            baseline, "delivery-plus-3", "Delivery at +3 days",
+            delivery_plan=replace(
+                baseline.delivery_plan,
+                planned_delivery_at=REFERENCE_TIME + timedelta(days=3),
+            ),
+        )
+        missing = SupplyAssuranceAlternative(
+            "missing-delivery", "Delivery not supplied", replace(baseline, delivery_plan=None),
+        )
+        invalid = alternative(
+            baseline, "incompatible-rate-unit", "Incompatible rate unit",
+            consumption_forecast=replace(
+                baseline.consumption_forecast,
+                rate=ConsumptionRate(700, "Nm3", "day"),
+            ),
+        )
+        later = alternative(
+            baseline, "delivery-plus-2", "Delivery at +2 days",
+            delivery_plan=replace(
+                baseline.delivery_plan,
+                planned_delivery_at=REFERENCE_TIME + timedelta(days=2),
+            ),
+        )
+
+        result = evaluate_supply_assurance_scenario_set(
+            SupplyAssuranceScenarioSet(baseline, (earlier, missing, invalid, later)),
+            self.service,
+        )
+
+        alternatives = tuple(item.alternative_result for item in result.scenario_results)
+        self.assertEqual(tuple(item.status for item in alternatives),
+                         ("COMPLETED", "MISSING_INPUTS", "INVALID", "COMPLETED"))
+        self.assertEqual(alternatives[1].missing_inputs, ("delivery_plan",))
+        self.assertTrue(alternatives[2].validation_errors)
+        self.assertEqual(alternatives[0].projection.inventory_immediately_before_delivery,
+                         Quantity(1100, "kg"))
+        self.assertIsNone(alternatives[1].projection)
+        self.assertIsNone(alternatives[2].projection)
+        self.assertEqual(alternatives[3].projection.inventory_immediately_before_delivery,
+                         Quantity(1800, "kg"))
+
+    def test_scenario_set_execution_is_immutable_and_repeatable(self):
+        baseline = self.baseline_request
+        baseline_before = baseline
+        first = alternative(
+            baseline, "delivery-plus-3", "Delivery at +3 days",
+            delivery_plan=replace(
+                baseline.delivery_plan,
+                planned_delivery_at=REFERENCE_TIME + timedelta(days=3),
+            ),
+        )
+        second = alternative(
+            baseline, "delivery-plus-2", "Delivery at +2 days",
+            delivery_plan=replace(
+                baseline.delivery_plan,
+                planned_delivery_at=REFERENCE_TIME + timedelta(days=2),
+            ),
+        )
+        first_request, second_request = first.alternative_request, second.alternative_request
+        scenario_set = SupplyAssuranceScenarioSet(baseline, [first, second])
+
+        result_a = evaluate_supply_assurance_scenario_set(scenario_set, self.service)
+        result_b = evaluate_supply_assurance_scenario_set(scenario_set, self.service)
+
+        self.assertIsInstance(scenario_set.alternatives, tuple)
+        self.assertEqual(baseline, baseline_before)
+        self.assertEqual((first.alternative_request, second.alternative_request),
+                         (first_request, second_request))
+        self.assertEqual(result_a, result_b)
+        self.assertEqual(result_a.baseline_result, result_b.baseline_result)
+        self.assertEqual(
+            tuple(item.alternative_result for item in result_a.scenario_results),
+            tuple(item.alternative_result for item in result_b.scenario_results),
+        )
+
+    def test_scenario_set_keeps_existing_single_alternative_contract(self):
+        alt = alternative(
+            self.baseline_request, "delivery-plus-3", "Delivery at +3 days",
+            delivery_plan=replace(
+                self.baseline_request.delivery_plan,
+                planned_delivery_at=REFERENCE_TIME + timedelta(days=3),
+            ),
+        )
+        single = self.evaluate(alt)
+        grouped = evaluate_supply_assurance_scenario_set(
+            SupplyAssuranceScenarioSet(self.baseline_request, (alt,)), self.service,
+        )
+
+        self.assertEqual(single, grouped.scenario_results[0])
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ from typing import Any
 
 from .portfolio_query import PortfolioQueryResult, WorkspaceScenario
 from .portfolio_ui import _format_number
+from .supply_scenarios import SupplyAssuranceScenarioSetResult
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,18 @@ class ScenarioMetricComparison:
     values: tuple[ScenarioFactValue, ...]
     comparable: bool
     reason: str | None = None
+    comparable_scenario_groups: tuple[tuple[str, ...], ...] = ()
+
+
+@dataclass(frozen=True)
+class ScenarioPositionIdentity:
+    """Structured identity shared by all branches in a Supply Assurance comparison."""
+
+    customer_id: str | None
+    site_id: str | None
+    application_id: str | None
+    gas_product_id: str | None
+    installation_id: str | None
 
 
 @dataclass(frozen=True)
@@ -64,6 +77,7 @@ class ScenarioSetComparison:
 
     metrics: tuple[ScenarioMetricComparison, ...]
     requested_field: str | None = None
+    position_identity: ScenarioPositionIdentity | None = None
 
 
 _COMPARISON_INTENT = re.compile(
@@ -258,21 +272,92 @@ def compare_scenarios(
     spanish: bool = False,
 ) -> ScenarioSetComparison:
     """Read existing projections only; never derives or converts supply values."""
+    entries = tuple(
+        (scenario.scenario_id, scenario.label, scenario.result)
+        for scenario in scenarios
+    )
+    return _compare_scenario_entries(entries, fields=fields, spanish=spanish)
+
+
+def compare_supply_assurance_scenario_set(
+    result: SupplyAssuranceScenarioSetResult,
+    *,
+    fields: tuple[str, ...] | None = None,
+    spanish: bool = False,
+) -> ScenarioSetComparison:
+    """Adapt already-evaluated Supply Assurance branches to factual comparison."""
+    scenarios = tuple(result.scenario_results)
+    if not scenarios:
+        raise ValueError("a Supply Assurance scenario set result must contain alternatives")
+    if any(scenario.baseline_result is not result.baseline_result for scenario in scenarios):
+        raise ValueError("scenario branches must retain the scenario-set baseline result")
+
+    baseline = result.baseline_result
+    identity = ScenarioPositionIdentity(
+        baseline.customer_id,
+        baseline.site_id,
+        baseline.application_id,
+        baseline.gas_product_id,
+        baseline.installation_id,
+    )
+    entries = [("baseline", "Base" if spanish else "Baseline", baseline)]
+    seen_ids = {"baseline"}
+    for scenario in scenarios:
+        if not scenario.alternative.id or scenario.alternative.id in seen_ids:
+            raise ValueError("scenario IDs must be non-empty and unique, including baseline")
+        seen_ids.add(scenario.alternative.id)
+        alternative_result = scenario.alternative_result
+        alternative_identity = ScenarioPositionIdentity(
+            alternative_result.customer_id,
+            alternative_result.site_id,
+            alternative_result.application_id,
+            alternative_result.gas_product_id,
+            alternative_result.installation_id,
+        )
+        if alternative_identity != identity:
+            raise ValueError(
+                f"alternative {scenario.alternative.id!r} belongs to a different portfolio position"
+            )
+        entries.append((
+            scenario.alternative.id,
+            scenario.alternative.label,
+            alternative_result,
+        ))
+
+    comparison = _compare_scenario_entries(entries, fields=fields, spanish=spanish)
+    return ScenarioSetComparison(
+        comparison.metrics,
+        comparison.requested_field,
+        position_identity=identity,
+    )
+
+
+def _compare_scenario_entries(
+    entries: tuple[tuple[str, str, Any], ...] | list[tuple[str, str, Any]],
+    *,
+    fields: tuple[str, ...] | None,
+    spanish: bool,
+) -> ScenarioSetComparison:
     selected_fields = fields or _SCENARIO_FIELDS
     if any(field not in _SCENARIO_FIELDS for field in selected_fields):
         raise ValueError("unsupported scenario comparison field")
     metrics = []
     for field in selected_fields:
         values = []
-        for scenario in scenarios:
-            projection = scenario.result.projection
+        for scenario_id, label, result in entries:
+            projection = result.projection
             raw = getattr(projection, field) if projection is not None else None
             unit = raw.unit if hasattr(raw, "unit") else None
             value = raw.value if hasattr(raw, "value") else raw
             values.append(ScenarioFactValue(
-                scenario.scenario_id, scenario.label, value, unit,
-                None if projection is not None else f"evaluation_{scenario.result.status.casefold()}",
+                scenario_id, label, value, unit,
+                None if projection is not None else f"evaluation_{result.status.casefold()}",
             ))
+        ids_by_unit: dict[str | None, list[str]] = {}
+        for value in values:
+            if value.value is not None:
+                ids_by_unit.setdefault(value.unit, []).append(value.scenario_id)
+        groups = tuple(tuple(ids) for ids in ids_by_unit.values() if len(ids) >= 2)
         units = {value.unit for value in values if value.value is not None}
         missing = any(value.value is None for value in values)
         comparable = not missing and len(units) <= 1
@@ -280,7 +365,8 @@ def compare_scenarios(
             "incompatible_operational_units" if len(units) > 1 else None
         )
         metrics.append(ScenarioMetricComparison(
-            field, _SCENARIO_FIELD_LABELS[field][1 if spanish else 0], tuple(values), comparable, reason,
+            field, _SCENARIO_FIELD_LABELS[field][1 if spanish else 0], tuple(values),
+            comparable, reason, groups,
         ))
     return ScenarioSetComparison(tuple(metrics), fields[0] if fields and len(fields) == 1 else None)
 

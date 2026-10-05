@@ -1,5 +1,7 @@
 import unittest
 from dataclasses import replace
+from datetime import timedelta
+from unittest.mock import Mock
 
 from industrial_gases.factual_comparison import (
     comparison_answer,
@@ -7,7 +9,15 @@ from industrial_gases.factual_comparison import (
     comparison_field_for_question,
     is_factual_comparison_question,
     compare_scenarios,
+    compare_supply_assurance_scenario_set,
     scenario_comparison_answer,
+)
+from industrial_gases import (
+    Quantity,
+    SupplyAssuranceAlternative,
+    SupplyAssuranceScenarioSet,
+    SupplyAssuranceService,
+    evaluate_supply_assurance_scenario_set,
 )
 from industrial_gases.operational_attention import OperationalAttentionService
 from industrial_gases.portfolio import SupplyPortfolioResult
@@ -182,6 +192,140 @@ class FactualComparisonTests(unittest.TestCase):
         )
         self.assertFalse(incompatible.metrics[0].comparable)
         self.assertEqual(incompatible.metrics[0].reason, "incompatible_operational_units")
+
+    def _hospital_scenario_set(self):
+        item = next(item for item in self.portfolio.items
+                    if item.item_id == "hospital-costa-sur-o2")
+        baseline = item.request
+        delivery_at = baseline.delivery_plan.planned_delivery_at
+        alternatives = (
+            SupplyAssuranceAlternative(
+                "delivery-plus-3", "Entrega en +3 días",
+                replace(baseline, delivery_plan=replace(
+                    baseline.delivery_plan, planned_delivery_at=delivery_at - timedelta(days=1),
+                )),
+            ),
+            SupplyAssuranceAlternative(
+                "delivery-plus-2", "Entrega en +2 días",
+                replace(baseline, delivery_plan=replace(
+                    baseline.delivery_plan, planned_delivery_at=delivery_at - timedelta(days=2),
+                )),
+            ),
+        )
+        return SupplyAssuranceScenarioSet(baseline, alternatives)
+
+    def test_supply_scenario_set_comparison_preserves_baseline_order_identity_and_known_values(self):
+        scenario_set = self._hospital_scenario_set()
+        results = evaluate_supply_assurance_scenario_set(scenario_set, SupplyAssuranceService())
+
+        comparison = compare_supply_assurance_scenario_set(
+            results, fields=("inventory_immediately_before_delivery",), spanish=True,
+        )
+
+        metric = comparison.metrics[0]
+        self.assertEqual(tuple(value.scenario_id for value in metric.values),
+                         ("baseline", "delivery-plus-3", "delivery-plus-2"))
+        self.assertEqual(tuple(value.value for value in metric.values), (400, 1100, 1800))
+        self.assertEqual(tuple(value.unit for value in metric.values), ("kg", "kg", "kg"))
+        self.assertTrue(metric.comparable)
+        self.assertEqual(metric.comparable_scenario_groups,
+                         (("baseline", "delivery-plus-3", "delivery-plus-2"),))
+        self.assertEqual(comparison.position_identity.customer_id, "hospital-costa-sur")
+        self.assertEqual(comparison.position_identity.site_id,
+                         scenario_set.baseline_request.site.site_id)
+        self.assertEqual(comparison.position_identity.application_id,
+                         scenario_set.baseline_request.application.application_id)
+        self.assertEqual(comparison.position_identity.gas_product_id,
+                         scenario_set.baseline_request.gas_product.gas_product_id)
+        self.assertEqual(comparison.position_identity.installation_id,
+                         scenario_set.baseline_request.installation.installation_id)
+        self.assertFalse(hasattr(comparison, "winner"))
+        self.assertFalse(hasattr(comparison, "ranking"))
+        self.assertFalse(hasattr(comparison, "score"))
+
+    def test_supply_scenario_comparison_reads_results_without_service_calls_or_mutation(self):
+        scenario_set = self._hospital_scenario_set()
+        service = Mock(wraps=SupplyAssuranceService())
+        results = evaluate_supply_assurance_scenario_set(scenario_set, service)
+        source_before = (results.baseline_result, results.scenario_results)
+        service.reset_mock()
+
+        comparison = compare_supply_assurance_scenario_set(results)
+
+        service.assess.assert_not_called()
+        self.assertEqual((results.baseline_result, results.scenario_results), source_before)
+        self.assertEqual(len(comparison.metrics), 7)
+
+    def test_invalid_and_missing_supply_alternatives_remain_visible_and_valid_values_compare(self):
+        scenario_set = self._hospital_scenario_set()
+        baseline = scenario_set.baseline_request
+        valid = scenario_set.alternatives[0]
+        missing = SupplyAssuranceAlternative(
+            "missing-delivery", "Entrega pendiente", replace(baseline, delivery_plan=None),
+        )
+        invalid = SupplyAssuranceAlternative(
+            "invalid-unit", "Unidad incompatible",
+            replace(baseline, safety_stock=Quantity(1500, "Nm3")),
+        )
+        valid_later = scenario_set.alternatives[1]
+        results = evaluate_supply_assurance_scenario_set(
+            SupplyAssuranceScenarioSet(baseline, (valid, missing, invalid, valid_later)),
+            SupplyAssuranceService(),
+        )
+
+        comparison = compare_supply_assurance_scenario_set(
+            results, fields=("inventory_immediately_before_delivery",),
+        )
+        metric = comparison.metrics[0]
+        self.assertEqual(tuple(value.scenario_id for value in metric.values),
+                         ("baseline", "delivery-plus-3", "missing-delivery", "invalid-unit", "delivery-plus-2"))
+        self.assertEqual(tuple(value.value for value in metric.values), (400, 1100, None, None, 1800))
+        self.assertEqual(metric.values[2].unavailable_reason, "evaluation_missing_inputs")
+        self.assertEqual(metric.values[3].unavailable_reason, "evaluation_invalid")
+        self.assertFalse(metric.comparable)
+        self.assertEqual(metric.reason, "projection_unavailable")
+        self.assertEqual(metric.comparable_scenario_groups,
+                         (("baseline", "delivery-plus-3", "delivery-plus-2"),))
+
+    def test_supply_scenario_comparison_does_not_compare_incompatible_units(self):
+        scenario_set = self._hospital_scenario_set()
+        results = evaluate_supply_assurance_scenario_set(scenario_set, SupplyAssuranceService())
+        branch = results.scenario_results[0]
+        projection = replace(
+            branch.alternative_result.projection,
+            inventory_immediately_before_delivery=Quantity(1100, "Nm3"),
+        )
+        altered_branch = replace(
+            branch,
+            alternative_result=replace(branch.alternative_result, projection=projection),
+        )
+        altered_results = replace(results, scenario_results=(altered_branch, *results.scenario_results[1:]))
+
+        comparison = compare_supply_assurance_scenario_set(
+            altered_results, fields=("inventory_immediately_before_delivery",),
+        )
+
+        metric = comparison.metrics[0]
+        self.assertEqual(tuple(value.unit for value in metric.values), ("kg", "Nm3", "kg"))
+        self.assertFalse(metric.comparable)
+        self.assertEqual(metric.reason, "incompatible_operational_units")
+        self.assertEqual(metric.comparable_scenario_groups,
+                         (("baseline", "delivery-plus-2"),))
+
+    def test_supply_scenario_comparison_rejects_cross_identity_results(self):
+        scenario_set = self._hospital_scenario_set()
+        results = evaluate_supply_assurance_scenario_set(scenario_set, SupplyAssuranceService())
+        branch = results.scenario_results[0]
+        altered_branch = replace(
+            branch,
+            alternative_result=replace(branch.alternative_result, installation_id="other-tank"),
+        )
+        cross_identity_results = replace(
+            results, scenario_results=(altered_branch, *results.scenario_results[1:]),
+        )
+
+        with self.assertRaisesRegex(ValueError, "different portfolio position"):
+            compare_supply_assurance_scenario_set(cross_identity_results)
 
 
 if __name__ == "__main__":

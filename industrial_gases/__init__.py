@@ -45,7 +45,10 @@ from .decision_models import (
 from .supply_scenarios import (
     SupplyAssuranceAlternative,
     SupplyAssuranceScenarioResult,
+    SupplyAssuranceScenarioSet,
+    SupplyAssuranceScenarioSetResult,
     evaluate_supply_assurance_alternative,
+    evaluate_supply_assurance_scenario_set,
 )
 from .portfolio_query import (
     PortfolioQuery, PortfolioQueryMatch, PortfolioQueryResult,
@@ -92,7 +95,8 @@ __all__ = [
     "OperationalAttentionResult", "OperationalAttentionService",
     "DecisionAlternative", "DecisionAnalysis", "DecisionContext", "ExplicitChange",
     "SupplyAssuranceAlternative", "SupplyAssuranceScenarioResult",
-    "evaluate_supply_assurance_alternative",
+    "SupplyAssuranceScenarioSet", "SupplyAssuranceScenarioSetResult",
+    "evaluate_supply_assurance_alternative", "evaluate_supply_assurance_scenario_set",
     "ExtractedSupplyFacts", "ExtractionIssue", "ExtractionProvenance", "IdentityReference", "ResolvedSupplyIdentity",
     "SupplyAssuranceCompositionResult", "SupplyAssuranceRequestComposer",
     "UNIT_CATALOG", "UnitDimension", "UnitSpec", "unit_spec",
