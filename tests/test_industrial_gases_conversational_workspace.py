@@ -2490,6 +2490,236 @@ class ConversationalWorkspaceTests(unittest.TestCase):
         for absent in ("Query Embedding", "Vector Search", "Retrieved Context", "LLM Call"):
             self.assertNotIn(absent, scenario_text)
 
+    def test_multi_alternative_delivery_set_uses_deterministic_domain_and_comparison(self):
+        from unittest.mock import patch
+        from industrial_gases.conversational_workspace import evaluate_supply_assurance_scenario_set
+        from industrial_gases.factual_comparison import compare_supply_assurance_scenario_set
+
+        model = WorkspaceDecisionModel()
+        knowledge = ScopedFixtureKnowledge()
+        recorder = PerformanceRecorder("scenario-set-workspace", "fixture", "none", "conversational_workspace")
+        conversation = _WorkspaceConversation(model, knowledge, recorder)
+        question = (
+            "For Hospital Costa Sur, compare the current delivery at 4 days "
+            "with delivery in 3 days and 2 days."
+        )
+        baseline_request = next(
+            item.request for item in conversation.portfolio.items if item.item_id == "hospital-costa-sur-o2"
+        )
+        service_requests = []
+        from industrial_gases.service import SupplyAssuranceService
+        original_assess = SupplyAssuranceService.assess
+
+        def counted_assess(service, request):
+            service_requests.append(request)
+            return original_assess(service, request)
+
+        with patch(
+            "industrial_gases.conversational_workspace.evaluate_supply_assurance_scenario_set",
+            wraps=evaluate_supply_assurance_scenario_set,
+        ) as evaluator, patch(
+            "industrial_gases.conversational_workspace.compare_supply_assurance_scenario_set",
+            wraps=compare_supply_assurance_scenario_set,
+        ) as comparator, patch.object(SupplyAssuranceService, "assess", counted_assess):
+            response = conversation.ask(question)
+        self.assertEqual(response.status, SupplyAgentStatus.COMPLETED)
+        self.assertEqual(model.calls, [])
+        self.assertEqual(knowledge.calls, [])
+        self.assertEqual(evaluator.call_count, 1)
+        self.assertEqual(comparator.call_count, 1)
+        self.assertEqual(len(service_requests), 3, "the set evaluates baseline once and each of two alternatives once")
+        state = response.session_context.scenario_set_state
+        self.assertEqual(state.item_id, "hospital-costa-sur-o2")
+        self.assertEqual(state.scenario_set.baseline_request, baseline_request)
+        self.assertEqual(tuple(a.label.split(" — ")[0] for a in state.scenario_set.alternatives), ("A", "B"))
+        self.assertEqual(tuple(a.alternative_request.delivery_plan.planned_delivery_at
+                               for a in state.scenario_set.alternatives), (
+            baseline_request.reference_time + timedelta(days=3),
+            baseline_request.reference_time + timedelta(days=2),
+        ))
+        self.assertEqual(tuple(v.value for v in next(
+            metric for metric in response.scenario_comparison.metrics
+            if metric.field == "inventory_immediately_before_delivery"
+        ).values), (400, 1100, 1800))
+        from industrial_gases.conversational_workspace_ui import build_workspace_response_copy_text
+        copied = build_workspace_response_copy_text(response, question)
+        self.assertIn("A — Delivery in 3 days", copied)
+        self.assertIn("B — Delivery in 2 days", copied)
+        self.assertIn("1,100 kg", copied)
+        def render_multi_scenario(value, prompt):
+            from industrial_gases.conversational_workspace_ui import _render_workspace_response
+            _render_workspace_response(value, prompt)
+
+        rendered = AppTest.from_function(
+            render_multi_scenario, args=(response, question), default_timeout=15,
+        ).run()
+        self.assertFalse(rendered.exception)
+        table = rendered.table[0].value
+        self.assertEqual(tuple(table.columns), (
+            "Medida", "Baseline", "A — Delivery in 3 days", "B — Delivery in 2 days",
+        ))
+        inventory_row = table.loc[table["Medida"] == "Inventory before delivery"].iloc[0]
+        self.assertEqual(tuple(inventory_row), (
+            "Inventory before delivery", "400 kg", "1,100 kg", "1,800 kg",
+        ))
+        copied_positions = tuple(copied.index(value) for value in (
+            "Baseline", "A — Delivery in 3 days", "B — Delivery in 2 days",
+        ))
+        self.assertEqual(copied_positions, tuple(sorted(copied_positions)))
+        for value in ("400 kg", "1,100 kg", "1,800 kg"):
+            self.assertIn(value, copied)
+        self.assertNotRegex(copied.casefold(), r"\b(best|winner|preferred|recommended|optimal|score)\b")
+        self.assertEqual(response.scenario_set_result.baseline_result.status, "COMPLETED")
+        self.assertIs(response.session_context.scenario_set_state.scenario_set.baseline_request,
+                      baseline_request)
+        self.assertIs(response.session_context.scenario_set_state.scenario_set.alternatives[0]
+                      .alternative_request.inventory_snapshot, baseline_request.inventory_snapshot)
+        stages = {event.stage: event for event in recorder.snapshot().events}
+        self.assertIn("deterministic_scenario_set_evaluation", stages)
+        self.assertIn("deterministic_scenario_set_comparison", stages)
+        self.assertEqual(stages["deterministic_scenario_set_evaluation"].metadata["generation_llm_calls"], 0)
+        self.assertEqual(stages["deterministic_scenario_set_evaluation"].metadata["embedding_calls"], 0)
+        self.assertEqual(stages["deterministic_scenario_set_evaluation"].metadata["rag_calls"], 0)
+
+    def test_multi_alternative_quantity_and_consumption_use_explicit_units_and_dedupe_baseline(self):
+        model = WorkspaceDecisionModel()
+        knowledge = ScopedFixtureKnowledge()
+        conversation = _WorkspaceConversation(model, knowledge)
+        quantity = conversation.ask(
+            "For Hospital Costa Sur, compare planned delivery quantities 4000 kg, 4500 kg and 5000 kg."
+        )
+        self.assertEqual(quantity.status, SupplyAgentStatus.COMPLETED)
+        self.assertEqual(tuple(item.alternative.id for item in quantity.scenario_set_result.scenario_results), (
+            "planned-delivery-quantity-4500-kg", "planned-delivery-quantity-5000-kg",
+        ))
+        self.assertEqual(tuple(item.alternative.alternative_request.delivery_plan.planned_quantity.value
+                               for item in quantity.scenario_set_result.scenario_results), (4500, 5000))
+
+        conversation = _WorkspaceConversation(model, knowledge)
+        rate = conversation.ask(
+            "For Hospital Costa Sur, compare consumption rates 700 kg/day, 800 kg/day and 900 kg/day."
+        )
+        self.assertEqual(rate.status, SupplyAgentStatus.COMPLETED)
+        self.assertEqual(tuple(item.alternative.alternative_request.consumption_forecast.rate.value
+                               for item in rate.scenario_set_result.scenario_results), (800, 900))
+        self.assertEqual(model.calls, [])
+        self.assertEqual(knowledge.calls, [])
+
+    def test_scenario_set_rejects_mixed_dimensions_ambiguous_scope_and_documentary_mix(self):
+        model = WorkspaceDecisionModel()
+        knowledge = ScopedFixtureKnowledge()
+        conversation = _WorkspaceConversation(model, knowledge)
+        from industrial_gases.conversational_workspace import evaluate_supply_assurance_scenario_set
+        with patch(
+            "industrial_gases.conversational_workspace.evaluate_supply_assurance_scenario_set",
+            wraps=evaluate_supply_assurance_scenario_set,
+        ) as evaluator:
+            mixed = conversation.ask(
+                "For Hospital Costa Sur compare delivery in 3 days and 2 days, and consumption rates 700 kg/day and 800 kg/day."
+            )
+        self.assertEqual(mixed.status, SupplyAgentStatus.NEEDS_INPUT)
+        self.assertEqual(mixed.unsupported_questions, ("mixed_scenario_dimensions",))
+        self.assertIsNone(mixed.scenario_set_result)
+        self.assertEqual(evaluator.call_count, 0)
+
+        unstated = conversation.ask(
+            "For Hospital Costa Sur compare A: earlier delivery, B: larger delivery quantity, C: lower consumption."
+        )
+        self.assertEqual(unstated.status, SupplyAgentStatus.NEEDS_INPUT)
+        self.assertIsNone(unstated.scenario_set_result)
+
+        selected = ("hospital-costa-sur-o2", "alimentos-sur-malaga-co2")
+        ambiguous_conversation = _WorkspaceConversation(model, knowledge)
+        ambiguous_conversation.context = SupplyAgentSessionContext(selected, None)
+        with patch(
+            "industrial_gases.conversational_workspace.evaluate_supply_assurance_scenario_set",
+            wraps=evaluate_supply_assurance_scenario_set,
+        ) as ambiguous_evaluator:
+            ambiguous = ambiguous_conversation.ask("Compare delivery in 3 days and 2 days.")
+        self.assertEqual(ambiguous.status, SupplyAgentStatus.NEEDS_INPUT)
+        self.assertTrue(ambiguous.clarification_required)
+        self.assertIsNone(ambiguous.scenario_set_result)
+        self.assertIn("Hospital", ambiguous.explanation)
+        self.assertIn("CO2", ambiguous.explanation)
+        self.assertEqual(ambiguous_evaluator.call_count, 0)
+
+        documentary = conversation.ask(
+            "For Hospital Costa Sur compare delivery in 3 days and 2 days and tell me what the contract says."
+        )
+        self.assertEqual(documentary.status, SupplyAgentStatus.NEEDS_INPUT)
+        self.assertEqual(documentary.unsupported_questions,
+                         ("documentary_scenario_set_combination_not_supported",))
+        self.assertEqual(model.calls, [])
+        self.assertEqual(knowledge.calls, [])
+
+    def test_scenario_set_deduplicates_baseline_preserves_explicit_order_and_adds_nothing(self):
+        model = WorkspaceDecisionModel()
+        conversation = _WorkspaceConversation(model, ScopedFixtureKnowledge())
+        response = conversation.ask(
+            "For Hospital Costa Sur compare delivery in 2 days, current delivery at 4 days, and delivery in 3 days."
+        )
+        alternatives = response.session_context.scenario_set_state.scenario_set.alternatives
+        self.assertEqual(tuple(item.alternative_request.delivery_plan.planned_delivery_at
+                               for item in alternatives), (
+            response.scenario_set_result.baseline_result.projection.reference_time + timedelta(days=2),
+            response.scenario_set_result.baseline_result.projection.reference_time + timedelta(days=3),
+        ))
+        self.assertEqual(len(alternatives), 2)
+
+        one_alt = _WorkspaceConversation(model, ScopedFixtureKnowledge()).ask(
+            "For Hospital Costa Sur compare the current delivery at 4 days with delivery in 3 days."
+        )
+        self.assertEqual(len(one_alt.scenario_set_result.scenario_results), 1)
+        self.assertEqual(one_alt.scenario_set_result.scenario_results[0].alternative.alternative_request.delivery_plan.planned_delivery_at,
+                         one_alt.scenario_set_result.baseline_result.projection.reference_time + timedelta(days=3))
+
+    def test_scenario_set_followup_compares_named_alternatives_without_recommendation(self):
+        model = WorkspaceDecisionModel()
+        conversation = _WorkspaceConversation(model, ScopedFixtureKnowledge())
+        initial = conversation.ask(
+            "For Hospital Costa Sur compare delivery in 3 days and 2 days."
+        )
+        followup = conversation.ask("Compare A and B.")
+        self.assertEqual(followup.status, SupplyAgentStatus.COMPLETED)
+        self.assertIs(followup.scenario_set_result, initial.scenario_set_result)
+        self.assertEqual(tuple(value.scenario_id for value in followup.scenario_comparison.metrics[0].values),
+                         tuple(item.alternative.id for item in initial.scenario_set_result.scenario_results))
+        self.assertEqual(model.calls, [])
+
+        best = conversation.ask("Which is best?")
+        self.assertEqual(best.status, SupplyAgentStatus.NEEDS_INPUT)
+        self.assertEqual(best.unsupported_questions, ("scenario_ranking_not_supported",))
+        self.assertNotIn("best", best.explanation.casefold())
+        self.assertEqual(model.calls, [])
+
+    def test_malformed_multi_alternative_values_are_not_partially_executed(self):
+        conversation = _WorkspaceConversation(WorkspaceDecisionModel(), ScopedFixtureKnowledge())
+        response = conversation.ask(
+            "For Hospital Costa Sur compare delivery quantities 4000 kg and 5000."
+        )
+        self.assertEqual(response.status, SupplyAgentStatus.NEEDS_INPUT)
+        self.assertEqual(response.unsupported_questions,
+                         ("each_delivery_quantity_requires_value_and_unit",))
+        self.assertIsNone(response.scenario_set_result)
+
+        missing_day_unit = _WorkspaceConversation(
+            WorkspaceDecisionModel(), ScopedFixtureKnowledge(),
+        ).ask("For Hospital Costa Sur compare delivery in 4 days and 3.")
+        self.assertEqual(missing_day_unit.status, SupplyAgentStatus.NEEDS_INPUT)
+        self.assertIsNone(missing_day_unit.scenario_set_result)
+
+        unit_mismatch = _WorkspaceConversation(
+            WorkspaceDecisionModel(), ScopedFixtureKnowledge(),
+        ).ask("For Hospital Costa Sur compare planned delivery quantities 4 t and 5 t.")
+        self.assertEqual(unit_mismatch.status, SupplyAgentStatus.NEEDS_INPUT)
+        self.assertIsNone(unit_mismatch.scenario_set_result)
+
+        negative = _WorkspaceConversation(WorkspaceDecisionModel(), ScopedFixtureKnowledge()).ask(
+            "For Hospital Costa Sur compare planned delivery quantities -100 kg and 5000 kg."
+        )
+        self.assertEqual(negative.status, SupplyAgentStatus.NEEDS_INPUT)
+        self.assertIsNone(negative.scenario_set_result)
+
 
 if __name__ == "__main__":
     unittest.main()

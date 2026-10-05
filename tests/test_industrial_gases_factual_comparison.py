@@ -171,7 +171,11 @@ class FactualComparisonTests(unittest.TestCase):
             self.assertFalse(compared.metrics[0].comparable)
             self.assertEqual(compared.metrics[0].reason, "projection_unavailable")
             self.assertEqual(compared.metrics[0].values[1].unavailable_reason, f"evaluation_{status.casefold()}")
-        from industrial_gases.conversational_workspace_ui import _scenario_comparison_rows
+        from industrial_gases.conversational_workspace_ui import (
+            _render_scenario_comparison, _scenario_comparison_copy_text,
+            _scenario_comparison_rows,
+        )
+        from streamlit.testing.v1 import AppTest
         invalid_rows = _scenario_comparison_rows(
             compare_scenarios((baseline, replace(alternative, result=invalid_result))), "es",
         )
@@ -180,6 +184,26 @@ class FactualComparisonTests(unittest.TestCase):
         )
         self.assertIn("Evaluación inválida", tuple(invalid_rows[0].values()))
         self.assertIn("Faltan datos", tuple(missing_rows[0].values()))
+        for result, expected_status in (
+            (invalid_result, "Evaluación inválida"),
+            (missing_result, "Faltan datos"),
+        ):
+            compared = compare_scenarios((baseline, replace(alternative, result=result)), spanish=True)
+            copied = _scenario_comparison_copy_text(compared, "es")
+            self.assertIn(expected_status, copied)
+            self.assertIn("Proyección no disponible", copied)
+
+            def render(value):
+                from industrial_gases.conversational_workspace_ui import _render_scenario_comparison
+                _render_scenario_comparison(value, "es")
+
+            app = AppTest.from_function(render, args=(compared,)).run()
+            self.assertFalse(app.exception)
+            self.assertTrue(any(
+                "Falta una proyección válida" in str(element.value)
+                for element in app.caption
+            ))
+            self.assertIn(expected_status, tuple(app.table[0].value.iloc[0]))
 
         from industrial_gases.models import Quantity
         altered_projection = replace(

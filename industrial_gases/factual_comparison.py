@@ -284,11 +284,23 @@ def compare_supply_assurance_scenario_set(
     *,
     fields: tuple[str, ...] | None = None,
     spanish: bool = False,
+    scenario_ids: tuple[str, ...] | None = None,
 ) -> ScenarioSetComparison:
     """Adapt already-evaluated Supply Assurance branches to factual comparison."""
     scenarios = tuple(result.scenario_results)
     if not scenarios:
         raise ValueError("a Supply Assurance scenario set result must contain alternatives")
+    if scenario_ids is not None:
+        scenario_ids = tuple(dict.fromkeys(scenario_ids))
+        available_ids = {scenario.alternative.id for scenario in scenarios}
+        if not scenario_ids or any(scenario_id not in available_ids for scenario_id in scenario_ids):
+            raise ValueError("requested scenario IDs must identify evaluated alternatives")
+        scenarios = tuple(
+            scenario for scenario in scenarios if scenario.alternative.id in scenario_ids
+        )
+        # Keep the caller's explicit reference order, not the original set order.
+        by_id = {scenario.alternative.id: scenario for scenario in scenarios}
+        scenarios = tuple(by_id[scenario_id] for scenario_id in scenario_ids)
     if any(scenario.baseline_result is not result.baseline_result for scenario in scenarios):
         raise ValueError("scenario branches must retain the scenario-set baseline result")
 
@@ -300,7 +312,10 @@ def compare_supply_assurance_scenario_set(
         baseline.gas_product_id,
         baseline.installation_id,
     )
-    entries = [("baseline", "Base" if spanish else "Baseline", baseline)]
+    entries = (
+        [("baseline", "Base" if spanish else "Baseline", baseline)]
+        if scenario_ids is None else []
+    )
     seen_ids = {"baseline"}
     for scenario in scenarios:
         if not scenario.alternative.id or scenario.alternative.id in seen_ids:

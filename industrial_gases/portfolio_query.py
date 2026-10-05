@@ -10,7 +10,10 @@ from rag_models import RetrievedChunk
 from .operational_attention import OperationalAttentionItem, OperationalAttentionResult
 from .portfolio import SupplyPortfolioItemResult, SupplyPortfolioResult
 from .service import SupplyAssuranceResult
-from .supply_scenarios import SupplyAssuranceScenarioResult
+from .supply_scenarios import (
+    SupplyAssuranceScenarioResult, SupplyAssuranceScenarioSet,
+    SupplyAssuranceScenarioSetResult,
+)
 
 
 @dataclass(frozen=True)
@@ -141,6 +144,7 @@ class SupplyAgentSessionContext:
     last_document_scope_item_ids: tuple[str, ...] = ()
     last_scenario_change: tuple[str, str] | None = None
     scenario_history: tuple["WorkspaceScenario", ...] = ()
+    scenario_set_state: "WorkspaceScenarioSetState | None" = None
 
     def __post_init__(self) -> None:
         ids = tuple(dict.fromkeys(item_id for item_id in self.selected_item_ids if item_id))[:32]
@@ -156,6 +160,8 @@ class SupplyAgentSessionContext:
             raise ValueError("scenario history requires a focused position")
         if any(entry.item_id != self.focused_item_id for entry in history):
             raise ValueError("scenario history must belong to the focused position")
+        if self.scenario_set_state is not None and self.scenario_set_state.item_id != self.focused_item_id:
+            raise ValueError("scenario-set state must belong to the focused position")
         if len({entry.scenario_id for entry in history}) != len(history):
             raise ValueError("scenario history identities must be unique")
         if len(history) > 16:
@@ -170,6 +176,26 @@ class SupplyAgentSessionContext:
         object.__setattr__(self, "selected_item_ids", ids)
         object.__setattr__(self, "last_document_scope_item_ids", document_scope)
         object.__setattr__(self, "scenario_history", history)
+
+
+@dataclass(frozen=True)
+class WorkspaceScenarioSetState:
+    """The immediately preceding ordered scenario set and its factual comparison."""
+
+    item_id: str
+    scenario_set: SupplyAssuranceScenarioSet
+    result: SupplyAssuranceScenarioSetResult
+    comparison: Any
+
+    def __post_init__(self) -> None:
+        if not self.item_id:
+            raise ValueError("scenario-set state requires a focused portfolio item")
+        if len(self.scenario_set.alternatives) != len(self.result.scenario_results):
+            raise ValueError("scenario-set state must retain every evaluated alternative")
+        if tuple(item.id for item in self.scenario_set.alternatives) != tuple(
+            entry.alternative.id for entry in self.result.scenario_results
+        ):
+            raise ValueError("scenario-set state order must match its evaluated result")
 
 
 @dataclass(frozen=True)

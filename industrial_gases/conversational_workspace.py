@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import timedelta
+from decimal import Decimal
 from enum import Enum
 import re
 from typing import Any, Callable
@@ -10,7 +12,7 @@ from diagnostics import PerformanceRecorder
 from .industrial_knowledge import IndustrialKnowledgeService
 from .operational_attention import OperationalAttentionResult
 from .portfolio import SupplyPortfolioResult
-from .portfolio_query import PortfolioEvidenceBundle, PortfolioItemEvidence, PortfolioQueryResult, ScopedKnowledgeSource, SupplyAgentSessionContext
+from .portfolio_query import PortfolioEvidenceBundle, PortfolioItemEvidence, PortfolioQueryResult, ScopedKnowledgeSource, SupplyAgentSessionContext, WorkspaceScenarioSetState
 from .portfolio_query import WorkspaceScenario
 from .portfolio_query import PortfolioQuery, SupplyPortfolioQueryService
 from .factual_comparison import (
@@ -19,6 +21,12 @@ from .factual_comparison import (
     ScenarioSetComparison, compare_scenarios, scenario_comparison_answer,
 )
 from .service import SupplyAssuranceService
+from .models import ConsumptionRate, Quantity
+from .lexical import numeric_lexemes, normalize_unit_lexeme, parse_decimal_number
+from .supply_scenarios import (
+    SupplyAssuranceAlternative, SupplyAssuranceScenarioSet,
+    SupplyAssuranceScenarioSetResult, evaluate_supply_assurance_scenario_set,
+)
 from .supply_agent import (
     SupplyAgent,
     SupplyAgentRequest,
@@ -32,6 +40,7 @@ from .supply_agent import (
     _requires_operational_context,
     _is_portfolio_query,
 )
+from .factual_comparison import compare_supply_assurance_scenario_set
 
 
 class WorkspaceIntent(str, Enum):
@@ -54,6 +63,29 @@ class _SemanticGuardMatch:
     rule: str
     pattern_id: str
     matched_phrase: str
+
+
+@dataclass(frozen=True)
+class _ExplicitScenarioValue:
+    value: Decimal
+    unit: str
+    baseline_reference: bool = False
+    time_unit: str | None = None
+
+
+@dataclass(frozen=True)
+class _ScenarioSetSyntax:
+    dimension: str | None
+    values: tuple[_ExplicitScenarioValue, ...] = ()
+    issue: str | None = None
+
+    @property
+    def baseline_was_stated(self) -> bool:
+        return any(value.baseline_reference for value in self.values)
+
+
+class _ScenarioSetInputError(ValueError):
+    """A deterministic interpretation/validation issue suitable for clarification."""
 
 
 def _semantic_guard_match(
@@ -81,6 +113,7 @@ class WorkspaceResponse:
     semantic_guard_applied: bool = False
     comparison: FactualComparison | None = None
     scenario_comparison: ScenarioSetComparison | None = None
+    scenario_set_result: SupplyAssuranceScenarioSetResult | None = None
 
     @property
     def content(self) -> str | None:
@@ -147,13 +180,14 @@ def route_workspace_intent(
     """Map user intent to existing capabilities without choosing data or calculating."""
     context = context or SupplyAgentSessionContext()
     documentary = _requires_documentary_evidence(question) or _is_documentary_followup(question, context)
-    scenario = _has_explicit_what_if(question)
+    scenario = _has_explicit_what_if(question) or _looks_like_scenario_set_request(question)
     operational = _requires_operational_context(question)
     follow_up = bool(context.selected_item_ids and _has_context_reference(question))
     comparison = is_factual_comparison_question(question)
     scenario_comparison = not _requests_scenario_search(question) and (
         _is_scenario_comparison_request(question)
         or (bool(context.scenario_history) and _scenario_question_semantics(question)[0] is not None)
+        or _scenario_set_followup_ids(question, context) is not None
     )
 
     if documentary and (scenario or operational):
@@ -182,6 +216,8 @@ def route_workspace_intent(
         capabilities.append("deterministic_comparison")
     if scenario_comparison:
         capabilities.append("deterministic_scenario_comparison")
+    if _looks_like_scenario_set_request(question):
+        capabilities.extend(("scenario_set_evaluation", "deterministic_scenario_comparison"))
     return WorkspaceRoute(intent, tuple(capabilities))
 
 
@@ -218,9 +254,20 @@ class ConversationalWorkspaceOrchestrator:
             )
             self.recorder.complete_stage(event)
 
+        scenario_syntax = _parse_scenario_set_syntax(question)
+        if scenario_syntax is not None:
+            return self._run_explicit_scenario_set(question, route, scenario_syntax)
+
+        if _scenario_set_best_request(question, self.session_context):
+            return self._scenario_set_non_ranking_response(question, route)
+        if _scenario_set_followup_ids(question, self.session_context) is not None:
+            return self._run_scenario_set_followup(question, route)
+
         if _requests_scenario_search(question):
             return self._run_scenario_clarification(question, route)
         if is_factual_comparison_question(question):
+            if _scenario_set_followup_ids(question, self.session_context) is not None:
+                return self._run_scenario_set_followup(question, route)
             if _is_scenario_comparison_question(question, self.session_context):
                 return self._run_scenario_comparison(question, route)
             return self._run_comparison(question, route)
@@ -320,6 +367,214 @@ class ConversationalWorkspaceOrchestrator:
             unsupported_questions=tuple(result.unsupported_questions),
             clarification_required=result.clarification_required,
             semantic_guard_applied=guarded,
+        )
+
+    def _run_explicit_scenario_set(self, question: str, route: WorkspaceRoute,
+                                   syntax: "_ScenarioSetSyntax") -> WorkspaceResponse:
+        """Resolve one existing position, then use the domain scenario-set contracts."""
+        from .supply_agent import _resolve_portfolio_scope
+
+        context = self.session_context
+        query_result, focus, used_context, clarification = _resolve_portfolio_scope(
+            question, self.portfolio, self.attention,
+            SupplyAgentRequest(question, None, context),
+        )
+        if clarification or len(query_result.matches) != 1:
+            labels = tuple(_portfolio_match_label(match) for match in query_result.matches)
+            message = (
+                "¿Qué posición quieres comparar? Selecciona una sola posición."
+                if _is_spanish_workspace_text(question) else
+                "Which position should be compared? Select one portfolio position."
+            )
+            if labels:
+                message += (" Opciones: " if _is_spanish_workspace_text(question) else " Choices: ") + "; ".join(labels)
+            return self._scenario_set_needs_input(
+                question, route, query_result, message, "single_portfolio_position",
+            )
+
+        match = query_result.matches[0]
+        item_id = match.item_id
+        baseline = match.item.request
+        if (_requires_documentary_evidence(question)
+                or _is_documentary_followup(question, context)):
+            return self._scenario_set_needs_input(
+                question, route, query_result,
+                ("Separa la comparación física de la consulta documental y envíalas por separado."
+                 if _is_spanish_workspace_text(question) else
+                 "Separate the physical scenario comparison from the documentary question and submit them separately."),
+                "documentary_scenario_set_combination_not_supported",
+                focused_item_id=item_id,
+            )
+        if syntax.issue:
+            message = _scenario_set_issue_message(syntax.issue, _is_spanish_workspace_text(question))
+            return self._scenario_set_needs_input(
+                question, route, query_result, message, syntax.issue,
+                focused_item_id=item_id,
+            )
+        try:
+            scenario_set = _build_explicit_scenario_set(
+                question, baseline, syntax, spanish=_is_spanish_workspace_text(question),
+            )
+        except _ScenarioSetInputError as error:
+            return self._scenario_set_needs_input(
+                question, route, query_result,
+                _scenario_set_issue_message(str(error), _is_spanish_workspace_text(question)),
+                str(error), focused_item_id=item_id,
+            )
+
+        recorder = self.recorder
+        if recorder:
+            event = recorder.start_stage(
+                "scenario_set_interpretation", focused_item_id=item_id,
+                dimension=syntax.dimension,
+                explicit_values=tuple(str(value) for value in syntax.values),
+                alternative_count=len(scenario_set.alternatives),
+                scope_source="explicit_or_existing_workspace_resolution",
+            )
+            recorder.complete_stage(event, baseline_deduplicated=syntax.baseline_was_stated)
+            event = recorder.start_stage("deterministic_scenario_set_evaluation")
+        result = evaluate_supply_assurance_scenario_set(
+            scenario_set, self.service or SupplyAssuranceService(),
+        )
+        comparison = compare_supply_assurance_scenario_set(
+            result, spanish=_is_spanish_workspace_text(question),
+        )
+        if recorder:
+            recorder.complete_stage(
+                event, branch_count=1 + len(scenario_set.alternatives),
+                evaluation_statuses=tuple(
+                    branch.alternative_result.status for branch in result.scenario_results
+                ), generation_llm_calls=0, embedding_calls=0, rag_calls=0,
+            )
+            event = recorder.start_stage("deterministic_scenario_set_comparison")
+            recorder.complete_stage(
+                event, scenario_ids=tuple(value.id for value in scenario_set.alternatives),
+                compared_fields=tuple(metric.field for metric in comparison.metrics),
+                generation_llm_calls=0, embedding_calls=0, rag_calls=0,
+            )
+
+        previous_focus = context.focused_item_id
+        next_context = SupplyAgentSessionContext(
+            selected_item_ids=(item_id,), focused_item_id=item_id,
+            last_query=context.last_query or query_result.query,
+            last_scenario_target_id=item_id, last_intent="scenario_set",
+            last_document_scope_item_ids=(
+                (item_id,) if item_id in context.last_document_scope_item_ids else ()
+            ),
+            last_scenario_change=context.last_scenario_change,
+            scenario_history=context.scenario_history if previous_focus == item_id else (),
+            scenario_set_state=WorkspaceScenarioSetState(
+                item_id, scenario_set, result, comparison,
+            ),
+        )
+        evidence = PortfolioEvidenceBundle((PortfolioItemEvidence(match.item, match.attention),))
+        answer = (
+            "Se evaluó la línea base y cada alternativa explícita de forma independiente."
+            if _is_spanish_workspace_text(question) else
+            "The baseline and each explicit alternative were evaluated independently."
+        )
+        return WorkspaceResponse(
+            status=SupplyAgentStatus.COMPLETED,
+            route=route,
+            explanation=answer,
+            portfolio_query=query_result,
+            evidence=evidence,
+            session_context=next_context,
+            scenario_comparison=comparison,
+            scenario_set_result=result,
+        )
+
+    def _scenario_set_needs_input(self, question, route, query_result, message, reason,
+                                  focused_item_id=None) -> WorkspaceResponse:
+        matches = query_result.matches if query_result is not None else ()
+        evidence_items = tuple(
+            PortfolioItemEvidence(match.item, match.attention) for match in matches
+        )
+        old_context = self.session_context
+        context = SupplyAgentSessionContext(
+            selected_item_ids=tuple(match.item_id for match in matches),
+            focused_item_id=focused_item_id,
+            last_query=old_context.last_query,
+            last_scenario_target_id=focused_item_id,
+            last_intent="scenario_set_needs_input",
+            last_document_scope_item_ids=(),
+            last_scenario_change=old_context.last_scenario_change,
+            scenario_history=old_context.scenario_history if focused_item_id == old_context.focused_item_id else (),
+        )
+        return WorkspaceResponse(
+            status=SupplyAgentStatus.NEEDS_INPUT,
+            route=route,
+            explanation=message,
+            portfolio_query=query_result,
+            evidence=PortfolioEvidenceBundle(evidence_items),
+            session_context=context,
+            unsupported_questions=(reason,),
+            clarification_required=True,
+        )
+
+    def _run_scenario_set_followup(self, question: str, route: WorkspaceRoute) -> WorkspaceResponse:
+        state = self.session_context.scenario_set_state
+        references = _scenario_set_followup_ids(question, self.session_context) or ()
+        spanish = _is_spanish_workspace_text(question)
+        comparison = compare_supply_assurance_scenario_set(
+            state.result, fields=(
+                (_scenario_question_semantics(question)[0],)
+                if _scenario_question_semantics(question)[0] else None
+            ), spanish=spanish, scenario_ids=references,
+        )
+        answer = (
+            "La comparación factual solicitada está disponible para las alternativas indicadas."
+            if spanish else "The requested factual comparison is available for the named alternatives."
+        )
+        by_id = {item.item_id: item for item in self.portfolio.items}
+        by_attention = {item.item_id: item for item in self.attention.items}
+        item = by_id.get(state.item_id)
+        attention = by_attention.get(state.item_id)
+        evidence = PortfolioEvidenceBundle(
+            (PortfolioItemEvidence(item, attention),) if item is not None and attention is not None else (),
+        )
+        if self.recorder:
+            event = self.recorder.start_stage(
+                "scenario_set_reference_resolution", focused_item_id=state.item_id,
+                scenario_ids=references,
+            )
+            self.recorder.complete_stage(event, clarification_required=False)
+            event = self.recorder.start_stage("deterministic_scenario_set_comparison")
+            self.recorder.complete_stage(
+                event, scenario_ids=references,
+                compared_fields=tuple(metric.field for metric in comparison.metrics),
+                generation_llm_calls=0, embedding_calls=0, rag_calls=0,
+            )
+        next_state = replace(state, comparison=comparison)
+        next_context = replace(self.session_context, scenario_set_state=next_state)
+        return WorkspaceResponse(
+            status=SupplyAgentStatus.COMPLETED,
+            route=route,
+            explanation=answer,
+            portfolio_query=None,
+            evidence=evidence,
+            session_context=next_context,
+            scenario_comparison=comparison,
+            scenario_set_result=state.result,
+        )
+
+    def _scenario_set_non_ranking_response(self, question: str, route: WorkspaceRoute) -> WorkspaceResponse:
+        state = self.session_context.scenario_set_state
+        message = (
+            "Puedo comparar los resultados calculados, pero no clasificar ni recomendar una alternativa."
+            if _is_spanish_workspace_text(question) else
+            "I can compare calculated results, but this workspace does not rank or recommend an alternative."
+        )
+        item = next((item for item in self.portfolio.items if item.item_id == state.item_id), None)
+        attention = next((item for item in self.attention.items if item.item_id == state.item_id), None)
+        evidence = PortfolioEvidenceBundle(
+            (PortfolioItemEvidence(item, attention),) if item is not None and attention is not None else (),
+        )
+        return WorkspaceResponse(
+            status=SupplyAgentStatus.NEEDS_INPUT, route=route, explanation=message,
+            portfolio_query=None, evidence=evidence, session_context=self.session_context,
+            scenario_comparison=state.comparison, scenario_set_result=state.result,
+            unsupported_questions=("scenario_ranking_not_supported",), clarification_required=True,
         )
 
     def _run_scenario_comparison(self, question: str, route: WorkspaceRoute) -> WorkspaceResponse:
@@ -814,6 +1069,288 @@ def _localized_scenario(entry: WorkspaceScenario, spanish: bool) -> WorkspaceSce
             direction = "earlier" if entry.offset_days < 0 else "later"
         label = f"{amount} {unit} {direction}"
     return replace(entry, label=label)
+
+
+_SCENARIO_COMPARE = re.compile(
+    r"\b(?:compare|compara|comparar|contrast|contrasta|versus|vs\.?|frente\s+a)\b",
+    re.IGNORECASE,
+)
+_SCENARIO_NUMBER = r"(?P<number>[-+]?\d{1,3}(?:[ .]\d{3})+|[-+]?\d+(?:[.,]\d+)?)"
+_SCENARIO_UNIT = (
+    r"(?P<unit>Nm\s*³|Sm\s*³|m\s*³|Nm3|Sm3|m3|kg|kilos?|"
+    r"kilogramos?|toneladas?|litros?|t|L)(?=\s|/|[.,;]|$)"
+)
+_DELIVERY_WORDS = re.compile(r"\b(?:delivery|entrega|suministro|arriv\w*|lleg\w*)\b", re.I)
+_QUANTITY_WORDS = re.compile(
+    r"\b(?:delivery\s+(?:quantit(?:y|ies)|volumes?|amounts?)|planned\s+delivery|"
+    r"cantidades?\s+(?:de\s+)?(?:entrega|suministro)|vol[uú]menes?\s+(?:de\s+)?entrega|"
+    r"cantidad\s+prevista|volumen\s+previsto)\b", re.I,
+)
+_CONSUMPTION_WORDS = re.compile(r"\b(?:consumption|consumo|forecast|previsi[oó]n|rate|tasa)\b", re.I)
+_RATE_SUFFIX = re.compile(
+    r"\s*(?:/\s*(?:day|days|d[ií]a|d[ií]as)|per\s+(?:day|days)|por\s+d[ií]a|"
+    r"al\s+d[ií]a|daily)\b", re.I,
+)
+
+
+def _looks_like_scenario_set_request(question: str) -> bool:
+    """Recognize explicit comparative requests without interpreting their values."""
+    if not _SCENARIO_COMPARE.search(question):
+        return False
+    numeric_comparison = (
+        len(numeric_lexemes(question)) >= 2
+        and re.search(
+            r"\b(?:delivery|entrega|suministro|consumption|consumo|quantity|cantidad|rate|tasa)\b",
+            question, re.I,
+        )
+    )
+    option_markers = bool(re.search(
+        r"\b(?:alternatives?|scenarios?|alternativas?|escenarios?)\s+[A-C]\b|"
+        r"\b[A-C]\s*[:=]", question, re.I,
+    ))
+    quantity_change_words = bool(re.search(
+        r"\b(?:larger|more|higher|increase|increased|mayor|m[aá]s|aumentar|incrementar)\b.{0,35}"
+        r"\b(?:delivery|entrega|quantity|cantidad|volume|volumen)\b|"
+        r"\b(?:delivery|entrega|quantity|cantidad|volume|volumen)\b.{0,35}"
+        r"\b(?:larger|more|higher|increase|increased|mayor|m[aá]s|aumentar|incrementar)\b",
+        question, re.I,
+    ))
+    dimension_cues = sum((
+        bool(re.search(r"\b(?:delivery|entrega)\b", question, re.I)
+             and re.search(r"\b(?:days?|d[ií]as?|earlier|before|sooner|antes|adelantad\w*)\b", question, re.I)),
+        bool(_QUANTITY_WORDS.search(question) or quantity_change_words),
+        bool(_CONSUMPTION_WORDS.search(question)),
+    ))
+    return bool(numeric_comparison or (option_markers and dimension_cues > 1))
+
+
+def _parse_scenario_set_syntax(question: str) -> _ScenarioSetSyntax | None:
+    """Extract only explicit same-dimension numeric alternatives from a comparison request."""
+    if not _looks_like_scenario_set_request(question):
+        return None
+
+    day_matches = tuple(re.finditer(
+        rf"{_SCENARIO_NUMBER}\s*(?P<unit>days?|d[ií]as?)\b", question, re.I,
+    ))
+    delivery_days = day_matches if _DELIVERY_WORDS.search(question) else ()
+
+    rate_matches: list[_ExplicitScenarioValue] = []
+    rate_positions: list[tuple[int, int]] = []
+    for match in re.finditer(rf"{_SCENARIO_NUMBER}\s*{_SCENARIO_UNIT}", question, re.I):
+        suffix = question[match.end():match.end() + 40]
+        if not _RATE_SUFFIX.match(suffix):
+            continue
+        try:
+            value = parse_decimal_number(match.group("number"))
+        except ValueError:
+            continue
+        before = question[max(0, match.start() - 28):match.start()]
+        rate_matches.append(_ExplicitScenarioValue(
+            value, normalize_unit_lexeme(match.group("unit"), include_words=True),
+            bool(re.search(r"\b(?:current|baseline|actual|actualmente|actual|vigente)\b", before, re.I)),
+            "day",
+        ))
+        rate_positions.append(match.span())
+
+    quantity_matches: list[_ExplicitScenarioValue] = []
+    quantity_cue = bool(
+        _QUANTITY_WORDS.search(question)
+        or (_DELIVERY_WORDS.search(question)
+            and re.search(rf"{_SCENARIO_NUMBER}\s*{_SCENARIO_UNIT}", question, re.I))
+    )
+    if quantity_cue:
+        # Every quantity in a detected set must carry its own unit; values may
+        # not inherit one from a neighboring branch.
+        for match in re.finditer(rf"{_SCENARIO_NUMBER}\s*{_SCENARIO_UNIT}", question, re.I):
+            if _RATE_SUFFIX.match(question[match.end():match.end() + 40]):
+                continue
+            try:
+                value = parse_decimal_number(match.group("number"))
+            except ValueError:
+                continue
+            before = question[max(0, match.start() - 28):match.start()]
+            quantity_matches.append(_ExplicitScenarioValue(
+                value, normalize_unit_lexeme(match.group("unit"), include_words=True),
+                bool(re.search(r"\b(?:current|baseline|actual|actualmente|actual|vigente)\b", before, re.I)),
+            ))
+
+    dimensions = []
+    if delivery_days:
+        dimensions.append("delivery_horizon")
+    if rate_matches:
+        dimensions.append("consumption_rate")
+    if quantity_matches:
+        dimensions.append("planned_delivery_quantity")
+    if len(dimensions) > 1:
+        return _ScenarioSetSyntax(None, issue="mixed_scenario_dimensions")
+    if not dimensions:
+        if quantity_cue or _CONSUMPTION_WORDS.search(question) or delivery_days:
+            return _ScenarioSetSyntax(None, issue="explicit_values_require_units")
+        return _ScenarioSetSyntax(None, issue="unsupported_scenario_dimension")
+
+    dimension = dimensions[0]
+    if dimension == "delivery_horizon":
+        if len(day_matches) != len(numeric_lexemes(question)):
+            return _ScenarioSetSyntax(dimension, issue="each_delivery_horizon_requires_explicit_day_value")
+        values: list[_ExplicitScenarioValue] = []
+        for match in delivery_days:
+            try:
+                value = parse_decimal_number(match.group("number"))
+            except ValueError:
+                continue
+            if value != value.to_integral_value():
+                return _ScenarioSetSyntax(dimension, issue="delivery_horizon_requires_whole_days")
+            before = question[max(0, match.start() - 64):match.start()]
+            values.append(_ExplicitScenarioValue(
+                value, "day",
+                bool(re.search(
+                    r"\b(?:current|baseline|actual|actualmente|vigente)\s+(?:delivery|entrega)\s+(?:at|in|en|a)?\s*$",
+                    before, re.I,
+                )),
+            ))
+    elif dimension == "consumption_rate":
+        values = rate_matches
+        if len(values) != len(numeric_lexemes(question)) or len(values) < 2:
+            return _ScenarioSetSyntax(dimension, issue="each_consumption_rate_requires_value_unit_and_time")
+    else:
+        values = quantity_matches
+        if len(values) < 2 or len(numeric_lexemes(question)) != len(values):
+            return _ScenarioSetSyntax(dimension, issue="each_delivery_quantity_requires_value_and_unit")
+
+    if len(values) < 2:
+        return _ScenarioSetSyntax(dimension, issue="at_least_two_explicit_values_required")
+    if len({value.unit for value in values}) != 1:
+        return _ScenarioSetSyntax(dimension, issue="scenario_units_must_match")
+    return _ScenarioSetSyntax(dimension, tuple(values))
+
+
+def _scenario_set_issue_message(issue: str, spanish: bool) -> str:
+    if issue == "mixed_scenario_dimensions":
+        return ("Evalúa una sola variable por comparación; separa el cambio de entrega, cantidad o consumo."
+                if spanish else "Compare one variable at a time; separate delivery timing, quantity, or consumption changes.")
+    if issue in {"explicit_values_require_units", "each_delivery_quantity_requires_value_and_unit",
+                 "each_consumption_rate_requires_value_unit_and_time", "scenario_units_must_match",
+                 "each_delivery_horizon_requires_explicit_day_value"}:
+        return ("Indica cada alternativa con su valor y unidad explícitos, usando la misma unidad operativa."
+                if spanish else "State each alternative with its explicit value and unit, using the same operational unit.")
+    if issue == "delivery_horizon_requires_whole_days":
+        return ("Indica cada horizonte de entrega como un número entero de días."
+                if spanish else "State each delivery horizon as a whole number of days.")
+    if issue in {"baseline_value_unavailable", "baseline_horizon_unavailable"}:
+        return ("Falta una línea base estructurada para esa variable."
+                if spanish else "The structured baseline for that variable is unavailable.")
+    if issue == "stated_baseline_conflicts":
+        return ("El valor indicado como actual no coincide con la línea base estructurada."
+                if spanish else "The value stated as current does not match the structured baseline.")
+    if issue == "no_alternative_after_baseline_deduplication":
+        return ("Indica al menos una alternativa distinta de la línea base actual."
+                if spanish else "State at least one alternative distinct from the current baseline.")
+    if issue == "explicit scenario values cannot be negative":
+        return ("Los valores explícitos de las alternativas no pueden ser negativos."
+                if spanish else "Explicit alternative values cannot be negative.")
+    return ("No puedo evaluar esa comparación de alternativas con los datos explícitos disponibles."
+            if spanish else "I cannot evaluate that alternative comparison from the explicit values provided.")
+
+
+def _build_explicit_scenario_set(question, baseline, syntax: _ScenarioSetSyntax, *, spanish):
+    from .models import Quantity
+
+    dimension = syntax.dimension
+    if dimension == "delivery_horizon":
+        if baseline.reference_time is None or baseline.delivery_plan is None:
+            raise _ScenarioSetInputError("baseline_horizon_unavailable")
+        duration = baseline.delivery_plan.planned_delivery_at - baseline.reference_time
+        if duration.total_seconds() < 0 or duration.total_seconds() % 86400:
+            raise _ScenarioSetInputError("baseline_horizon_unavailable")
+        baseline_value = Decimal(int(duration.total_seconds() // 86400))
+        unit = "day"
+    elif dimension == "planned_delivery_quantity":
+        if baseline.delivery_plan is None:
+            raise _ScenarioSetInputError("baseline_value_unavailable")
+        baseline_value = baseline.delivery_plan.planned_quantity.value
+        unit = baseline.delivery_plan.planned_quantity.unit
+    elif dimension == "consumption_rate":
+        if baseline.consumption_forecast is None:
+            raise _ScenarioSetInputError("baseline_value_unavailable")
+        baseline_value = baseline.consumption_forecast.rate.value
+        unit = baseline.consumption_forecast.rate.quantity_unit
+        if any(value.time_unit != baseline.consumption_forecast.rate.time_unit for value in syntax.values):
+            raise _ScenarioSetInputError("scenario_units_must_match")
+    else:
+        raise _ScenarioSetInputError("unsupported_scenario_dimension")
+
+    unique: list[_ExplicitScenarioValue] = []
+    seen: set[Decimal] = set()
+    for value in syntax.values:
+        if value.unit != unit:
+            raise _ScenarioSetInputError("scenario_units_must_match")
+        if value.baseline_reference and value.value != baseline_value:
+            raise _ScenarioSetInputError("stated_baseline_conflicts")
+        if value.value == baseline_value or value.value in seen:
+            continue
+        if value.value < 0:
+            raise _ScenarioSetInputError("explicit scenario values cannot be negative")
+        seen.add(value.value)
+        unique.append(value)
+    if not unique:
+        raise _ScenarioSetInputError("no_alternative_after_baseline_deduplication")
+
+    alternatives = []
+    for index, value in enumerate(unique):
+        ordinal = chr(ord("A") + index)
+        slug = format(value.value.normalize(), "f").replace("-", "minus-").replace(".", "-")
+        if dimension == "delivery_horizon":
+            request = replace(
+                baseline,
+                delivery_plan=replace(
+                    baseline.delivery_plan,
+                    planned_delivery_at=baseline.reference_time + timedelta(days=int(value.value)),
+                ),
+            )
+            scenario_id = f"delivery-horizon-days-{slug}"
+            label = f"{ordinal} — Entrega en {value.value} días" if spanish else f"{ordinal} — Delivery in {value.value} days"
+        elif dimension == "planned_delivery_quantity":
+            request = replace(
+                baseline,
+                delivery_plan=replace(baseline.delivery_plan, planned_quantity=Quantity(value.value, unit)),
+            )
+            scenario_id = f"planned-delivery-quantity-{slug}-{unit}"
+            label = f"{ordinal} — Entrega de {value.value} {unit}" if spanish else f"{ordinal} — Delivery quantity {value.value} {unit}"
+        else:
+            rate = baseline.consumption_forecast.rate
+            request = replace(
+                baseline,
+                consumption_forecast=replace(
+                    baseline.consumption_forecast,
+                    rate=ConsumptionRate(value.value, unit, rate.time_unit),
+                ),
+            )
+            scenario_id = f"consumption-rate-{slug}-{unit}-per-{rate.time_unit}"
+            label = f"{ordinal} — Consumo {value.value} {unit}/{rate.time_unit}" if spanish else f"{ordinal} — Consumption {value.value} {unit}/{rate.time_unit}"
+        alternatives.append(SupplyAssuranceAlternative(scenario_id, label, request))
+
+    return SupplyAssuranceScenarioSet(baseline, tuple(alternatives))
+
+
+def _scenario_set_followup_ids(question: str, context: SupplyAgentSessionContext) -> tuple[str, ...] | None:
+    state = context.scenario_set_state
+    if state is None or not re.search(r"\b(?:compare|compara|comparar)\b", question, re.I):
+        return None
+    match = re.search(r"\b([A-Z])\s+(?:and|y)\s+([A-Z])\b", question, re.I)
+    if not match:
+        return None
+    ordinals = {chr(ord("A") + index): alternative.id
+                for index, alternative in enumerate(state.scenario_set.alternatives)}
+    ids = tuple(ordinals.get(letter.upper()) for letter in match.groups())
+    return ids if all(ids) and ids[0] != ids[1] else None
+
+
+def _scenario_set_best_request(question: str, context: SupplyAgentSessionContext) -> bool:
+    return context.scenario_set_state is not None and bool(re.search(
+        r"\b(?:which|what)\s+(?:(?:one|alternative|scenario)\s+)?(?:is|would be)\s+(?:best|better)|"
+        r"\bcu[aá]l\s+(?:(?:es|ser[ií]a)\s+)?(?:la\s+)?(?:mejor|mejor opci[oó]n|recomendable)|"
+        r"\b(?:recommend|recomienda|recomendar|which should we choose)\b", question, re.I,
+    ))
 
 
 _PHYSICAL_SHORTAGE_CLAIM = re.compile(
