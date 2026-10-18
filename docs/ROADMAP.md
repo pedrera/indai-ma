@@ -2,8 +2,9 @@
 
 ## Current status
 
-The current release is **v1.17.0 — Scenario & Alternative Intelligence**. This
-roadmap distinguishes implemented capabilities from future candidates;
+The current local release candidate is **v1.18.0 — Objectives & Constraints**;
+the published baseline remains **v1.17.0 — Scenario & Alternative Intelligence**.
+This roadmap distinguishes implemented capabilities from future candidates;
 candidate items are not commitments or claims about the current implementation.
 
 ## Completed
@@ -80,14 +81,25 @@ candidate items are not commitments or claims about the current implementation.
   resolved Industrial Gases position. The Workspace retains the results for
   factual A/B follow-ups and presentation. Comparison does not select a winner.
   Its question is: “¿Qué ocurre con A, B o C?”
+- **v1.18.0 release candidate — Objectives & Constraints:** explicit measurable
+  objectives and hard constraints for one retained Industrial Gases scenario set.
+  Immutable definitions, exact units and deterministic evaluation of seven
+  existing factual metrics produce SATISFIED / VIOLATED / UNKNOWN outcomes and
+  independent hard-constraint aggregation, including NOT_APPLICABLE. A bounded
+  Spanish/English grammar supports new-set and criteria-only requests; validated
+  identity/revision bindings preserve provenance and prevent stale reuse.
+  Partial A/B displays remain factual while criteria use the full retained set.
+  Streamlit matrix and Copy retain order, observed values, reasons and references.
+  The Spanish “al menos” follow-up scope collision is corrected without changing
+  ordinary documentary/portfolio routing. No new physical metrics, RAG behavior,
+  LLM dependency, recommendation, ranking, scoring or optimization is added.
+  Its question is: “¿Qué alternativa satisface nuestros criterios explícitos?”
 
 ## Future direction
 
 The following forward roadmap is a sequence of candidates for design and
 validation, not a commitment or a claim about current capabilities:
 
-- **v1.18 — Objectives & Constraints:** “¿Qué alternativa satisface nuestros
-  objetivos?”
 - **v1.19 — Decision Engine:** “¿Podemos decidir sin escalar al LLM?” Julia 1
   may be evaluated as one possible technology during this work; it is not a
   committed product dependency.

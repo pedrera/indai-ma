@@ -10,10 +10,11 @@ for trading, procurement, CRM, contract-management or enterprise systems.
 
 Product principle: **Simple for the business user, traceable for the technical user.**
 
-**Current release: v1.17.0 — Scenario & Alternative Intelligence.** It extends
-deterministic Industrial Gases Supply Assurance with ordered, explicit
-multi-alternative evaluation and factual comparison for one focused position.
-It does not select a preferred alternative.
+**Current release candidate: v1.18.0 — Objectives & Constraints.** It evaluates
+explicit measurable objectives and hard constraints against retained Industrial
+Gases scenario facts for one focused position. Results show satisfaction and
+unknowns, without selecting a preferred alternative. The published baseline is
+v1.17.0; publication of v1.18.0 is a separate step.
 
 ## Energy / Commercial capabilities
 
@@ -88,8 +89,20 @@ The current screens and capabilities are:
   response and Copy output. Deterministic scenario-set evaluation and factual
   comparison make zero generation-LLM, embedding, and RAG calls; unrelated
   Workspace paths can have different model or retrieval behavior. No winner,
-  ranking, recommendation, score, objective or optimization semantics are
-  provided.
+  ranking, recommendation, score or optimization semantics are provided by that
+  factual comparison layer.
+- **Objectives & Constraints (v1.18.0 release candidate):** immutable explicit
+  objective and hard-constraint definitions are evaluated deterministically over
+  existing scenario facts. Each criterion yields `SATISFIED`, `VIOLATED` or
+  `UNKNOWN`; hard constraints have a separate aggregate, including
+  `NOT_APPLICABLE` when none were submitted. Unknown is never treated as satisfied.
+  The Workspace supports a small Spanish/English grammar, criteria-only follow-ups
+  on retained scenarios, an ordered satisfaction matrix and matching Copy output
+  with source references. Exact operational units, position identity and scenario
+  revisions remain explicit. Criterion interpretation/evaluation makes zero
+  generation-LLM, embedding, RAG or physical-calculation calls. Creating a new
+  scenario set still uses the existing deterministic Supply Assurance service.
+  This does not add general natural-language objectives or automatic decisions.
 - **Conversational Workspace (v1.15.0 capabilities retained):** the default
   conversation-first entry point routes natural-language questions over the
   existing portfolio query, per-position operational evidence, identity-scoped
@@ -162,9 +175,58 @@ remain usable without generation; the workspace can answer deterministic portfol
 list requests without a model call. A safety-stock breach means projected inventory
 is below the configured safety stock and does not itself mean stockout; only the
 structured projection's `stockout_before_delivery` supports that statement.
-v1.17.0 is the current release. See [v1.17.0 release notes](RELEASE_NOTES_v1.17.0.md)
-for scenario-set behavior and acceptance evidence, and [v1.16.0 release notes](RELEASE_NOTES_v1.16.0.md)
-for efficiency and deterministic documentary responses.
+See [v1.18.0 release notes](RELEASE_NOTES_v1.18.0.md) for criterion contracts,
+eligible metrics, examples, provenance and acceptance evidence;
+[v1.17.0 release notes](RELEASE_NOTES_v1.17.0.md) describe the published scenario-set
+baseline. Documentary retrieval, extraction and citation behavior are unchanged.
+
+## Explicit criteria in the Workspace
+
+First create a set, for example:
+
+```text
+For Hospital Costa Sur compare delivery in 3 days and 2 days.
+```
+
+Then submit complete criteria, separated by semicolons:
+
+```text
+Objetivo: la brecha de stock de seguridad debe ser al menos 0 kg; la capacidad no debe superarse.
+```
+
+```text
+Objective: Safety-stock gap must be at least 0 kg; There must be no stockout before delivery.
+```
+
+`Objetivo:` / `Objective:` defines an objective; an unprefixed mandatory sentence
+defines a hard constraint. Supported numeric sentences specify safety-stock gap
+or inventory before delivery and an explicit “at least” / “al menos” target and
+unit. Supported Boolean sentences explicitly require stockout absence/presence or
+capacity not exceeded/exceeded. This grammar is narrower than the typed evaluator.
+
+The typed API accepts only `consumption_until_delivery`,
+`inventory_immediately_before_delivery`, `safety_stock_gap_before_delivery`,
+`stockout_before_delivery`, `inventory_immediately_after_delivery`,
+`required_delivery_volume` and `capacity_exceeded`. Numeric targets are finite
+`Decimal` values with `lt/le/eq/ge/gt`; Boolean targets are actual `bool` values
+with `eq`. Exact units are required: `kg`, `t`, `L`, `m3`, `Nm3` or `Sm3`, with no
+conversion even between units of the same dimension. Only the signed safety-stock
+gap permits negative numeric targets.
+
+A violated hard constraint makes its aggregate `VIOLATED`; otherwise an unknown
+constraint makes it `UNKNOWN`; all submitted constraints satisfied gives
+`SATISFIED`. No hard constraints gives `NOT_APPLICABLE`. Objectives are reported
+independently. These states assess only submitted criteria, not overall safety,
+feasibility, readiness or which alternative to choose.
+
+Factual A/B displays can coexist with evaluation of the full retained set.
+Criteria evaluation rebuilds a full comparison from retained projections without
+rerunning them; identical criteria reuse their retained evaluation. Replacing the
+set, changing focus or resetting the conversation clears unrelated criteria.
+Source references and revisions belong to the in-memory conversation; they are
+not durable audit storage. Unsupported or incomplete sentences request
+clarification without evaluating a valid subset. No automatic criteria generation,
+preferences, ranking, scoring, optimization or cross-position evaluation is added.
 
 See [ARCHITECTURE.md](docs/ARCHITECTURE.md), [DECISIONS.md](docs/DECISIONS.md), [PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md), and [V1_MVP_SPEC.md](docs/V1_MVP_SPEC.md).
 

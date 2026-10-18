@@ -99,3 +99,41 @@ is not distributed-cancellable in this increment.
 Technical modes may remain direct during the migration. The remote Business
 Inspector exposes only safe aggregate diagnostics and never raw event streams,
 prompts or credentials.
+
+## ADR-019 — Explicit Industrial Gases criteria over retained scenario facts
+
+**Status:** implemented locally for the v1.18.0 release candidate. **Context:**
+v1.17 retains an ordered baseline and explicit alternatives, but factual
+comparison alone does not represent business targets or mandatory conditions.
+
+**Decision:** keep objectives and hard constraints bounded to Industrial Gases.
+Use immutable typed predicates over the seven existing ScenarioSetComparison
+metrics, finite Decimal thresholds, strict Boolean expectations and exact units.
+Evaluate verified retained facts without calling SupplyAssuranceService or any
+generation, embedding or RAG provider. Objectives have independent outcomes;
+hard constraints aggregate with violation precedence, then unknown, then
+satisfied, and NOT_APPLICABLE for an empty constraint set. Satisfaction is not a
+claim of overall safety or a decision recommendation.
+
+Bind definitions and evaluations to source references/revisions and the five-field
+position identity. Invalid global bindings abort; unavailable individual facts
+produce UNKNOWN. The evaluator rejects partial scenario comparisons; Workspace
+rebuilds a full factual comparison from retained results without changing the
+displayed A/B comparison or recalculating projections. Source provenance records
+remain unchanged, with result/projection/provenance references in the evaluation.
+
+The Workspace accepts only complete sentences in a small explicit grammar.
+Fully parsed criteria-only sentences reuse the retained focused position instead
+of entering general comparison scope resolution; “al menos” must not turn a
+threshold into a request to compare portfolio positions. New scenario requests
+retain their existing resolver. Identical definitions reuse evaluation; set/focus
+changes and reset invalidate unrelated criteria. UI and Copy format the same
+recorded results, without interpreting predicates again.
+
+**Consequences:** deterministic, inspectable criterion satisfaction with no
+automatic generation, ranking, scoring or optimization. The typed API is broader
+than the Workspace grammar. References and content fingerprints are session-scoped
+integrity checks, not persistent audit records or cryptographic authentication.
+The caller remains responsible for authoritative set revisions. A transversal
+cross-domain criteria abstraction is deferred until another domain demonstrates
+a concrete need. Energy/Business API, RAG and citation behavior remain unchanged.

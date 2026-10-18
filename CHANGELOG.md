@@ -4,6 +4,30 @@ This maintained changelog begins with v1.9.0. Earlier release history is recorde
 in annotated Git tags and selected historical release notes; the repository does
 not reconstruct every development milestone as a release.
 
+## v1.18.0 — Objectives & Constraints (release candidate)
+
+- Add immutable Industrial Gases objective, hard-constraint, predicate, criteria,
+  source-binding and evaluation contracts for seven existing scenario facts.
+- Evaluate finite Decimal thresholds and strict Boolean expectations without
+  unit conversion or physical recalculation. Distinguish SATISFIED, VIOLATED and
+  UNKNOWN; aggregate hard constraints separately, with NOT_APPLICABLE for none.
+- Verify retained scenario identity/order, revision and comparison/projection
+  correspondence. Preserve source and definition references; invalid global
+  bindings fail safely while unavailable individual facts remain UNKNOWN.
+- Integrate a bounded Spanish/English criterion grammar with retained Workspace
+  sets. Reuse identical evaluations, preserve partial factual displays, and
+  invalidate criteria on set replacement, focus changes or conversation reset.
+- Fix the Spanish criteria-follow-up collision with factual-comparison scope
+  resolution: complete criteria bind to the retained focused item.
+- Present an ordered satisfaction matrix and hard-constraint summary; Copy uses
+  the same values and includes definitions, reasons, identity and provenance.
+- Keep criteria-only interpretation/evaluation free of generation LLM, embedding,
+  RAG and physical-service calls. No Energy/Business API, document extraction,
+  citation, physical metric, recommendation, ranking, scoring or optimization
+  changes are included.
+- Validation: 932 pytest tests and FAST 38/38 passed with zero FAST LLM calls.
+  Functional acceptance uses fixtures and Streamlit AppTest, not a live provider.
+
 ## v1.17.0 — Scenario & Alternative Intelligence
 
 - Retain one real baseline and an ordered set of explicitly stated alternatives
@@ -35,8 +59,10 @@ not reconstruct every development milestone as a release.
 - Comparison is factual; recommendation, ranking and optimization remain outside
   this release.
 
-v1.17.0 is the current release. See [v1.16.0 release notes](RELEASE_NOTES_v1.16.0.md)
-and [v1.17.0 release notes](RELEASE_NOTES_v1.17.0.md) for release details.
+v1.18.0 is the current local release candidate; v1.17.0 remains the published
+baseline. See [v1.18.0 release notes](RELEASE_NOTES_v1.18.0.md),
+[v1.17.0 release notes](RELEASE_NOTES_v1.17.0.md) and
+[v1.16.0 release notes](RELEASE_NOTES_v1.16.0.md) for release details.
 
 ## v1.14.0 — Conversational Intelligence
 
