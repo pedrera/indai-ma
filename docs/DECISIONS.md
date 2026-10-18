@@ -137,3 +137,43 @@ integrity checks, not persistent audit records or cryptographic authentication.
 The caller remains responsible for authoritative set revisions. A transversal
 cross-domain criteria abstraction is deferred until another domain demonstrates
 a concrete need. Energy/Business API, RAG and citation behavior remain unchanged.
+
+## ADR-020 — Explicit unique-compliance selection over verified retained criteria
+
+**Status:** implemented locally for the v1.19.0 release candidate. **Context:**
+v1.17 retains scenario facts and v1.18 evaluates explicit criteria, but neither
+authorizes selection. A bounded decision must distinguish unique compliance from
+business preference and from incomplete evidence.
+
+**Decision:** keep the engine in Industrial Gases. The only supported policy is
+UNIQUE_HARD_CONSTRAINT_COMPLIANT, created by Workspace only after a recognized
+explicit ES/EN command. Default EXPLICIT_ALTERNATIVES excludes baseline;
+ALL_SCENARIOS requires express inclusion. Candidate order is preserved, not used
+to choose. Objectives do not affect eligibility. A hard violation dominates
+UNKNOWN while preserving both references; otherwise UNKNOWN leaves eligibility
+unresolved. No hard constraints retains NOT_APPLICABLE and eligibility None.
+
+Verify full identity, set revision, manifests, criterion coverage, versions and
+source references; rebuild the full factual comparison and rerun v1.18 logical
+evaluation against original retained results. Require equality of the canonical
+snapshot before classifying candidates. Source integrity errors remain typed
+errors, never business outcomes. The caller supplies the authoritative current
+revision; the engine cannot discover unseen later revisions.
+
+Exactly one eligible candidate and no unresolved rivals yields DECIDED. Multiple
+eligible candidates, none, or absent hard constraints yield UNDECIDABLE with
+specific reasons. At most one eligible candidate with unresolved rivals yields
+INSUFFICIENT_EVIDENCE. No implicit policy, preferences or tie-breakers are applied.
+
+Workspace retains the explicit policy and scope in the decision snapshot and
+reuses only matching source objects/content, identity, revision, criteria, policy,
+scope and evaluator/engine versions. Changes invalidate reuse; new sets and reset
+do not inherit authorization. Partial factual displays never determine scope.
+UI and Copy format recorded data through one presentation path.
+
+**Consequences:** unique compliance is not overall safety, optimality, a business
+recommendation or execution authorization. Selection/presentation use no LLM,
+embeddings, RAG, network or physical recalculation; logical reevaluation is allowed.
+Provenance and reuse keys are session-local, not persistent audit storage or
+authentication. New policies, optimization, execution, persistent lifecycle and
+cross-domain abstractions remain deferred. No new dependencies are introduced.

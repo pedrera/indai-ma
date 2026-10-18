@@ -4,7 +4,33 @@ This maintained changelog begins with v1.9.0. Earlier release history is recorde
 in annotated Git tags and selected historical release notes; the repository does
 not reconstruct every development milestone as a release.
 
-## v1.18.0 — Objectives & Constraints (release candidate)
+## v1.19.0 — Decision Engine (local release candidate)
+
+- Add immutable explicit decision policy, scope, eligibility and result contracts
+  for Industrial Gases, separate from the existing operational Decision Model.
+- Apply only UNIQUE_HARD_CONSTRAINT_COMPLIANT after explicit authorization;
+  alternatives-only is the default, with baseline included only by an explicit
+  ALL_SCENARIOS request. Never use order or objectives to break ties.
+- Reconstruct full factual comparisons and rerun v1.18 predicates against retained
+  results before accepting evidence. Reject incomplete or altered sources with
+  typed errors, separate from business outcomes.
+- Return DECIDED for unique compliance, UNDECIDABLE for absent hard constraints,
+  no eligible candidates or multiple eligible candidates, and
+  INSUFFICIENT_EVIDENCE for unresolved eligibility that prevents uniqueness.
+- Retain session-bound policy, scope, provenance and evaluations; invalidate
+  reuse when their dependencies change. Partial A/B views do not narrow scope.
+- Add matching Streamlit/Copy decision explanations and eligibility matrices,
+  exact units and accessible provenance. Selection and presentation make zero
+  generative-LLM, embedding, RAG, network or physical-calculation calls.
+- Preserve v1.17/v1.18 paths, Energy, Business API and documentary behavior.
+  No business recommendations, scoring, ranking, optimization or execution.
+- See [v1.19.0 release notes](RELEASE_NOTES_v1.19.0.md) for acceptance results
+  and known validation incidents. Publication remains a separate operation.
+- Validation: 1123 pytest tests; focused acceptance/regressions 535 tests and
+  54 subtests; FAST 38/38 with zero generative-LLM calls. The earlier TASK 4
+  Healthcare AppTest timeout did not recur in the TASK 5 full run.
+
+## v1.18.0 — Objectives & Constraints
 
 - Add immutable Industrial Gases objective, hard-constraint, predicate, criteria,
   source-binding and evaluation contracts for seven existing scenario facts.
@@ -59,8 +85,9 @@ not reconstruct every development milestone as a release.
 - Comparison is factual; recommendation, ranking and optimization remain outside
   this release.
 
-v1.18.0 is the current local release candidate; v1.17.0 remains the published
-baseline. See [v1.18.0 release notes](RELEASE_NOTES_v1.18.0.md),
+v1.19.0 is the current local release candidate; v1.18.0 is the published
+baseline. See [v1.19.0 release notes](RELEASE_NOTES_v1.19.0.md),
+[v1.18.0 release notes](RELEASE_NOTES_v1.18.0.md),
 [v1.17.0 release notes](RELEASE_NOTES_v1.17.0.md) and
 [v1.16.0 release notes](RELEASE_NOTES_v1.16.0.md) for release details.
 

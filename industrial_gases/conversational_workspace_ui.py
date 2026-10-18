@@ -11,6 +11,7 @@ from .portfolio_query import SupplyAgentSessionContext
 from .portfolio_ui import _CUSTOMER_LABELS, _FINDING_LABELS, _format_number, _quantity_text
 from .supply_agent import _is_document_list_request, _jsonable
 from .objective_constraint_models import CriterionOutcome, CriterionKind
+from .decision_engine_models import DecisionScopeMode, SupplyDecisionStatus, SupplyDecisionReason
 
 
 STARTER_PROMPTS = (
@@ -295,6 +296,8 @@ def _render_workspace_response(
         _render_scenario_comparison(response.scenario_comparison, lang)
     if response.criteria_evaluation is not None:
         _render_criteria_evaluation(response, lang)
+    if response.decision_evaluation is not None:
+        _render_decision_evaluation(response)
     if response.evidence.global_sources:
         st.markdown(f"**{text['global_sources']}**")
         for source in response.evidence.global_sources:
@@ -449,6 +452,8 @@ def build_workspace_response_copy_text(response: WorkspaceResponse, question: st
 
     if response.criteria_evaluation is not None:
         sections.append(_criteria_copy_text(response, lang))
+    if response.decision_evaluation is not None:
+        sections.append(_decision_copy_text(response))
 
     if response.evidence.global_sources:
         source_lines = [text["global_sources"]]
@@ -542,12 +547,7 @@ def _criteria_presentation(response, lang):
                text["definition"]: _criteria_definition(definition.predicate, lang)}
         for heading, scenario in zip(headings, scenarios):
             cell = next(item for item in scenario.evaluations if item.criterion_id == definition.id)
-            rendered = (f"{text['outcomes'][cell.outcome.value]} ({cell.outcome.value}) · "
-                        f"{text['observed']}: {_criteria_value(cell.observed_value, cell.observed_unit, lang)}")
-            if cell.outcome is CriterionOutcome.UNKNOWN:
-                reason = _CRITERIA_REASONS.get(cell.reason, ("Fact cannot be evaluated", "El hecho no es evaluable"))
-                rendered += f" · {reason[lang == 'es']} ({cell.reason})"
-            row[heading] = rendered
+            row[heading] = _criteria_cell(cell, lang)
         rows.append(row)
     aggregates = [{text["scenario"]: heading, text["aggregate"]:
                    f"{text['aggregates'][scenario.hard_constraint_outcome.value]} ({scenario.hard_constraint_outcome.value})"}
@@ -571,6 +571,123 @@ def _criteria_presentation(response, lang):
                            f"Projection: {source.projection_reference or text['unavailable']}"))
         references.extend(f"Provenance: {reference}" for reference in source.provenance_references)
     return rows, aggregates, references
+
+
+def _criteria_cell(cell, lang):
+    text = _CRITERIA_TEXT[lang]
+    rendered = (f"{text['outcomes'][cell.outcome.value]} ({cell.outcome.value}) · "
+                f"{text['observed']}: {_criteria_value(cell.observed_value, cell.observed_unit, lang)}")
+    if cell.outcome is CriterionOutcome.UNKNOWN:
+        reason = _CRITERIA_REASONS.get(cell.reason, ("Fact cannot be evaluated", "El hecho no es evaluable"))
+        rendered += f" · {reason[lang == 'es']} ({cell.reason})"
+    return rendered
+
+
+_DECISION_TITLE = "Decisión determinista"
+_DECISION_BOUNDARY = (
+    "Alcance técnico: el resultado se limita al cumplimiento de las restricciones explícitas "
+    "dentro del alcance autorizado. No autoriza acciones externas. Las referencias de sesión "
+    "no constituyen auditoría persistente, autenticación ni almacenamiento histórico."
+)
+_DECISION_REASONS = {
+    SupplyDecisionReason.UNIQUE_ELIGIBLE_CANDIDATE:
+        "Existe una única candidata elegible; las demás son definitivamente no elegibles.",
+    SupplyDecisionReason.NO_HARD_CONSTRAINTS: "No se definieron restricciones obligatorias.",
+    SupplyDecisionReason.NO_ELIGIBLE_CANDIDATE: "Ninguna candidata cumple todas las restricciones.",
+    SupplyDecisionReason.MULTIPLE_ELIGIBLE_CANDIDATES: "Varias candidatas cumplen todas las restricciones.",
+    SupplyDecisionReason.ELIGIBILITY_UNRESOLVED:
+        "Hay candidatas con elegibilidad pendiente por restricciones UNKNOWN; "
+        "estos hechos impiden establecer una selección única. UNKNOWN no implica incumplimiento.",
+    SupplyDecisionReason.UNSUPPORTED_PREFERENCE: "Existe una preferencia no soportada.",
+    SupplyDecisionReason.POLICY_REQUIRED: "Falta una política explícita de selección.",
+    SupplyDecisionReason.UNSUPPORTED_POLICY: "La política de selección no está soportada.",
+}
+
+
+def _decision_presentation(response):
+    """Format only this response's recorded decision; never consult session decisions."""
+    decision = response.decision_evaluation
+    labels = {"baseline": "Base"}
+    if response.scenario_set_result is not None:
+        labels.update((branch.alternative.id, branch.alternative.label)
+                      for branch in response.scenario_set_result.scenario_results)
+    lines = [f"Estado: {decision.status.value}"]
+    lines.extend(f"Motivo: {reason.value} · {_DECISION_REASONS[reason]}" for reason in decision.reasons)
+    policy, scope = decision.policy, decision.scope
+    lines.append(f"Política: {policy.policy_id} · versión: {policy.policy_version} · "
+                 f"regla: {policy.selection_rule.value}" if policy else "Política: No disponible")
+    lines.append(f"Alcance autorizado: {scope.mode.value}" if scope else "Alcance autorizado: No disponible")
+    if scope is not None:
+        lines.append("Baseline participa explícitamente como candidata." if scope.mode is DecisionScopeMode.ALL_SCENARIOS
+                     else "Baseline excluido de las candidatas; se conserva como referencia factual.")
+    lines.append("Candidatas participantes: " + (", ".join(decision.candidate_ids) or "Ninguna"))
+    if decision.status is SupplyDecisionStatus.DECIDED:
+        lines.extend(("Alternativa seleccionada bajo la política de cumplimiento único de restricciones explícitas.",
+                      f"Identificador seleccionado: {decision.selected_scenario_id}"))
+    rows, references = [], []
+    definitions = decision.criteria_evaluation.criteria.constraints
+    for assessment in decision.candidate_assessments:
+        row = {"Candidata": labels.get(assessment.scenario_id, assessment.scenario_id),
+               "ID": assessment.scenario_id}
+        cells = {cell.criterion_id: cell for cell in assessment.scenario_evaluation.evaluations
+                 if cell.criterion_kind is CriterionKind.HARD_CONSTRAINT}
+        for definition in definitions:
+            row[f"{definition.id}: {_criteria_definition(definition.predicate, 'es')}"] = _criteria_cell(cells[definition.id], "es")
+        row["Elegibilidad"] = (assessment.eligibility.value if assessment.eligibility is not None
+                              else f"No aplica ({assessment.hard_constraint_outcome.value})")
+        rows.append(row)
+        satisfied = tuple(cell.criterion_id for cell in cells.values() if cell.outcome is CriterionOutcome.SATISFIED)
+        lines.append(f"{assessment.scenario_id} · {row['Elegibilidad']} · restricciones satisfechas: "
+                     f"{', '.join(satisfied) or 'Ninguna'}; violadas: "
+                     f"{', '.join(assessment.violation_references) or 'Ninguna'}; UNKNOWN: "
+                     f"{', '.join(assessment.unknown_references) or 'Ninguna'}.")
+    binding = decision.source_set_binding
+    references.extend((f"Identidad de la posición: {vars(binding.position_identity)}",
+        f"ScenarioSet: {binding.set_reference} · revisión: {binding.set_revision}",
+        f"Versión del motor: {decision.engine_version}",
+        f"Evaluación de criterios: {decision.criteria_evaluation_reference}",
+        f"Versión del evaluador: {decision.criteria_evaluation.evaluator_version}"))
+    if policy is not None:
+        origin = policy.definition_source
+        references.append(f"Origen de política: {origin.origin.value} · referencia: {origin.reference} · revisión: {origin.revision}")
+    if scope is not None:
+        references.append(f"Fuente del alcance: {scope.source_reference}")
+    criteria = decision.criteria_evaluation.criteria
+    references.append(f"Definición de criterios: {criteria.definition_source.reference} · revisión: {criteria.definition_source.revision}")
+    for definition in criteria.objectives + criteria.constraints:
+        origin = definition.definition_source
+        references.append(f"{definition.id}: {definition.label} · {_criteria_definition(definition.predicate, 'es')} · "
+                          f"origen: {origin.origin.value} · referencia: {origin.reference} · revisión: {origin.revision}")
+    for scenario in decision.criteria_evaluation.scenario_evaluations:
+        source = scenario.source
+        references.extend((f"{source.scenario_id} · resultado: {source.result_reference}",
+                           f"Proyección: {source.projection_reference or 'No disponible'}"))
+        references.extend(f"Procedencia: {ref}" for ref in source.provenance_references)
+        references.extend(f"{source.scenario_id} / {cell.criterion_id}: {_criteria_cell(cell, 'es')} · motivo: {cell.reason}"
+                          for cell in scenario.evaluations)
+    references.extend(f"Referencia: {ref}" for ref in decision.provenance_references)
+    return lines, rows, references
+
+
+def _render_decision_evaluation(response):
+    lines, rows, references = _decision_presentation(response)
+    st.markdown(f"**{_DECISION_TITLE}**")
+    for line in lines:
+        st.text(line)
+    if rows:
+        st.table(rows)
+    st.caption(_DECISION_BOUNDARY)
+    with st.expander("Procedencia de la decisión"):
+        st.text("\n".join(references))
+
+
+def _decision_copy_text(response):
+    lines, rows, references = _decision_presentation(response)
+    parts = [_DECISION_TITLE, *lines]
+    if rows:
+        parts.append(" | ".join(rows[0]))
+        parts.extend(" | ".join(row.values()) for row in rows)
+    return "\n".join((*parts, _DECISION_BOUNDARY, *references))
 
 
 def _render_criteria_evaluation(response, lang):

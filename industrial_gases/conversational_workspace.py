@@ -44,6 +44,12 @@ from .factual_comparison import compare_supply_assurance_scenario_set
 from .objective_constraint_models import ScenarioSetBinding, ScenarioSetCriteriaEvaluation
 from .objective_constraint_evaluation import RetainedScenarioSetSource, evaluate_supply_criteria, SourceBindingError
 from .workspace_criteria import is_criteria_request, split_criteria_request, bind_workspace_criteria
+from .decision_engine import evaluate_supply_decision
+from .decision_engine_models import SupplyDecisionEvaluation, SupplyDecisionValidationError
+from .workspace_decision import (
+    is_selection_request, selection_scope, explicit_selection_policy, decision_reuse_key,
+    selection_explanation, selection_request_issue,
+)
 
 
 class WorkspaceIntent(str, Enum):
@@ -118,6 +124,7 @@ class WorkspaceResponse:
     scenario_comparison: ScenarioSetComparison | None = None
     scenario_set_result: SupplyAssuranceScenarioSetResult | None = None
     criteria_evaluation: ScenarioSetCriteriaEvaluation | None = None
+    decision_evaluation: SupplyDecisionEvaluation | None = None
 
     @property
     def content(self) -> str | None:
@@ -183,6 +190,8 @@ def route_workspace_intent(
 ) -> WorkspaceRoute:
     """Map user intent to existing capabilities without choosing data or calculating."""
     context = context or SupplyAgentSessionContext()
+    if is_selection_request(question):
+        return WorkspaceRoute(WorkspaceIntent.FOLLOW_UP, ("deterministic_decision_evaluation",))
     documentary = _requires_documentary_evidence(question) or _is_documentary_followup(question, context)
     scenario = _has_explicit_what_if(question) or _looks_like_scenario_set_request(question)
     operational = _requires_operational_context(question)
@@ -282,6 +291,8 @@ class ConversationalWorkspaceOrchestrator:
         documentary_question = (_requires_documentary_evidence(question)
             and re.match(r"^(?:¿|(?:what|which|how|qu[eé]|cu[aá]l|c[oó]mo)\b)", question, re.I)
             and ";" not in question and "\n" not in question)
+        if is_selection_request(question):
+            return self._run_explicit_decision(question, route)
         if is_criteria_request(question) and not documentary_question:
             return self._run_explicit_criteria(question, route)
 
@@ -597,7 +608,9 @@ class ConversationalWorkspaceOrchestrator:
                 event = self.recorder.start_stage("deterministic_criteria_evaluation")
                 self.recorder.complete_stage(event, generation_llm_calls=0, embedding_calls=0,
                     rag_calls=0, physical_calculation_calls=0, set_revision=state.source_set_binding.set_revision)
-        next_state = replace(state, criteria=criteria, criteria_evaluation=evaluation)
+        next_state = replace(state, criteria=criteria, criteria_evaluation=evaluation,
+            decision_evaluation=state.decision_evaluation if state.criteria == criteria else None,
+            decision_reuse_key=state.decision_reuse_key if state.criteria == criteria else None)
         if created_response is not None:
             evidence = created_response.evidence
         else:
@@ -613,6 +626,72 @@ class ConversationalWorkspaceOrchestrator:
             scenario_comparison=state.comparison, scenario_set_result=state.result,
             criteria_evaluation=evaluation,
         )
+
+    def _decision_needs_input(self, question, route, reason):
+        state = self.session_context.scenario_set_state
+        context = self.session_context
+        if state is not None:
+            context = replace(context, scenario_set_state=replace(
+                state, decision_evaluation=None, decision_reuse_key=None))
+        spanish = _is_spanish_workspace_text(question)
+        return WorkspaceResponse(
+            status=SupplyAgentStatus.NEEDS_INPUT, route=route,
+            explanation=(f"No se aplicó la selección: {reason}. Se requiere un conjunto vigente, "
+                "criterios evaluados y una política y alcance explícitos."
+                if spanish else f"Selection was not applied: {reason}. A current scenario set, "
+                "evaluated criteria and an explicit supported policy and scope are required."),
+            portfolio_query=None, evidence=PortfolioEvidenceBundle(()), session_context=context,
+            unsupported_questions=(reason,), clarification_required=True)
+
+    def _run_explicit_decision(self, question, route):
+        mode = selection_scope(question)
+        if mode is None:
+            return self._decision_needs_input(question, route, selection_request_issue(question))
+        context = self.session_context
+        state = context.scenario_set_state
+        if state is None or state.source_set_binding is None:
+            return self._decision_needs_input(question, route, "retained_scenario_set_required")
+        from hashlib import sha256
+        digest = sha256(repr((state.scenario_set, state.result)).encode("utf-8")).hexdigest()
+        if (state.source_set_binding.set_reference != f"workspace:{state.item_id}"
+                or state.source_set_binding.set_revision != f"{context.scenario_set_generation}:{digest}"):
+            return self._decision_needs_input(question, route, "stale_scenario_set_revision")
+        resolved = SupplyPortfolioQueryService().select(
+            self.portfolio, self.attention, PortfolioQuery(item_id=state.item_id))
+        if (context.focused_item_id != state.item_id or state.item_id not in context.selected_item_ids
+                or resolved.item_ids != (state.item_id,)
+                or resolved.matches[0].item.request != state.scenario_set.baseline_request):
+            return self._decision_needs_input(question, route, "stale_or_different_scenario_focus")
+        if state.criteria is None or state.criteria_evaluation is None:
+            return self._decision_needs_input(question, route, "evaluated_criteria_required")
+        policy = explicit_selection_policy(question, state.source_set_binding, mode)
+        key = decision_reuse_key(state, policy)
+        cached = state.decision_evaluation
+        reused = (cached is not None and state.decision_reuse_key == key
+                  and cached.policy == policy and cached.criteria_evaluation == state.criteria_evaluation)
+        if reused:
+            evaluation = cached
+        else:
+            try:
+                evaluation = evaluate_supply_decision(state.criteria_evaluation, policy,
+                    RetainedScenarioSetSource(state.source_set_binding, state.scenario_set, state.result))
+            except SupplyDecisionValidationError as error:
+                return self._decision_needs_input(question, route, error.reason.value)
+        next_state = replace(state, decision_evaluation=evaluation, decision_reuse_key=key)
+        if self.recorder:
+            event = self.recorder.start_stage("deterministic_decision_evaluation")
+            self.recorder.complete_stage(event, reused=reused, generation_llm_calls=0,
+                embedding_calls=0, rag_calls=0, physical_calculation_calls=0,
+                set_revision=state.source_set_binding.set_revision)
+        spanish = _is_spanish_workspace_text(question)
+        explanation = selection_explanation(evaluation, state.scenario_set, spanish=spanish)
+        match = resolved.matches[0]
+        return WorkspaceResponse(status=SupplyAgentStatus.COMPLETED, route=route,
+            explanation=explanation, portfolio_query=None,
+            evidence=PortfolioEvidenceBundle((PortfolioItemEvidence(match.item, match.attention),)),
+            session_context=replace(context, scenario_set_state=next_state, last_intent="decision_evaluation"),
+            scenario_comparison=state.comparison, scenario_set_result=state.result,
+            criteria_evaluation=state.criteria_evaluation, decision_evaluation=evaluation)
 
     def _scenario_set_needs_input(self, question, route, query_result, message, reason,
                                   focused_item_id=None) -> WorkspaceResponse:

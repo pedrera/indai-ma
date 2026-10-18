@@ -10,11 +10,11 @@ for trading, procurement, CRM, contract-management or enterprise systems.
 
 Product principle: **Simple for the business user, traceable for the technical user.**
 
-**Current release candidate: v1.18.0 — Objectives & Constraints.** It evaluates
-explicit measurable objectives and hard constraints against retained Industrial
-Gases scenario facts for one focused position. Results show satisfaction and
-unknowns, without selecting a preferred alternative. The published baseline is
-v1.17.0; publication of v1.18.0 is a separate step.
+**Current local release candidate: v1.19.0 — Decision Engine.** An explicit request
+can apply a single deterministic policy to one retained Industrial Gases scenario
+set: select only its unique hard-constraint-compliant candidate when all rivals
+are definitively ineligible. The published baseline is v1.18.0 at
+`6be79efeb688882f4615d3976e57bdeded351278`; v1.19 publication is a separate step.
 
 ## Energy / Commercial capabilities
 
@@ -91,7 +91,7 @@ The current screens and capabilities are:
   Workspace paths can have different model or retrieval behavior. No winner,
   ranking, recommendation, score or optimization semantics are provided by that
   factual comparison layer.
-- **Objectives & Constraints (v1.18.0 release candidate):** immutable explicit
+- **Objectives & Constraints (v1.18.0):** immutable explicit
   objective and hard-constraint definitions are evaluated deterministically over
   existing scenario facts. Each criterion yields `SATISFIED`, `VIOLATED` or
   `UNKNOWN`; hard constraints have a separate aggregate, including
@@ -103,6 +103,14 @@ The current screens and capabilities are:
   generation-LLM, embedding, RAG or physical-calculation calls. Creating a new
   scenario set still uses the existing deterministic Supply Assurance service.
   This does not add general natural-language objectives or automatic decisions.
+- **Decision Engine (v1.19.0 local release candidate):** explicit ES/EN selection
+  requests authorize `UNIQUE_HARD_CONSTRAINT_COMPLIANT` over retained, canonically
+  verified criteria. `EXPLICIT_ALTERNATIVES` excludes baseline; `ALL_SCENARIOS`
+  includes it only when explicitly requested. Results are `DECIDED`, `UNDECIDABLE`
+  or `INSUFFICIENT_EVIDENCE`. Streamlit and Copy show the same ordered eligibility
+  matrix, reasons, observations and session provenance. Objectives do not break
+  ties. No ranking, scoring, optimization, business recommendation or automatic
+  execution is added. The v1.17 factual and v1.18 criteria paths remain available.
 - **Conversational Workspace (v1.15.0 capabilities retained):** the default
   conversation-first entry point routes natural-language questions over the
   existing portfolio query, per-position operational evidence, identity-scoped
@@ -178,7 +186,9 @@ structured projection's `stockout_before_delivery` supports that statement.
 See [v1.18.0 release notes](RELEASE_NOTES_v1.18.0.md) for criterion contracts,
 eligible metrics, examples, provenance and acceptance evidence;
 [v1.17.0 release notes](RELEASE_NOTES_v1.17.0.md) describe the published scenario-set
-baseline. Documentary retrieval, extraction and citation behavior are unchanged.
+foundation. [v1.19.0 release notes](RELEASE_NOTES_v1.19.0.md) describe explicit
+selection and its acceptance evidence. Documentary retrieval, extraction and
+citation behavior are unchanged.
 
 ## Explicit criteria in the Workspace
 
@@ -229,6 +239,45 @@ clarification without evaluating a valid subset. No automatic criteria generatio
 preferences, ranking, scoring, optimization or cross-position evaluation is added.
 
 See [ARCHITECTURE.md](docs/ARCHITECTURE.md), [DECISIONS.md](docs/DECISIONS.md), [PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md), and [V1_MVP_SPEC.md](docs/V1_MVP_SPEC.md).
+
+## Explicit selection in the Workspace
+
+After creating the Hospital set above, submit mandatory criteria and then a
+separate explicit selection request:
+
+```text
+La brecha de stock de seguridad debe ser al menos 0 kg; la capacidad no debe superarse.
+Aplica la política de selección estricta a las alternativas.
+```
+
+English equivalents include `Apply strict selection to the alternatives.` and
+`Select the unique alternative satisfying all hard constraints.` Spanish also
+accepts `Selecciona la única alternativa que cumpla todas las restricciones.`
+These are bounded complete commands, not arbitrary natural-language objectives.
+To include baseline, use `Aplica la política de selección estricta incluyendo
+el escenario base.` or `Apply strict selection including the baseline scenario.`
+Creating scenarios, submitting criteria, asking which is best, or comparing A/B
+does not authorize selection. Unsupported preferences or subsets are not applied.
+
+In the existing Hospital fixture, gaps are baseline -1100 kg, A -400 kg and
+B +300 kg. With gap >= 0 kg and capacity not exceeded, only B qualifies among
+A/B: `DECIDED`. With stockout absent and capacity not exceeded, both qualify:
+`UNDECIDABLE / MULTIPLE_ELIGIBLE_CANDIDATES`. One eligible candidate plus an
+unresolved rival produces `INSUFFICIENT_EVIDENCE / ELIGIBILITY_UNRESOLVED`.
+UNKNOWN is never satisfaction or a demonstrated violation. A violation plus
+UNKNOWN still makes a candidate ineligible, retaining both evidence references.
+No hard constraints, including objectives-only requests, yields
+`UNDECIDABLE / NO_HARD_CONSTRAINTS`.
+
+The engine rebuilds the full factual comparison and repeats logical criterion
+evaluation against retained results before accepting an incoming evaluation.
+Selection and presentation make no LLM, embedding, RAG, network or physical
+calculation calls. Repeating an identical request reuses the verified decision
+only while source, criteria, policy, scope and versions remain current. New
+sets, changed criteria, focus or reset remove prior authorization. Partial
+displays do not narrow the authorized scope. Source bindings and references are
+session-local integrity checks, not authentication or persistent audit storage;
+the caller remains authoritative about the current set revision.
 
 ## Requirements
 

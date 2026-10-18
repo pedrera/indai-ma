@@ -6,6 +6,7 @@ import re
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from .decision_engine_models import SupplyDecisionEvaluation
     from .objective_constraint_models import ScenarioSetBinding, SupplyCriteria, ScenarioSetCriteriaEvaluation
 
 from rag_models import RetrievedChunk
@@ -195,9 +196,21 @@ class WorkspaceScenarioSetState:
     source_set_binding: "ScenarioSetBinding | None" = None
     criteria: "SupplyCriteria | None" = None
     criteria_evaluation: "ScenarioSetCriteriaEvaluation | None" = None
+    decision_evaluation: "SupplyDecisionEvaluation | None" = None
+    decision_reuse_key: str | None = None
 
     def __post_init__(self) -> None:
         from .objective_constraint_models import ScenarioSetBinding, SupplyCriteria, ScenarioSetCriteriaEvaluation
+        if self.decision_evaluation is not None:
+            from .decision_engine_models import SupplyDecisionEvaluation
+            from .workspace_decision import decision_reuse_key
+            if not isinstance(self.decision_evaluation, SupplyDecisionEvaluation):
+                raise TypeError("decision_evaluation must be SupplyDecisionEvaluation")
+            if (self.decision_evaluation.criteria_evaluation != self.criteria_evaluation
+                    or self.decision_evaluation.source_set_binding != self.source_set_binding
+                    or self.decision_reuse_key != decision_reuse_key(self, self.decision_evaluation.policy)):
+                object.__setattr__(self, "decision_evaluation", None)
+                object.__setattr__(self, "decision_reuse_key", None)
         if self.source_set_binding is not None and not isinstance(self.source_set_binding, ScenarioSetBinding):
             raise TypeError("source_set_binding must be ScenarioSetBinding")
         if self.criteria is not None:

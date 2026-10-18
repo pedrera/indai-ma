@@ -2,8 +2,8 @@
 
 ## Current status
 
-The current local release candidate is **v1.18.0 — Objectives & Constraints**;
-the published baseline remains **v1.17.0 — Scenario & Alternative Intelligence**.
+The current local release candidate is **v1.19.0 — Decision Engine**;
+the published baseline is **v1.18.0 — Objectives & Constraints**.
 This roadmap distinguishes implemented capabilities from future candidates;
 candidate items are not commitments or claims about the current implementation.
 
@@ -81,7 +81,7 @@ candidate items are not commitments or claims about the current implementation.
   resolved Industrial Gases position. The Workspace retains the results for
   factual A/B follow-ups and presentation. Comparison does not select a winner.
   Its question is: “¿Qué ocurre con A, B o C?”
-- **v1.18.0 release candidate — Objectives & Constraints:** explicit measurable
+- **v1.18.0 — Objectives & Constraints:** explicit measurable
   objectives and hard constraints for one retained Industrial Gases scenario set.
   Immutable definitions, exact units and deterministic evaluation of seven
   existing factual metrics produce SATISFIED / VIOLATED / UNKNOWN outcomes and
@@ -94,15 +94,22 @@ candidate items are not commitments or claims about the current implementation.
   ordinary documentary/portfolio routing. No new physical metrics, RAG behavior,
   LLM dependency, recommendation, ranking, scoring or optimization is added.
   Its question is: “¿Qué alternativa satisface nuestros criterios explícitos?”
+- **v1.19.0 local release candidate — Decision Engine:** an explicit bounded
+  ES/EN request authorizes `UNIQUE_HARD_CONSTRAINT_COMPLIANT` for one retained
+  Industrial Gases set. Verify the complete evidence canonically before selecting
+  a unique compliant candidate. Default scope excludes baseline; explicit
+  ALL_SCENARIOS includes it. Preserve DECIDED / UNDECIDABLE /
+  INSUFFICIENT_EVIDENCE, UNKNOWN, session provenance and strict invalidation.
+  Streamlit and Copy share the recorded eligibility matrix. No business
+  recommendation, ranking, scoring, optimization, execution, cross-domain engine
+  or new dependency is included. Its question is: “¿Existe una única candidata
+  que cumpla las restricciones explícitas dentro del alcance autorizado?”
 
 ## Future direction
 
 The following forward roadmap is a sequence of candidates for design and
 validation, not a commitment or a claim about current capabilities:
 
-- **v1.19 — Decision Engine:** “¿Podemos decidir sin escalar al LLM?” Julia 1
-  may be evaluated as one possible technology during this work; it is not a
-  committed product dependency.
 - **v2.0 — Industrial Decision Intelligence:** “¿Qué deberíamos hacer y por
   qué?”
 - **v2.1 — Decision Lifecycle:** “¿Funcionó nuestra decisión?”
