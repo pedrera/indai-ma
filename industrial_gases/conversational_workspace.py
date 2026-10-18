@@ -41,6 +41,9 @@ from .supply_agent import (
     _is_portfolio_query,
 )
 from .factual_comparison import compare_supply_assurance_scenario_set
+from .objective_constraint_models import ScenarioSetBinding, ScenarioSetCriteriaEvaluation
+from .objective_constraint_evaluation import RetainedScenarioSetSource, evaluate_supply_criteria, SourceBindingError
+from .workspace_criteria import is_criteria_request, split_criteria_request, bind_workspace_criteria
 
 
 class WorkspaceIntent(str, Enum):
@@ -114,6 +117,7 @@ class WorkspaceResponse:
     comparison: FactualComparison | None = None
     scenario_comparison: ScenarioSetComparison | None = None
     scenario_set_result: SupplyAssuranceScenarioSetResult | None = None
+    criteria_evaluation: ScenarioSetCriteriaEvaluation | None = None
 
     @property
     def content(self) -> str | None:
@@ -243,6 +247,27 @@ class ConversationalWorkspaceOrchestrator:
         self.service = service
 
     def run(self, request: str, timeout_seconds: float | None = None) -> WorkspaceResponse:
+        response = self._run(request, timeout_seconds)
+        context = response.session_context
+        old_state = self.session_context.scenario_set_state
+        if response.scenario_analyses and response.scenario_set_result is None:
+            context = replace(context, scenario_set_state=None)
+        # Existing context builders may reconstruct a same-position factual turn.
+        # Retain criteria there, but never after a new scenario or focus change.
+        if (context.scenario_set_state is None and old_state is not None
+                and context.focused_item_id == old_state.item_id
+                and "scenario_evaluation" not in response.route.capabilities
+                and not response.scenario_analyses
+                and not response.clarification_required):
+            context = replace(context, scenario_set_state=old_state)
+        context = replace(context, scenario_set_generation=max(
+            context.scenario_set_generation, self.session_context.scenario_set_generation))
+        state = context.scenario_set_state
+        return replace(response, session_context=context, criteria_evaluation=(
+            response.criteria_evaluation or (state.criteria_evaluation
+                if state and response.status is SupplyAgentStatus.COMPLETED else None)))
+
+    def _run(self, request: str, timeout_seconds: float | None = None) -> WorkspaceResponse:
         question = request.strip() if isinstance(request, str) else ""
         if not question:
             raise ValueError("workspace request must be a non-empty string")
@@ -253,6 +278,12 @@ class ConversationalWorkspaceOrchestrator:
                 capabilities=route.capabilities,
             )
             self.recorder.complete_stage(event)
+
+        documentary_question = (_requires_documentary_evidence(question)
+            and re.match(r"^(?:¿|(?:what|which|how|qu[eé]|cu[aá]l|c[oó]mo)\b)", question, re.I)
+            and ";" not in question and "\n" not in question)
+        if is_criteria_request(question) and not documentary_question:
+            return self._run_explicit_criteria(question, route)
 
         scenario_syntax = _parse_scenario_set_syntax(question)
         if scenario_syntax is not None:
@@ -453,6 +484,13 @@ class ConversationalWorkspaceOrchestrator:
                 generation_llm_calls=0, embedding_calls=0, rag_calls=0,
             )
 
+        from hashlib import sha256
+        generation = context.scenario_set_generation + 1
+        binding = ScenarioSetBinding(
+            f"workspace:{item_id}",
+            f"{generation}:{sha256(repr((scenario_set, result)).encode('utf-8')).hexdigest()}",
+            comparison.position_identity,
+        )
         previous_focus = context.focused_item_id
         next_context = SupplyAgentSessionContext(
             selected_item_ids=(item_id,), focused_item_id=item_id,
@@ -464,8 +502,9 @@ class ConversationalWorkspaceOrchestrator:
             last_scenario_change=context.last_scenario_change,
             scenario_history=context.scenario_history if previous_focus == item_id else (),
             scenario_set_state=WorkspaceScenarioSetState(
-                item_id, scenario_set, result, comparison,
+                item_id, scenario_set, result, comparison, binding,
             ),
+            scenario_set_generation=generation,
         )
         evidence = PortfolioEvidenceBundle((PortfolioItemEvidence(match.item, match.attention),))
         answer = (
@@ -482,6 +521,97 @@ class ConversationalWorkspaceOrchestrator:
             session_context=next_context,
             scenario_comparison=comparison,
             scenario_set_result=result,
+        )
+
+    def _criteria_needs_input(self, question, route, reason):
+        context = self.session_context
+        if (reason in {"stale_scenario_set_revision", "stale_or_different_scenario_focus",
+                       "invalid_criteria_source_binding"} and context.scenario_set_state is not None):
+            context = replace(context, scenario_set_state=replace(
+                context.scenario_set_state, criteria=None, criteria_evaluation=None))
+        return WorkspaceResponse(
+            status=SupplyAgentStatus.NEEDS_INPUT, route=route,
+            explanation=("Indica criterios explícitos completos para un conjunto de escenarios retenido; "
+                         "separa cada criterio con punto y coma."
+                         if _is_spanish_workspace_text(question) else
+                         "State complete explicit criteria for one retained scenario set; separate criteria with semicolons."),
+            portfolio_query=None, evidence=PortfolioEvidenceBundle(()),
+            session_context=context, unsupported_questions=(reason,),
+            clarification_required=True,
+        )
+
+    def _run_explicit_criteria(self, question, route):
+        route = WorkspaceRoute(WorkspaceIntent.FOLLOW_UP, tuple(dict.fromkeys(
+            route.capabilities + ("deterministic_criteria_evaluation",))))
+        if _requires_documentary_evidence(question):
+            return self._criteria_needs_input(question, route, "documentary_criteria_combination_not_supported")
+        try:
+            scenario_question, definitions = split_criteria_request(question)
+        except (ValueError, TypeError):
+            return self._criteria_needs_input(question, route, "unsupported_or_incomplete_criteria")
+        created_response = None
+        context = self.session_context
+        if scenario_question is not None:
+            syntax = _parse_scenario_set_syntax(scenario_question)
+            if syntax is None:
+                return self._criteria_needs_input(question, route, "explicit_scenario_set_required")
+            created_response = self._run_explicit_scenario_set(scenario_question, route, syntax)
+            if created_response.status is not SupplyAgentStatus.COMPLETED:
+                return created_response
+            context = created_response.session_context
+        state = context.scenario_set_state
+        if state is None or state.source_set_binding is None:
+            return self._criteria_needs_input(question, route, "retained_scenario_set_required")
+        from hashlib import sha256
+        digest = sha256(repr((state.scenario_set, state.result)).encode("utf-8")).hexdigest()
+        if (state.source_set_binding.set_reference != f"workspace:{state.item_id}"
+                or state.source_set_binding.set_revision != f"{context.scenario_set_generation}:{digest}"):
+            return self._criteria_needs_input(question, route, "stale_scenario_set_revision")
+        if scenario_question is None:
+            # Fully parsed criterion sentences contain no position selector.
+            # Their thresholds must not be interpreted as portfolio comparisons.
+            resolved = SupplyPortfolioQueryService().select(
+                self.portfolio, self.attention, PortfolioQuery(item_id=state.item_id))
+            clarification = (context.focused_item_id != state.item_id
+                             or state.item_id not in context.selected_item_ids)
+        else:
+            from .supply_agent import _resolve_portfolio_scope
+            resolved, _, _, clarification = _resolve_portfolio_scope(
+                scenario_question, self.portfolio, self.attention,
+                SupplyAgentRequest(scenario_question, None, context))
+        current = next((item for item in self.portfolio.items if item.item_id == state.item_id), None)
+        if (clarification or resolved.item_ids != (state.item_id,) or current is None
+                or current.request != state.scenario_set.baseline_request):
+            return self._criteria_needs_input(question, route, "stale_or_different_scenario_focus")
+        criteria = bind_workspace_criteria(definitions, state.source_set_binding)
+        if state.criteria == criteria and state.criteria_evaluation is not None:
+            evaluation = state.criteria_evaluation
+        else:
+            full_comparison = compare_supply_assurance_scenario_set(state.result)
+            try:
+                evaluation = evaluate_supply_criteria(criteria, full_comparison, RetainedScenarioSetSource(
+                    state.source_set_binding, state.scenario_set, state.result))
+            except SourceBindingError:
+                return self._criteria_needs_input(question, route, "invalid_criteria_source_binding")
+            if self.recorder:
+                event = self.recorder.start_stage("deterministic_criteria_evaluation")
+                self.recorder.complete_stage(event, generation_llm_calls=0, embedding_calls=0,
+                    rag_calls=0, physical_calculation_calls=0, set_revision=state.source_set_binding.set_revision)
+        next_state = replace(state, criteria=criteria, criteria_evaluation=evaluation)
+        if created_response is not None:
+            evidence = created_response.evidence
+        else:
+            attention = next(item for item in self.attention.items if item.item_id == state.item_id)
+            evidence = PortfolioEvidenceBundle((PortfolioItemEvidence(current, attention),))
+        return WorkspaceResponse(
+            status=SupplyAgentStatus.COMPLETED, route=route,
+            explanation=("Objetivos y restricciones explícitos evaluados por escenario."
+                         if _is_spanish_workspace_text(question) else
+                         "Explicit objectives and hard constraints evaluated per scenario."),
+            portfolio_query=None, evidence=evidence,
+            session_context=replace(context, scenario_set_state=next_state, last_intent="criteria_evaluation"),
+            scenario_comparison=state.comparison, scenario_set_result=state.result,
+            criteria_evaluation=evaluation,
         )
 
     def _scenario_set_needs_input(self, question, route, query_result, message, reason,

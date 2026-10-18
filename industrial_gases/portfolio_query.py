@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .objective_constraint_models import ScenarioSetBinding, SupplyCriteria, ScenarioSetCriteriaEvaluation
 
 from rag_models import RetrievedChunk
 
@@ -145,8 +148,11 @@ class SupplyAgentSessionContext:
     last_scenario_change: tuple[str, str] | None = None
     scenario_history: tuple["WorkspaceScenario", ...] = ()
     scenario_set_state: "WorkspaceScenarioSetState | None" = None
+    scenario_set_generation: int = 0
 
     def __post_init__(self) -> None:
+        if type(self.scenario_set_generation) is not int or self.scenario_set_generation < 0:
+            raise ValueError("scenario-set generation must be a nonnegative integer")
         ids = tuple(dict.fromkeys(item_id for item_id in self.selected_item_ids if item_id))[:32]
         if self.focused_item_id and self.focused_item_id not in ids:
             raise ValueError("focused item must be in the bounded selected item IDs")
@@ -186,8 +192,21 @@ class WorkspaceScenarioSetState:
     scenario_set: SupplyAssuranceScenarioSet
     result: SupplyAssuranceScenarioSetResult
     comparison: Any
+    source_set_binding: "ScenarioSetBinding | None" = None
+    criteria: "SupplyCriteria | None" = None
+    criteria_evaluation: "ScenarioSetCriteriaEvaluation | None" = None
 
     def __post_init__(self) -> None:
+        from .objective_constraint_models import ScenarioSetBinding, SupplyCriteria, ScenarioSetCriteriaEvaluation
+        if self.source_set_binding is not None and not isinstance(self.source_set_binding, ScenarioSetBinding):
+            raise TypeError("source_set_binding must be ScenarioSetBinding")
+        if self.criteria is not None:
+            if not isinstance(self.criteria, SupplyCriteria) or self.criteria.source_set_binding != self.source_set_binding:
+                raise ValueError("criteria must match the retained set binding")
+        if self.criteria_evaluation is not None:
+            if (not isinstance(self.criteria_evaluation, ScenarioSetCriteriaEvaluation)
+                    or self.criteria_evaluation.criteria != self.criteria):
+                raise ValueError("evaluation must match the retained criteria")
         if not self.item_id:
             raise ValueError("scenario-set state requires a focused portfolio item")
         if len(self.scenario_set.alternatives) != len(self.result.scenario_results):
