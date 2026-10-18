@@ -10,6 +10,7 @@ from .conversational_workspace import WorkspaceResponse
 from .portfolio_query import SupplyAgentSessionContext
 from .portfolio_ui import _CUSTOMER_LABELS, _FINDING_LABELS, _format_number, _quantity_text
 from .supply_agent import _is_document_list_request, _jsonable
+from .objective_constraint_models import CriterionOutcome, CriterionKind
 
 
 STARTER_PROMPTS = (
@@ -168,7 +169,8 @@ def _language(text: str) -> str:
     if any(mark in folded for mark in ("¿", "¡", "á", "é", "í", "ó", "ú", "ñ")):
         return "es"
     if re.search(r"\b(?:que|posiciones|atencion|contrato|entrega|hospital|documentacion|prevision|"
-                 r"compara|comparar|escenarios?|inventario|dias|antes|despues|diferencia)\b", folded):
+                 r"compara|comparar|escenarios?|inventario|dias|antes|despues|diferencia|"
+                 r"objetivo|capacidad|agotamiento|brecha|debe)\b", folded):
         return "es"
     return "en"
 
@@ -228,6 +230,14 @@ def render_conversational_workspace(on_submit=None, *, running: bool = False) ->
             ):
                 _submit_prompt(prompt, on_submit)
 
+    st.caption(
+        'Criterios explícitos para un conjunto de escenarios: '
+        '«Objetivo: la brecha de stock de seguridad debe ser al menos 0 kg.»; '
+        '«No debe haber agotamiento antes de la entrega.» Separa los criterios con punto y coma.'
+        if conversation_lang == "es" else
+        'Explicit criteria for a scenario set: “Objective: Safety-stock gap must be at least 0 kg.”; '
+        '“There must be no stockout before delivery.” Separate criteria with semicolons.'
+    )
     prompt = st.chat_input(
         text["ask"],
         key="workspace_chat_input",
@@ -283,6 +293,8 @@ def _render_workspace_response(
         if response.positions:
             st.markdown(f"**{_position_label(response.positions[0], lang)}**")
         _render_scenario_comparison(response.scenario_comparison, lang)
+    if response.criteria_evaluation is not None:
+        _render_criteria_evaluation(response, lang)
     if response.evidence.global_sources:
         st.markdown(f"**{text['global_sources']}**")
         for source in response.evidence.global_sources:
@@ -435,12 +447,154 @@ def build_workspace_response_copy_text(response: WorkspaceResponse, question: st
     if response.scenario_comparison is not None:
         sections.append(_scenario_comparison_copy_text(response.scenario_comparison, lang))
 
+    if response.criteria_evaluation is not None:
+        sections.append(_criteria_copy_text(response, lang))
+
     if response.evidence.global_sources:
         source_lines = [text["global_sources"]]
         for scoped in response.evidence.global_sources:
             source_lines.append(_workspace_source_caption(scoped.source, text["global"], lang))
         sections.append("\n".join(source_lines))
     return "\n\n".join(section for section in sections if section.strip()).strip()
+
+
+_CRITERIA_TEXT = {
+    "es": {
+        "title": "Objetivos y restricciones explícitos",
+        "boundary": "Estos resultados evalúan únicamente los criterios explícitamente enviados.",
+        "kind": "Tipo", "criterion": "Criterio", "definition": "Condición", "scenario": "Escenario",
+        "objective": "Objetivo", "hard_constraint": "Restricción obligatoria",
+        "aggregate": "Cumplimiento de restricciones", "observed": "observado",
+        "position": "Posición enfocada", "references": "Referencias de criterios y proyecciones",
+        "unavailable": "No disponible",
+        "outcomes": {"SATISFIED": "Cumple", "VIOLATED": "No cumple", "UNKNOWN": "No evaluable"},
+        "aggregates": {"SATISFIED": "cumple", "VIOLATED": "incumple", "UNKNOWN": "desconocido", "NOT_APPLICABLE": "no aplica"},
+    },
+    "en": {
+        "title": "Explicit objectives and hard constraints",
+        "boundary": "These results assess only the explicitly submitted criteria.",
+        "kind": "Kind", "criterion": "Criterion", "definition": "Condition", "scenario": "Scenario",
+        "objective": "Objective", "hard_constraint": "Hard constraint",
+        "aggregate": "Hard-constraint compliance", "observed": "observed",
+        "position": "Focused position", "references": "Criterion and projection references",
+        "unavailable": "Not available",
+        "outcomes": {"SATISFIED": "Satisfied", "VIOLATED": "Violated", "UNKNOWN": "Unknown"},
+        "aggregates": {"SATISFIED": "satisfied", "VIOLATED": "violated", "UNKNOWN": "unknown", "NOT_APPLICABLE": "not applicable"},
+    },
+}
+
+_CRITERIA_REASONS = {
+    "source_invalid": ("Source data is invalid", "Los datos de origen no son válidos"),
+    "source_missing_inputs": ("Required source inputs are missing", "Faltan datos de entrada en el origen"),
+    "source_not_completed": ("Source assessment is not completed", "La evaluación de origen no está completada"),
+    "projection_unavailable": ("Projection unavailable", "Proyección no disponible"),
+    "metric_unavailable": ("Metric unavailable", "Medida no disponible"),
+    "fact_unavailable": ("Fact unavailable", "Hecho no disponible"),
+    "invalid_fact_type": ("Invalid fact type", "Tipo de dato no válido"),
+    "invalid_fact_unit": ("Invalid operational unit", "Unidad operativa no válida"),
+    "invalid_fact_value": ("Invalid fact value", "Valor del hecho no válido"),
+    "provenance_unavailable": ("Provenance unavailable", "Procedencia no disponible"),
+    "provenance_fact_mismatch": ("Provenance does not match the fact", "La procedencia no coincide con el hecho"),
+    "incompatible_operational_units": ("Incompatible operational units", "Unidades operativas incompatibles"),
+}
+
+
+def _criteria_value(value, unit, lang):
+    if value is None:
+        return _CRITERIA_TEXT[lang]["unavailable"]
+    if isinstance(value, bool):
+        return _yes_no(value, lang)
+    # Preserve precision without normalizing under the ambient Decimal context.
+    return f"{format(value, 'f')} {unit or ''}".strip()
+
+
+def _criteria_definition(predicate, lang):
+    keys = {
+        "consumption_until_delivery": "consumption", "inventory_immediately_before_delivery": "inventory",
+        "safety_stock_gap_before_delivery": "safety_gap", "stockout_before_delivery": "stockout",
+        "inventory_immediately_after_delivery": "inventory_after", "required_delivery_volume": "required_delivery",
+        "capacity_exceeded": "capacity",
+    }
+    operator = {"lt": "<", "le": "≤", "eq": "=", "ge": "≥", "gt": ">"}[predicate.operator.value]
+    return (f"{_TEXT[lang][keys[predicate.metric.value]]} {operator} "
+            f"{_criteria_value(predicate.target, predicate.unit, lang)}")
+
+
+def _criteria_presentation(response, lang):
+    """Format retained evaluation data for both UI and Copy, without evaluation."""
+    evaluation = response.criteria_evaluation
+    text = _CRITERIA_TEXT[lang]
+    retained = response.session_context.scenario_set_state
+    results = response.scenario_set_result or (retained.result if retained else None)
+    labels = {"baseline": "Base" if lang == "es" else "Baseline"}
+    if results is not None:
+        labels.update({branch.alternative.id: branch.alternative.label for branch in results.scenario_results})
+    scenarios = evaluation.scenario_evaluations
+    headings = [labels.get(s.source.scenario_id, s.source.scenario_id) for s in scenarios]
+    headings = [f"{label} ({s.source.scenario_id})" if headings.count(label) > 1
+                or label in {text["kind"], text["criterion"], text["definition"]} else label
+                for label, s in zip(headings, scenarios)]
+    definitions = tuple((CriterionKind.OBJECTIVE, item) for item in evaluation.criteria.objectives) + tuple(
+        (CriterionKind.HARD_CONSTRAINT, item) for item in evaluation.criteria.constraints)
+    rows = []
+    for kind, definition in definitions:
+        row = {text["kind"]: text[kind.value], text["criterion"]: definition.label,
+               text["definition"]: _criteria_definition(definition.predicate, lang)}
+        for heading, scenario in zip(headings, scenarios):
+            cell = next(item for item in scenario.evaluations if item.criterion_id == definition.id)
+            rendered = (f"{text['outcomes'][cell.outcome.value]} ({cell.outcome.value}) · "
+                        f"{text['observed']}: {_criteria_value(cell.observed_value, cell.observed_unit, lang)}")
+            if cell.outcome is CriterionOutcome.UNKNOWN:
+                reason = _CRITERIA_REASONS.get(cell.reason, ("Fact cannot be evaluated", "El hecho no es evaluable"))
+                rendered += f" · {reason[lang == 'es']} ({cell.reason})"
+            row[heading] = rendered
+        rows.append(row)
+    aggregates = [{text["scenario"]: heading, text["aggregate"]:
+                   f"{text['aggregates'][scenario.hard_constraint_outcome.value]} ({scenario.hard_constraint_outcome.value})"}
+                  for heading, scenario in zip(headings, scenarios)]
+    binding = evaluation.criteria.source_set_binding
+    position = (_position_label(response.positions[0], lang) if response.positions else
+                " / ".join(value or "?" for value in vars(binding.position_identity).values()))
+    references = [f"{text['position']}: {position}",
+                  f"Set: {binding.set_reference} · revision: {binding.set_revision}",
+                  f"Position identity: {vars(binding.position_identity)}",
+                  f"Evaluator: {evaluation.evaluator_version}"]
+    for _, definition in definitions:
+        source = definition.definition_source
+        references.append(f"{definition.id} · {definition.label}: {definition.predicate.metric.value} "
+                          f"{definition.predicate.operator.value} {_criteria_value(definition.predicate.target, definition.predicate.unit, lang)}; "
+                          f"origin: {source.origin.value}; reference: {source.reference}; revision: {source.revision}")
+    for heading, scenario in zip(headings, scenarios):
+        source = scenario.source
+        references.extend((f"{heading} · scenario_id: {source.scenario_id}",
+                           f"Result: {source.result_reference}",
+                           f"Projection: {source.projection_reference or text['unavailable']}"))
+        references.extend(f"Provenance: {reference}" for reference in source.provenance_references)
+    return rows, aggregates, references
+
+
+def _render_criteria_evaluation(response, lang):
+    text = _CRITERIA_TEXT[lang]
+    rows, aggregates, references = _criteria_presentation(response, lang)
+    st.markdown(f"**{text['title']}**")
+    st.caption(text["boundary"])
+    st.table(rows)
+    st.markdown(f"**{text['aggregate']}**")
+    st.table(aggregates)
+    with st.expander(text["references"]):
+        st.text("\n".join(references))
+
+
+def _criteria_copy_text(response, lang):
+    text = _CRITERIA_TEXT[lang]
+    rows, aggregates, references = _criteria_presentation(response, lang)
+    lines = [text["title"], text["boundary"]]
+    for table in (rows, aggregates):
+        if table:
+            lines.append(" | ".join(table[0]))
+            lines.extend(" | ".join(row.values()) for row in table)
+    lines.extend(references)
+    return "\n".join(lines)
 
 
 def _workspace_source_caption(source, identity: str, lang: str) -> str:
