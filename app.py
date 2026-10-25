@@ -71,6 +71,8 @@ from demo_scenarios import DEMO_SCENARIOS, get_demo
 from api_client import AnalysisApiClient
 from api_client_models import ApiAnalysisResult
 from business_api_adapter import BusinessApiRequest, create_business_api_job
+from business_auth import (refresh_business_session, render_business_auth,
+                           capture_business_request, business_result_is_current)
 from presentation_normalization import normalize_supervisor_result
 from application_models import AnalysisRequest
 from application_service import AnalysisService
@@ -196,6 +198,7 @@ except VectorStoreError as error:
     st.session_state.rag_store = None
     st.session_state.rag_store_error = str(error)
 
+refresh_business_session(st)
 generation_active = st.session_state.generation_job is not None
 
 provider_options = get_supported_providers()
@@ -1046,6 +1049,8 @@ def render_commercial_agent() -> None:
 
 def render_supervisor() -> None:
     st.subheader("Multi-Agent Supervisor")
+    st.warning("Modo temporalmente deshabilitado: pendiente de autenticación.")
+    return
     st.write("Selecciona y ejecuta los especialistas necesarios para tu consulta.")
     st.caption("Routing determinista primero. El modelo de generación solo interviene ante ambigüedad o si activas la priorización LLM.")
     request = st.text_area("Consulta al Supervisor", key="supervisor_request", height=180)
@@ -1066,6 +1071,9 @@ def render_supervisor() -> None:
 
 
 def start_supervisor_analysis(request: str, use_synthesis: bool = False) -> None:
+    # Keep the implementation for a future authenticated adapter; never run it.
+    from security.errors import AuthenticationRequired
+    raise AuthenticationRequired("Supervisor técnico deshabilitado: pendiente de autenticación.")
     operation_id = uuid4().hex[:8]
     recorder = PerformanceRecorder(
         operation_id,
@@ -1210,10 +1218,13 @@ def start_conversational_workspace(question: str, session_context: SupplyAgentSe
 
 
 def start_business_api_analysis(request: str, alternative_evaluation=None) -> None:
+    captured_request, binding = capture_business_request(st, request, alternative_evaluation)
     operation_id = uuid4().hex[:8]
     recorder = PerformanceRecorder(operation_id, "api", "remote", "business_api")
     st.session_state.pipeline_recorder = recorder
-    job = create_business_api_job(BusinessApiRequest(request, alternative_evaluation))
+    job = create_business_api_job(captured_request)
+    job.business_binding = binding
+    st.session_state.business_operation_ids = (*st.session_state.get("business_operation_ids", ()), operation_id)
     st.session_state.business_api_result = None
     st.session_state.generation_job = job
     st.session_state.generation_kind = "business_api"
@@ -1227,6 +1238,7 @@ def start_business_api_analysis(request: str, alternative_evaluation=None) -> No
 def render_business() -> None:
     st.header("indAI MA")
     st.caption("B2B Energy Decision Assistant")
+    authorized = render_business_auth(st)
     st.write("Obtén respuestas trazables sobre contratos, aprovisionamiento y riesgo energético.")
     st.subheader("Ejemplos")
     demo_columns = st.columns(len(DEMO_SCENARIOS))
@@ -1256,7 +1268,7 @@ def render_business() -> None:
         "Analizar",
         key="business_start",
         type="primary",
-        disabled=generation_active or not request.strip(),
+        disabled=not authorized or generation_active or not request.strip(),
     ):
         alternative_evaluation = None
         if volume_enabled or price_enabled or top_enabled:
@@ -1266,6 +1278,8 @@ def render_business() -> None:
         st.rerun()
     st.subheader("Advanced / Technical")
     st.caption("Los modos especialistas, la configuración técnica y el inspector están disponibles en la barra lateral.")
+    if not authorized:
+        return
     if st.session_state.business_api_result is not None:
         view = visible_execution()
         if view:
@@ -1277,18 +1291,6 @@ def render_business() -> None:
             [],
             key="business-api",
             operation_id=view.operation_id if view else None,
-        )
-    elif st.session_state.supervisor_result is not None:
-        view = visible_execution()
-        if view:
-            render_execution_header(view)
-        result = SupervisorResult.model_validate(st.session_state.supervisor_result)
-        render_supervisor_result(result)
-        render_response_copy_actions(
-            supervisor_text(result),
-            result.tool_executions,
-            key="business-supervisor",
-            operation_id=st.session_state.supervisor_operation_id,
         )
 
 
@@ -1337,8 +1339,13 @@ def render_risk_agent() -> None:
                                      operation_id=st.session_state.risk_operation_id)
 
 
-def finish_generation(result: GenerationResult) -> None:
+def finish_generation(result: GenerationResult, *, business_binding=None) -> None:
     generation_kind = st.session_state.generation_kind
+    if generation_kind == "business_api" and not business_result_is_current(st.session_state, business_binding):
+        st.session_state.generation_job = None
+        st.session_state.generation_kind = None
+        st.session_state.business_api_result = None
+        return
     operation_id = st.session_state.operation_id
     precomputed_tool_executions = (
         st.session_state.gas_precomputed_tool_executions
@@ -1560,6 +1567,11 @@ def _safe_workspace_failure_message(status) -> str:
 
 @st.fragment(run_every=0.5)
 def render_generation_status() -> None:
+    if st.session_state.generation_kind == "business_api":
+        prior = st.session_state.get("business_session")
+        refreshed = refresh_business_session(st)
+        if refreshed is None or (prior is not None and prior.binding != refreshed.binding):
+            st.rerun()
     job: GenerationJob | None = st.session_state.generation_job
     if job is None:
         notice = st.session_state.generation_notice
@@ -1579,12 +1591,19 @@ def render_generation_status() -> None:
             st.info("Ejecución en curso...")
         return
 
-    finish_generation(result)
+    finish_generation(result, business_binding=getattr(job, "business_binding", None))
     st.rerun()
 
 
 @st.fragment(run_every=0.5)
 def render_pipeline_panel() -> None:
+    if selected_mode == "Business":
+        prior = st.session_state.get("business_session")
+        refreshed = refresh_business_session(st)
+        if prior is not None and (refreshed is None or prior.binding != refreshed.binding):
+            st.rerun()
+        if refreshed is None or not refreshed.can_analyze:
+            return
     view = visible_execution()
     snapshot = view.snapshot if view else None
     render_pipeline_inspector(snapshot)

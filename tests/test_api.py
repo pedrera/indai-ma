@@ -12,6 +12,7 @@ from decision_plan import DecisionPlan, DecisionStep
 from rag_models import RetrievalResult
 from tests.test_commercial_agent import contract_matches
 from clipboard_text import build_business_copy_payload
+from tests.security_fixtures import security_fixture, TOKEN, TENANT
 from api_client_models import ApiAnalysisResult
 from business_output import ExecutiveResultProjection
 
@@ -23,7 +24,10 @@ PROCUREMENT = ("La demanda prevista es de 120 GWh, tenemos 95 GWh aprovisionados
 
 class ApiTests(unittest.TestCase):
     def client(self, service=None):
-        return TestClient(create_app(service or AnalysisService(), RUNTIME), raise_server_exceptions=False)
+        security = security_fixture()
+        return TestClient(create_app(service or AnalysisService(authorizer=security.authorizer), RUNTIME,
+                                     security=security), raise_server_exceptions=False,
+                          headers={"Authorization": f"Bearer {TOKEN}", "X-Tenant-ID": TENANT.value})
 
     def test_health_and_ready(self):
         client = self.client()
@@ -79,7 +83,7 @@ class ApiTests(unittest.TestCase):
 
     def test_openapi_contains_only_intended_application_endpoints(self):
         paths = set(self.client().get('/openapi.json').json()['paths'])
-        self.assertEqual(paths, {'/health', '/ready', '/api/v1/analysis'})
+        self.assertEqual(paths, {'/health', '/ready', '/api/v1/analysis', '/api/v1/session'})
 
     def test_recommendation_crosses_http_from_executive_projection(self):
         recommendation = BusinessRecommendation(
@@ -161,7 +165,7 @@ class ApiTests(unittest.TestCase):
                  "deberíamos revisar.")
         rag = Mock()
         rag.retrieve.return_value = RetrievalResult(contract_matches(), 'fixture')
-        service = AnalysisService(rag_factory=lambda recorder, runtime: rag)
+        service = AnalysisService(authorizer=security_fixture().authorizer, rag_factory=lambda recorder, runtime: rag)
         response = self.client(service).post('/api/v1/analysis', json={'text': query})
         self.assertEqual(response.status_code, 200)
         recommendation = response.json()['recommendation']
@@ -210,7 +214,7 @@ class ApiTests(unittest.TestCase):
                  "Analiza también qué ocurriría si el spot sube un 20% y dime qué deberíamos revisar.")
         rag = Mock()
         rag.retrieve.return_value = RetrievalResult(contract_matches(), 'fixture')
-        service = AnalysisService(rag_factory=lambda recorder, runtime: rag)
+        service = AnalysisService(authorizer=security_fixture().authorizer, rag_factory=lambda recorder, runtime: rag)
         response = self.client(service).post('/api/v1/analysis', json={
             'text': query,
             'alternative_evaluation': {

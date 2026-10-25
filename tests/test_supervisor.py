@@ -330,16 +330,17 @@ class SupervisorTests(unittest.TestCase):
             for forbidden in ('supervisor', 'commercial_agent', 'risk_agent', 'procurement_agent'):
                 self.assertNotIn(forbidden, modules)
 
-    def test_app_supervisor_without_model_and_inspector(self):
-        with patch('llm_client.get_available_models', return_value=[]), patch('llm_client.get_llm_provider', side_effect=AssertionError('Unnecessary provider')):
+    def test_app_supervisor_is_disabled_pending_authentication(self):
+        with patch('llm_client.get_available_models', return_value=[]), patch('llm_client.get_llm_provider', side_effect=AssertionError('Unnecessary provider')) as provider:
             app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / 'app.py'), default_timeout=20).run()
             app.radio(key='selected_mode').set_value('Multi-Agent Supervisor').run()
-            app.text_area(key='supervisor_request').set_value(FACTS + 'Escenario +10%').run()
-            app.button(key='supervisor_start').click().run()
-            app.run()
             self.assertFalse(app.exception)
-            self.assertEqual(app.session_state['supervisor_result']['total_tool_calls'], 5)
-            self.assertTrue(any('Supervisor Execution' in t.value for t in app.text))
+            self.assertTrue(any('pendiente de autenticación' in item.value for item in app.warning))
+            self.assertFalse(any(item.key == 'supervisor_start' for item in app.button))
+            self.assertFalse(any(item.key == 'supervisor_request' for item in app.text_area))
+            self.assertIsNone(app.session_state['supervisor_result'])
+            self.assertIsNone(app.session_state['generation_job'])
+            provider.assert_not_called()
 
 
 if __name__ == '__main__':

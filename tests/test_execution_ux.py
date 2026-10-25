@@ -83,11 +83,11 @@ class ExecutionUXTests(unittest.TestCase):
         client.analyze.return_value = "result"
         adapter = ApiJobAdapter(client)
         inputs = SimpleNamespace(coverage_volume_gwh=0.3, coverage_price_eur_mwh=40)
-        self.assertEqual(adapter.run(BusinessApiRequest("q", inputs), 10), "result")
-        client.analyze.assert_called_once_with("q", inputs)
+        self.assertEqual(adapter.run(BusinessApiRequest("q", inputs, "ux-test-token", "ux-test-tenant"), 10), "result")
+        client.analyze.assert_called_once_with("q", inputs, access_token="ux-test-token", tenant_id="ux-test-tenant")
         client.reset_mock()
-        adapter.run(BusinessApiRequest("q", None), 10)
-        client.analyze.assert_called_once_with("q", None)
+        adapter.run(BusinessApiRequest("q", None, "ux-test-token", "ux-test-tenant"), 10)
+        client.analyze.assert_called_once_with("q", None, access_token="ux-test-token", tenant_id="ux-test-tenant")
 
     def make_view(self, operation='A', status='completed'):
         recorder = PerformanceRecorder(operation, 'deterministic', 'none', 'risk_agent')
@@ -210,6 +210,9 @@ class ExecutionUXTests(unittest.TestCase):
                     self.assertEqual(app.radio(key='commercial_interpretation').value, 'deterministic')
                 if mode == 'RiskAgent':
                     self.assertFalse(app.checkbox(key='risk_use_llm').value)
+                if mode == 'Business':
+                    self.assertTrue(app.button(key='business_start').disabled)
+                    self.assertTrue(any('pendiente de autenticación' in item.value for item in app.warning))
 
     def test_default_workspace_diagnostics_uses_its_own_current_execution(self):
         from generation import GenerationResult, GenerationStatus
@@ -417,7 +420,7 @@ class ExecutionUXTests(unittest.TestCase):
     def test_business_api_render_path_wires_copy_all(self):
         copied = []
         with patch('llm_client.get_available_models', return_value=[]), patch(
-            'clipboard_ui.render_clipboard_button', side_effect=lambda text, label, **kw: copied.append((label, text))):
+            'clipboard_ui.render_clipboard_button', side_effect=lambda text, label, **kw: copied.append((label, text))), patch('business_auth.render_business_auth', return_value=True):
             app = AppTest.from_file(APP, default_timeout=20).run()
             app.radio(key='selected_mode').set_value('Business').run()
             payload = {
@@ -438,7 +441,7 @@ class ExecutionUXTests(unittest.TestCase):
             self.assertTrue(any(label == 'Copiar todo' for label, _ in copied))
 
     def test_business_api_renders_recommendation(self):
-        with patch('llm_client.get_available_models', return_value=[]):
+        with patch('llm_client.get_available_models', return_value=[]), patch('business_auth.render_business_auth', return_value=True):
             app = AppTest.from_file(APP, default_timeout=20).run()
             app.radio(key='selected_mode').set_value('Business').run()
             payload = {
@@ -523,10 +526,11 @@ class ExecutionUXTests(unittest.TestCase):
             app.run()
             operation = app.session_state['risk_operation_id']
             app.radio(key='selected_mode').set_value('Multi-Agent Supervisor').run()
-            app.text_area(key='supervisor_request').set_value('Demanda 100 GWh. Tenemos 100 GWh aprovisionados. Posición.').run()
-            app.button(key='supervisor_start').click().run()
-            app.run()
-            self.assertNotEqual(operation, app.session_state['supervisor_operation_id'])
+            # C1.4 deliberately blocks this mode; switching must create no job
+            # and must preserve the previous Risk operation for its clipboard.
+            self.assertFalse(any(item.key == 'supervisor_start' for item in app.button))
+            self.assertIsNone(app.session_state['supervisor_operation_id'])
+            self.assertIsNone(app.session_state['generation_job'])
             app.radio(key='selected_mode').set_value('RiskAgent').run()
             index = PerformanceRecorder('INDEX', 'fixture', 'fixture', 'rag_index')
             index.finish('completed')

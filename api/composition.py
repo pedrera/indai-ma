@@ -1,4 +1,6 @@
 import os
+import json
+from pathlib import Path
 
 from application_service import AnalysisService
 from embeddings import LMStudioEmbeddingProvider, get_embedding_model_name
@@ -6,19 +8,47 @@ from llm_client import get_llm_provider
 from rag_service import RAGService
 from runtime_config import LLMRuntimeConfig
 from vector_store import LocalVectorStore
+from security.config import OIDCConfig
+from security.errors import IdentityInfrastructureError
+from security.memberships import ConfiguredMembershipDirectory, TenantMembership
+from security.models import PrincipalId, TenantId
+from security.oidc import OIDCAuthenticator
+from security.roles import Role
+from api.security import APISecurity
 
 
-def build_service() -> tuple[AnalysisService, LLMRuntimeConfig]:
-    runtime = LLMRuntimeConfig.from_environment()
-    store = None
+def build_security() -> APISecurity:
+    """Admin-owned configuration only; no built-in users, tenants or grants."""
     try:
-        store = LocalVectorStore.from_environment(get_embedding_model_name())
-    except Exception:
-        # Procurement and Risk remain usable without an optional contract index.
-        store = None
+        config = OIDCConfig(
+            issuer=os.environ["INDAI_OIDC_ISSUER"], audience=os.environ["INDAI_OIDC_AUDIENCE"],
+            jwks_url=os.environ["INDAI_OIDC_JWKS_URL"],
+        )
+        records = json.loads(Path(os.environ["INDAI_MEMBERSHIPS_FILE"]).read_text(encoding="utf-8"))
+        if not isinstance(records, list):
+            raise ValueError("Membership configuration must be a list")
+        memberships = []
+        for record in records:
+            if (not isinstance(record, dict)
+                    or set(record) != {"issuer", "subject", "tenant_id", "roles"}
+                    or record["issuer"] != config.issuer or not isinstance(record["roles"], list)):
+                raise ValueError("Invalid configured membership")
+            memberships.append(TenantMembership(
+                PrincipalId(record["issuer"], record["subject"]), TenantId(record["tenant_id"]),
+                frozenset(Role(role) for role in record["roles"]),
+            ))
+        directory = ConfiguredMembershipDirectory(memberships)
+    except (OSError, ValueError, TypeError, KeyError):
+        raise IdentityInfrastructureError("Identity configuration is unavailable") from None
+    return APISecurity(OIDCAuthenticator(config), directory)
 
+
+def build_service(authorizer) -> tuple[AnalysisService, LLMRuntimeConfig]:
+    runtime = LLMRuntimeConfig.from_environment()
     def rag_factory(recorder, config):
-        if store is None or not store.chunk_count:
+        # Defer document/index access until after AnalysisService authorization.
+        store = LocalVectorStore.from_environment(get_embedding_model_name())
+        if not store.chunk_count:
             raise ValueError("El índice RAG contractual no está disponible.")
         return RAGService(LMStudioEmbeddingProvider(), store, recorder)
 
@@ -27,4 +57,4 @@ def build_service() -> tuple[AnalysisService, LLMRuntimeConfig]:
         model_name = os.getenv("LMSTUDIO_MODEL") or os.getenv("OPENAI_MODEL")
         return get_llm_provider(provider_name, model_name, recorder=recorder, runtime_config=config)
 
-    return AnalysisService(provider_factory=provider_factory, rag_factory=rag_factory), runtime
+    return AnalysisService(authorizer=authorizer, provider_factory=provider_factory, rag_factory=rag_factory), runtime

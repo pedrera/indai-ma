@@ -6,6 +6,10 @@ from business_output import build_supervisor_executive_sections
 from diagnostics import PerformanceRecorder
 from application_models import AnalysisRequest, AnalysisResult
 from supervisor import Supervisor
+from security.models import SecurityContext
+from security.permissions import Permission
+from security.policy import TenantAuthorizer
+from security.errors import SecurityError
 
 
 class AnalysisServiceError(RuntimeError):
@@ -13,19 +17,24 @@ class AnalysisServiceError(RuntimeError):
 
 
 class AnalysisService:
-    def __init__(self, *, provider_factory=None, rag_factory=None,
+    def __init__(self, *, authorizer: TenantAuthorizer, provider_factory=None, rag_factory=None,
                  recorder_factory: Callable[[str], PerformanceRecorder] | None = None,
                  supervisor_factory=Supervisor):
         self._provider_factory = provider_factory
         self._rag_factory = rag_factory
         self._recorder_factory = recorder_factory or self._default_recorder
         self._supervisor_factory = supervisor_factory
+        if not isinstance(authorizer, TenantAuthorizer):
+            raise TypeError("AnalysisService requires a TenantAuthorizer")
+        self._authorizer = authorizer
 
     @staticmethod
     def _default_recorder(operation_id: str) -> PerformanceRecorder:
         return PerformanceRecorder(operation_id, "deterministic", "none", "supervisor")
 
-    def analyze(self, request: AnalysisRequest) -> AnalysisResult:
+    def analyze(self, request: AnalysisRequest, context: SecurityContext) -> AnalysisResult:
+        # Never construct providers, recorders or Supervisor before authorization.
+        self._authorizer.authorize(context, Permission.ANALYSIS_RUN)
         if not request.text or not request.text.strip():
             raise AnalysisServiceError("La consulta de análisis no puede estar vacía.")
         operation_id = request.operation_id or uuid4().hex[:8]
@@ -55,6 +64,6 @@ class AnalysisService:
             return AnalysisResult(supervisor_result, executive, recorder.snapshot(), operation_id)
         except Exception as error:
             recorder.finish("failed")
-            if isinstance(error, AnalysisServiceError):
+            if isinstance(error, (AnalysisServiceError, SecurityError)):
                 raise
             raise AnalysisServiceError("No se pudo iniciar el análisis.") from error

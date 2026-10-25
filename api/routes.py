@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 
 from api.models import (AnalysisRequestDTO, AnalysisResponseDTO, DiagnosticsDTO,
                         BusinessAlternativeEvaluationInputsDTO,
@@ -11,12 +11,48 @@ from api.models import (AnalysisRequestDTO, AnalysisResponseDTO, DiagnosticsDTO,
 from application_models import AnalysisRequest
 from alternative_evaluation import AlternativeEvaluationInputs
 from application_service import AnalysisService
+from api.security import analysis_security_context, bearer_token
+from security.models import SecurityContext
+from security.errors import IdentityInfrastructureError, SecurityError
+from security.memberships import TenantMembership
+from security.oidc import ValidatedAccessToken
 
 router = APIRouter()
 
 
-def service_dependency(request: Request) -> AnalysisService:
-    return request.app.state.analysis_service
+@router.get("/api/v1/session")
+def authenticated_session(request: Request, response: Response):
+    """Identity and memberships only; never exposes tokens or runs analysis."""
+    response.headers["Cache-Control"] = "no-store"
+    token = bearer_token(request)
+    security = request.app.state.security
+    if security is None:
+        raise IdentityInfrastructureError("Identity configuration is unavailable")
+    try:
+        validated = security.authenticator.validate_access_token(token)
+        if not isinstance(validated, ValidatedAccessToken):
+            raise IdentityInfrastructureError("Invalid identity metadata")
+        memberships = security.memberships.list_for_principal(validated.principal)
+        if (not isinstance(memberships, tuple) or any(
+                not isinstance(item, TenantMembership) or item.principal != validated.principal
+                for item in memberships)):
+            raise IdentityInfrastructureError("Invalid membership metadata")
+    except SecurityError:
+        raise
+    except Exception:
+        raise IdentityInfrastructureError("Identity source is unavailable") from None
+    return {"issuer": validated.principal.issuer, "subject": validated.principal.subject,
+            "expires_at": validated.expires_at,
+            "tenants": [{"tenant_id": item.tenant_id.value,
+                         "permissions": sorted(permission.value for permission in item.permissions)}
+                        for item in memberships]}
+
+
+def service_dependency(request: Request, context: SecurityContext = Depends(analysis_security_context)) -> AnalysisService:
+    service = request.app.state.analysis_service
+    if service is None:
+        raise IdentityInfrastructureError("Analysis service is unavailable")
+    return service
 
 
 @router.get("/health", response_model=HealthDTO)
@@ -26,14 +62,16 @@ def health():
 
 @router.get("/ready", response_model=HealthDTO)
 def ready(request: Request):
-    if getattr(request.app.state, "analysis_service", None) is None:
+    if (getattr(request.app.state, "analysis_service", None) is None
+            or getattr(request.app.state, "security", None) is None):
         from fastapi import HTTPException
         raise HTTPException(status_code=503, detail="La aplicación no está preparada.")
     return HealthDTO(status="ready")
 
 
 @router.post("/api/v1/analysis", response_model=AnalysisResponseDTO)
-def analyze(payload: AnalysisRequestDTO, request: Request, service: AnalysisService = Depends(service_dependency)):
+def analyze(payload: AnalysisRequestDTO, request: Request, context: SecurityContext = Depends(analysis_security_context),
+            service: AnalysisService = Depends(service_dependency)):
     result = service.analyze(AnalysisRequest(
         text=payload.text,
         runtime=request.app.state.runtime_config,
@@ -43,7 +81,7 @@ def analyze(payload: AnalysisRequestDTO, request: Request, service: AnalysisServ
             coverage_price_eur_mwh=payload.alternative_evaluation.coverage_price_eur_mwh,
             revised_remaining_forecast_consumption_gwh=payload.alternative_evaluation.revised_remaining_forecast_consumption_gwh,
         ) if payload.alternative_evaluation is not None else None),
-    ))
+    ), context)
     projection = result.executive
     routing = result.supervisor_result.routing
     return AnalysisResponseDTO(

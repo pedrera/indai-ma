@@ -1,5 +1,16 @@
 # indAI MA
 
+**C1.5 security increment (working tree):** `AnalysisService` now requires an
+explicit authorized `SecurityContext`, and `POST /api/v1/analysis` requires a valid
+RFC 9068 Bearer token plus `X-Tenant-ID`. Streamlit **Business** requires native
+OIDC login, a valid API access token and explicit authorized tenant selection.
+**Multi-Agent Supervisor** remains disabled. Configure external secrets and the
+provider as described in [Streamlit OIDC setup](docs/STREAMLIT_OIDC.md).
+Without that configuration Business stays blocked. Workspace, Industrial Gases,
+specialist views and document administration remain outside this security boundary.
+Document/resource authorization is still pending: this is not an enterprise
+multi-tenant deployment. See [ADR-024](docs/DECISIONS.md#adr-024--mandatory-analysis-authorization-and-authenticated-http-c14).
+
 ## What it is
 
 indAI MA is a local prototype for traceable B2B energy and industrial-gas supply
@@ -396,10 +407,27 @@ request body contains only business intent, for example:
 {"text":"La demanda prevista es de 120 GWh, tenemos 95 GWh aprovisionados y el precio spot es de 42 EUR/MWh. Analiza nuestra posición de aprovisionamiento."}
 ```
 
+For analysis, supply `Authorization: Bearer <access-token>` and
+`X-Tenant-ID: <active-tenant>`. Configure `INDAI_OIDC_ISSUER`,
+`INDAI_OIDC_AUDIENCE`, `INDAI_OIDC_JWKS_URL` and `INDAI_MEMBERSHIPS_FILE`
+through trusted server configuration. The admin-owned membership JSON is a list
+of records with `issuer`, `subject`, `tenant_id` and `roles`; no identities or
+grants are supplied by default. Missing identity configuration denies execution.
+401 includes a Bearer challenge; denied membership/permission is 403; invalid
+tenant selection is 400; identity infrastructure/configuration failure is 503.
+Do not put credentials, identity or roles in the business JSON.
+
 Runtime policy remains server-controlled. Analysis is synchronous;
 `operation_id` is a trace identifier, not a polling handle.
 
 ## Business UI through the API
+
+**C1.5:** starting both processes does not grant access. Configure native OIDC as
+described in [Streamlit OIDC setup](docs/STREAMLIT_OIDC.md), log in and select an
+authorized tenant. Live Keycloak acceptance remains pending. The HTTP client
+requires `access_token` and `tenant_id` keyword arguments per operation; there is
+no static-token or anonymous fallback. `GET /api/v1/session` supplies authenticated
+identity/expiration/tenant discovery without returning credentials.
 
 The Business mode uses the HTTP client and therefore requires two local processes:
 

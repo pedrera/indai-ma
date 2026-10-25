@@ -9,6 +9,7 @@ from rag_models import RetrievalResult
 from runtime_config import LLMRuntimeConfig
 from tests.test_commercial_agent import contract_matches
 from tests.test_supervisor import CANONICAL_BUSINESS_QUERY
+from tests.security_fixtures import security_fixture, context_fixture
 
 
 class ApplicationServiceTests(unittest.TestCase):
@@ -25,6 +26,7 @@ class ApplicationServiceTests(unittest.TestCase):
         rag = rag or Mock()
         rag.retrieve.return_value = RetrievalResult(contract_matches(), "fixture")
         return AnalysisService(
+            authorizer=security_fixture().authorizer,
             rag_factory=lambda recorder, runtime: rag,
             recorder_factory=lambda operation: PerformanceRecorder(operation, "deterministic", "none", "supervisor"),
             **kwargs,
@@ -36,7 +38,7 @@ class ApplicationServiceTests(unittest.TestCase):
 
     def test_canonical_analysis_returns_domain_and_executive_result(self):
         service, rag = self.service()
-        result = service.analyze(self.request())
+        result = service.analyze(self.request(), context_fixture())
         self.assertEqual(result.operation_id, "service-test")
         self.assertEqual(result.supervisor_result.status.value, "completed")
         self.assertIn("0.2 GWh", result.executive.summary)
@@ -48,12 +50,12 @@ class ApplicationServiceTests(unittest.TestCase):
 
     def test_service_preserves_controlled_partial_result(self):
         service, _ = self.service()
-        result = service.analyze(self.request(text="Analiza el contrato del Hospital Costa Sur."))
+        result = service.analyze(self.request(text="Analiza el contrato del Hospital Costa Sur."), context_fixture())
         self.assertIn(result.supervisor_result.status.value, {"completed", "partial"})
 
     def test_service_does_not_require_streamlit_session_state(self):
         service, _ = self.service()
-        result = service.analyze(self.request())
+        result = service.analyze(self.request(), context_fixture())
         self.assertFalse(hasattr(result, "session_state"))
 
     def test_injected_supervisor_factory_is_used(self):
@@ -67,7 +69,7 @@ class ApplicationServiceTests(unittest.TestCase):
             specialist_results=[],
         )
         service, _ = self.service(supervisor_factory=lambda **kwargs: supervisor)
-        result = service.analyze(self.request())
+        result = service.analyze(self.request(), context_fixture())
         supervisor.run.assert_called_once()
         self.assertEqual(result.operation_id, "service-test")
 

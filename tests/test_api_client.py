@@ -19,9 +19,16 @@ PAYLOAD = {
 }
 
 
+class ExplicitCredentialTestClient(AnalysisApiClient):
+    """Supply explicit per-operation fixture credentials in legacy payload tests."""
+    def analyze(self, text, alternative_evaluation=None):
+        return super().analyze(text, alternative_evaluation,
+                               access_token="payload-test-token", tenant_id="payload-test-tenant")
+
+
 class ApiClientTests(unittest.TestCase):
     def client(self, handler):
-        return AnalysisApiClient("http://test", transport=httpx.MockTransport(handler))
+        return ExplicitCredentialTestClient("http://test", transport=httpx.MockTransport(handler))
 
     def test_sends_exact_public_payload_and_endpoint(self):
         seen = {}

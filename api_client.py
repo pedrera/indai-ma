@@ -1,5 +1,6 @@
 """Small HTTP boundary used by the Streamlit Business adapter."""
 import os
+import re
 from dataclasses import dataclass
 
 import httpx
@@ -21,6 +22,18 @@ class AnalysisApiTimeoutError(AnalysisApiClientError):
 
 class AnalysisApiResponseError(AnalysisApiClientError):
     pass
+
+
+class AnalysisApiCredentialsError(AnalysisApiClientError):
+    pass
+
+
+def validate_operation_credentials(access_token, tenant_id):
+    if (not isinstance(access_token, str) or not access_token
+            or re.fullmatch(r"[A-Za-z0-9._~+/-]+=*", access_token) is None
+            or not isinstance(tenant_id, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", tenant_id) is None):
+        raise AnalysisApiCredentialsError("Se requieren credenciales y tenant válidos por operación.")
 
 
 @dataclass(frozen=True)
@@ -49,7 +62,28 @@ class AnalysisApiClient:
             timeout=httpx.Timeout(self.config.analysis_timeout, connect=self.config.connect_timeout),
         )
 
-    def analyze(self, text: str, alternative_evaluation=None) -> ApiAnalysisResult:
+    def close(self):
+        self._client.close()
+
+    def session(self, *, access_token: str) -> dict:
+        validate_operation_credentials(access_token, "session")
+        try:
+            response = self._client.get("/api/v1/session", headers={"Authorization": f"Bearer {access_token}"})
+            if response.status_code == 401:
+                raise AnalysisApiCredentialsError("La sesión requiere autenticación.")
+            if response.status_code != 200:
+                raise AnalysisApiResponseError("No se puede verificar la sesión.")
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError()
+            return payload
+        except httpx.HTTPError:
+            raise AnalysisApiConnectionError("No se puede verificar la sesión.") from None
+        except (TypeError, ValueError):
+            raise AnalysisApiResponseError("Respuesta de sesión no válida.") from None
+
+    def analyze(self, text: str, alternative_evaluation=None, *, access_token: str, tenant_id: str) -> ApiAnalysisResult:
+        validate_operation_credentials(access_token, tenant_id)
         try:
             payload = {"text": text}
             if alternative_evaluation is not None:
@@ -63,7 +97,8 @@ class AnalysisApiClient:
                     revised = getattr(alternative_evaluation, "revised_remaining_forecast_consumption_gwh", None)
                     if revised is not None:
                         payload["alternative_evaluation"]["revised_remaining_forecast_consumption_gwh"] = revised
-            response = self._client.post("/api/v1/analysis", json=payload)
+            response = self._client.post("/api/v1/analysis", json=payload,
+                                         headers={"Authorization": f"Bearer {access_token}", "X-Tenant-ID": tenant_id})
         except httpx.TimeoutException as error:
             raise AnalysisApiTimeoutError("El análisis ha superado el tiempo permitido.") from error
         except httpx.HTTPError as error:

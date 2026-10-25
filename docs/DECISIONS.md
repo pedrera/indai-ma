@@ -177,3 +177,289 @@ embeddings, RAG, network or physical recalculation; logical reevaluation is allo
 Provenance and reuse keys are session-local, not persistent audit storage or
 authentication. New policies, optimization, execution, persistent lifecycle and
 cross-domain abstractions remain deferred. No new dependencies are introduced.
+
+## ADR-021 — Transport-independent security contracts (C1.1)
+
+**Status:** implemented, contracts only. **Context:** the modular monolith needs
+explicit identity and access contracts before OIDC, authorization enforcement or
+multi-tenant storage can be introduced.
+
+**Decision:** define frozen value objects and provider-independent Protocol ports
+in `security/`. PrincipalId uses the exact issuer and subject pair, because a
+subject is scoped to its issuer and email is not a stable identity key. TenantId
+represents a security ownership boundary, independently of customer_id and the
+five-field industrial position identity. ResourceRef records the resource type,
+identifier and owning tenant; constructing it does not establish ownership.
+
+SecurityContext holds a principal, previously validated active tenant, explicit
+typed effective permissions and correlation identifier. Its nested identifiers
+are frozen and permission collections are copied into a frozenset, preventing
+accidental mutation across operations. No credentials or tokens are retained.
+Permission strings require explicit enum conversion; unknown values are rejected.
+There are no roles, default grants or physical-execution permissions.
+
+Only a future trusted authentication/application boundary may construct the
+context after credential validation, membership resolution and permission
+resolution. Prompts, LLM outputs and business identifiers cannot establish these
+facts or grant permissions. Object construction validates structure, not trust.
+Authenticator, MembershipResolver and Authorizer separate identity validation,
+tenant membership and action/resource authorization. Exceptions remain independent
+of HTTP; future adapters will translate failures without swallowing denials.
+
+Future API and authenticated Streamlit adapters will construct these contexts;
+application services, Supervisor, agents, tool boundaries and document storage
+will consume them. A protected Industrial Gases application boundary will check
+access to retained evidence before calling the Decision Engine. The engine and
+pure calculations remain free of authentication and transport concerns, preserving
+determinism and existing source-integrity checks.
+
+**Consequences:** no runtime integration, provider, dependency or existing flow is
+changed by this increment. These values are not cryptographic proof, and the ports
+have no production implementation yet.
+
+**C1.1 solo define contratos. No introduce autenticación, autorización efectiva
+ni aislamiento multi-tenant en las entradas actuales.**
+
+## ADR-022 — Tenant-local RBAC and authoritative membership policy (C1.2)
+
+**Status:** implemented, not integrated. **Context:** C1.1 values validate
+structure but do not prove identity, membership, resource ownership or grants.
+
+**Decision:** retain the C1.1 contracts unchanged. Add MembershipDirectory as an
+extension of MembershipResolver with one authoritative resolve(principal, tenant)
+lookup returning a frozen TenantMembership or None. This avoids a caller-supplied
+membership Boolean and binds roles to the complete issuer/subject and tenant pair.
+ConfiguredMembershipDirectory is an immutable, explicitly supplied snapshot for
+tests and controlled development, not an enterprise directory or user database.
+No built-in users, tenant defaults or universal grants exist. Duplicate pair
+configuration is rejected. Replacing configuration applies membership changes.
+
+The explicit role map has no inheritance or wildcard:
+
+| Role | Permissions |
+| --- | --- |
+| Viewer | portfolio:read, documents:read |
+| Analyst | portfolio:read, documents:read, analysis:run, scenarios:evaluate, criteria:evaluate |
+| Approver | portfolio:read, documents:read, decisions:evaluate |
+| Tenant Admin | documents:read, documents:ingest, documents:delete, diagnostics:read |
+
+Multiple explicitly assigned roles union their permissions only within that tenant.
+Tenant Admin does not inherit business permissions. Approver is a reserved business
+role name: decisions:evaluate permits evaluation, not approval or physical action.
+A future approval operation requires a separately designed explicit permission;
+this increment retains exactly the nine C1.1 permissions.
+
+SecurityContextFactory defines the trusted construction boundary: an injected
+Authenticator validates credentials, then the selected tenant is resolved from
+the injected directory, and permissions come exclusively from that membership.
+There is no roles/permissions input from the caller. A tenant change requires a
+new context with fresh resolution. No production authenticator is supplied here.
+
+TenantAuthorizer implements the C1.1 Authorizer port and resolves membership on
+every call. It denies missing membership, untyped permissions, absent effective
+permissions, context grants exceeding current authoritative grants, and resources
+owned by another tenant. Context permissions may narrow grants, never widen them.
+Directory/security failures propagate, never become partial results or fallback
+access. A permission can authorize a general operation without a resource; actual
+resource access must also pass the resource check. Cross-tenant/shared resources
+have no exception: no sharing policy is implemented. customer_id, prompt text and
+global labels never establish membership.
+
+The composition root must provide trustworthy authentication and directory ports;
+resource ownership must be loaded from trusted storage. A constructed PrincipalId,
+SecurityContext or ResourceRef is not cryptographic proof. This policy does not
+authenticate arbitrary Python callers or detect forged ownership supplied by a
+compromised caller. Future adapters must not deserialize these trusted values
+directly from client business payloads, LLM output or prompts.
+
+**Consequences:** no HTTP, OIDC provider, database, dependencies or existing business
+flow changes. Authentication adapters, safe resource loaders, application-service
+enforcement, session/tenant transitions, document isolation and audit integration
+remain future work. The Decision Engine remains pure and outside authentication.
+**C1.2 does not yet protect current application entry points or provide effective
+multi-tenant isolation for existing business flows.**
+
+## ADR-023 — Explicit RFC 9068 access-token validation (C1.3)
+
+**Status:** implemented, not integrated. **Context:** authentication needs real
+signature validation without coupling identity to HTTP, UI or authorization.
+The user approved PyJWT[crypto]; requirements now declare >=2.15.1,<3. RSA and
+JWK operations use PyJWT/cryptography, never handwritten cryptography.
+
+**Decision:** OIDCConfig is immutable and explicit: one exact HTTPS issuer, API
+audience and preconfigured HTTPS JWKS URL, with no discovery or environment
+defaults. URLs cannot contain credentials, query or fragment. The composition
+root must approve that endpoint; the token cannot select a trust configuration.
+OIDCAuthenticator implements Authenticator and returns only PrincipalId(iss, sub).
+
+The supported profile is signed RFC 9068 JWT access tokens with RS256 and a
+protected typ of at+jwt or application/at+jwt. Require iss, sub, aud, exp, iat,
+client_id and jti; validate signature, exact issuer, audience, expiration, issued
+time and nbf when present. Subjects/client IDs/token IDs must be nonblank strings;
+timestamps must be finite numbers, not strings or booleans, with exp after iat.
+Default clock skew is 15 seconds (configurable 0–60). An ID token with typ JWT
+is rejected even if signed by the same issuer. Providers using another access
+token format, opaque tokens, JWE or other signing algorithms are unsupported.
+
+Keycloak remains the intended development provider, but this increment neither
+installs it nor assumes its default tokens match RFC 9068. A future integration
+must configure/verify that emission profile, audience and HTTPS or separately
+design and test an explicit provider-specific profile. No permissive typ fallback.
+
+JWKS is fetched only from the configured URL using TLS verification, with proxy
+environment settings and redirects disabled. Token jku, x5u, embedded jwk/x5c,
+critical extensions and b64 overrides are rejected. kid is merely a bounded
+selector within the trusted set, not an authentication assertion or URL. Only
+eligible RSA signing keys of at least 2048 bits are used; duplicate eligible kids,
+private key material and incompatible key operations are rejected.
+
+Each authenticator owns its issuer-scoped cache protected by a lock. Default TTL
+is 300 seconds; unknown kids refresh at most once per 10 seconds, including after
+failures. A provider rotation must publish a new kid. Successful refresh replaces
+the set, removing withdrawn keys. A cached known key can remain valid until TTL;
+there is no immediate revocation/introspection. Expired keys never provide fallback
+when refresh fails. A newly rotated unknown key may be denied during cooldown.
+Timeout defaults to 5 seconds, bounded to 30, with streamed size (256 KiB), key
+count (64), token size (16 KiB), and elapsed-response checks. HTTPX timeouts bound
+individual I/O; this synchronous adapter does not provide hard cancellation of
+DNS resolution or an already blocking transport operation.
+
+Malformed credentials, validation errors and JWKS failures deny access with typed
+exceptions and sanitized messages, without logging credentials or private claims.
+No roles, scopes, tenants or permissions are granted from token claims.
+MembershipDirectory and TenantAuthorizer remain responsible for tenant membership
+and authorization after identity validation. The trusted factory can use this
+authenticator, but no application entry point constructs or invokes it yet.
+
+**Consequences:** offline tests generate ephemeral RSA keys and simulate JWKS,
+including key rotation, failures, cross-issuer isolation and concurrent cache
+access. No interactive login, PKCE, HTTP integration, provider deployment,
+persistent audit or business-flow changes. Callers own authenticator lifecycle
+and close its HTTP client. Deployment egress rules should further constrain
+configured endpoints; token content can never authorize additional destinations.
+**Authentication is not yet connected to current product entry points.**
+
+References: [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068.html),
+[PyJWT validation API](https://pyjwt.readthedocs.io/en/stable/api.html).
+
+## ADR-024 — Mandatory analysis authorization and authenticated HTTP (C1.4)
+
+**Status:** implemented for AnalysisService and POST /api/v1/analysis. **Context:**
+HTTP-only checks would leave the direct Streamlit Supervisor entry unsecured.
+The revised increment explicitly authorizes disabling that entry until an
+authenticated UI exists. No identity, permissions or tenant defaults are added.
+
+**Decision:** AnalysisService requires a TenantAuthorizer at construction and
+an explicit SecurityContext for every analyze(request, context) call. It checks
+analysis:run against current authoritative membership before validating business
+inputs, constructing a recorder, Supervisor, RAG or generation provider. Context
+permissions cannot exceed current grants. Missing/invalid context denies access;
+there is no optional-context path, privileged workflow or test/development mode.
+SecurityError exceptions propagate instead of becoming partial/service results.
+Authentication of the principal remains the trusted caller's responsibility;
+constructing a Python context alone is not cryptographic identity proof.
+
+The HTTP dependency accepts one Bearer credential exclusively in Authorization
+and one active tenant in X-Tenant-ID. Tenant syntax is 1–128 ASCII letters/digits
+and . _ : -, beginning with a letter/digit. No path, whitespace or duplicate
+selection is accepted. SecurityContextFactory authenticates using OIDCAuthenticator
+and resolves membership, then TenantAuthorizer checks analysis:run. The service
+checks again, including revocation between HTTP resolution and execution. Context
+and correlation are per request and passed explicitly, never stored in mutable
+global request/session state. Body, cookies, query parameters and token role/tenant
+claims cannot establish identity, membership or grants. Business DTOs still forbid
+extra fields. Validation errors do not echo rejected input values.
+
+HTTP failures use sanitized messages: missing/invalid/expired credentials are
+401 with WWW-Authenticate: Bearer; missing permission/membership is 403; missing,
+duplicate or malformed tenant is 400; unavailable/misconfigured identity/JWKS or
+membership infrastructure is 503. IdentityInfrastructureError distinguishes source
+failures from InvalidCredentials without string matching. Failed JWKS refresh
+retains the infrastructure classification during cooldown; an unknown kid in a
+successfully loaded key set remains an invalid credential. No stale expired-key
+fallback exists. These rules supersede the undifferentiated C1.3 JWKS exception.
+
+APISecurity composes an authenticator, MembershipDirectory, context factory and
+authorizer per app. Composition reads INDAI_OIDC_ISSUER, INDAI_OIDC_AUDIENCE,
+INDAI_OIDC_JWKS_URL and INDAI_MEMBERSHIPS_FILE. The membership file is an admin-owned
+JSON list of exact records with issuer, subject, tenant_id and a roles list;
+issuer must match configured OIDC issuer. Empty configuration grants no access;
+unknown roles, duplicate memberships and malformed configuration fail closed.
+The configuration must never be written from client input or committed with real
+identities. Existing configured-directory limitations remain: it is a snapshot,
+not a production directory; replacing/reloading it is needed for grant changes.
+
+Missing configuration leaves analysis unavailable (503 for supplied credentials,
+401 when absent); health stays public and readiness reports 503. No index is read
+during service composition: RAG index access is deferred until authorized execution.
+The app owns/closes the authenticator it creates through its lifespan; injected
+dependencies are owned by the trusted caller. Test fixtures inject explicit
+identities/memberships or real JWTs with offline JWKS; production does not import
+tests or offer a bypass flag. There is no new dependency.
+
+AnalysisApiClient requires access_token and tenant_id as keyword-only operation
+arguments and sets headers on that request only. BusinessApiRequest carries them
+per job, excludes the token from repr and rejects missing credentials before job
+creation/execution. Tokens are never client-global defaults or environment fallbacks.
+The public business JSON remains unchanged. Interactive login is not implemented.
+
+The Streamlit Supervisor renderer displays a disabled-mode message and returns;
+its direct start function raises AuthenticationRequired before any work. Its old
+implementation is retained unreachable for a future authenticated adapter.
+Streamlit Business has no authenticated credential source yet: its analysis
+button is disabled and direct start rejects before constructing a job. The
+authenticated HTTP client is usable by callers supplying genuine per-operation
+credentials, but the UI must not advertise Business as executable yet.
+
+**Consequences and limits:** authentication/operation authorization do not enforce
+document ownership. The contractual RAG index, document ingestion/listing/deletion,
+retrieval, source presentation and cross-tenant document/resource authorization
+still need protection. An authorized analysis can access the existing configured
+contract index; do not treat C1.4 as enterprise document multi-tenancy. Workspace,
+Industrial Gases, specialist technical views, standalone Supervisor and evaluation
+tools remain outside this protected boundary. Their deterministic behavior is
+unchanged and they must not be advertised as protected enterprise entry points.
+No changes to formulas, specialists, RAG logic or Decision Engine. No Keycloak,
+database, login or broader Streamlit security is introduced. Enterprise deployment
+remains blocked on those resource and entry-point controls; C1.5 is not automatic.
+
+## ADR-025 — Native Streamlit OIDC client for Business (C1.5)
+
+**Status:** implemented, live-provider acceptance pending. **Context:** the user
+approved Streamlit as the OIDC client, Authlib and Streamlit 1.62.0 minimum, with
+no BFF or relaxed backend validation. Installed Streamlit 1.62.0 exposes public
+st.login/st.logout/st.user.tokens.access through expose_tokens=["access"]. Authlib
+1.9.1 and its joserfc dependency were installed; no dependency is used to invent
+an alternate callback/cookie flow.
+
+**Decision:** use the native Authorization Code client, configured with external
+secrets and PKCE S256. Add authenticated GET /api/v1/session for validated identity,
+expiration and per-principal tenant discovery. Extend membership listing without
+changing C1.1 resolve semantics. OIDCAuthenticator exposes validated metadata while
+its Authenticator port continues returning only PrincipalId. ID tokens do not
+authenticate either API endpoint. List responses never contain credentials.
+
+Business verifies native issuer/subject against the backend and requires explicit
+selection of a tenant with analysis:run. Tokens are read per operation from the
+public native API; session metadata contains no tokens. Native login timestamps,
+principal, selected tenant and a random epoch bind jobs to a session. Permission
+checks run again at start and polling; revoked/expired/unverifiable sessions fail
+closed. User/tenant changes and logout remove Business state and Inspector data,
+detach/cancel old jobs locally and reject late results. Workspace state is not
+treated as protected Business state. Renewal requires new login rather than
+unsupported refresh-token extraction. Native persistent cookies do not extend
+the accepted access-token lifetime. Other browser sessions are not globally revoked.
+
+Keycloak's at+jwt option exists from 26.2 but is disabled by default. The proposed
+client config includes exact redirects, RS256, API audience and required client_id
+claim; real issued-token compatibility and callback/logout/certificates still need
+provider acceptance. No Keycloak/Docker/server or production identities were added.
+Secrets are configured outside the repository. See [Streamlit OIDC setup](STREAMLIT_OIDC.md).
+
+**Consequences:** Business is conditionally enabled for verified authorized native
+sessions. Supervisor technical mode remains disabled. Backend authorization stays
+mandatory, with no anonymous/static-token fallback. This is not a BFF: native
+framework cookie handling, dependency/proxy logging policy and browser-session
+lifecycle remain deployment concerns. Resource/document isolation and other
+direct views remain pending and block enterprise multi-tenant deployment. Offline
+tests exercise real JWTs and explicit public-API doubles, not live Keycloak login.
