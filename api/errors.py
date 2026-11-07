@@ -1,10 +1,12 @@
 from fastapi import Request
 from fastapi.responses import JSONResponse
+import json
+import re
 
 from api.models import ErrorDTO
 from application_service import AnalysisServiceError
 from security.errors import (AuthenticationRequired, InvalidCredentials,
-                             IdentityInfrastructureError)
+                             IdentityInfrastructureError, PermissionDenied, TenantAccessDenied)
 
 
 async def analysis_service_error(request: Request, exc: AnalysisServiceError):
@@ -12,6 +14,19 @@ async def analysis_service_error(request: Request, exc: AnalysisServiceError):
 
 
 async def security_error(request: Request, exc):
+    validation_ids = request.headers.getlist("x-validation-id")
+    if (request.method == "POST" and request.url.path == "/api/v1/analysis"
+            and len(validation_ids) == 1 and re.fullmatch(r"[a-f0-9]{32}", validation_ids[0])):
+        kind = next((name for cls, name in (
+            (TenantAccessDenied, "TenantAccessDenied"), (PermissionDenied, "PermissionDenied"),
+            (AuthenticationRequired, "AuthenticationRequired"), (InvalidCredentials, "InvalidCredentials"),
+            (IdentityInfrastructureError, "IdentityInfrastructureError")) if isinstance(exc, cls)), "SecurityError")
+        stage = getattr(request.state, "analysis_security_stage", "NOT_REACHED")
+        allowed_stages = {"BEARER", "CONTEXT_FACTORY", "OPERATION_AUTHORIZATION", "AUTHORIZED"}
+        print(json.dumps({"event": "ANALYSIS_SECURITY_REJECTION", "validation_id": validation_ids[0],
+                          "exception_class": kind, "security_stage": stage if stage in allowed_stages else "UNKNOWN",
+                          "service_dependency_entered": bool(getattr(request.state, "analysis_service_dependency_entered", False)),
+                          "analysis_handler_entered": bool(getattr(request.state, "analysis_handler_entered", False))}), flush=True)
     if isinstance(exc, (AuthenticationRequired, InvalidCredentials)):
         return JSONResponse(status_code=401, content=ErrorDTO(code="unauthorized", message="Se requieren credenciales válidas.").model_dump(), headers={"WWW-Authenticate": "Bearer"})
     if isinstance(exc, IdentityInfrastructureError):

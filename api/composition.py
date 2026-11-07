@@ -1,6 +1,10 @@
 import os
 import json
+import ssl
 from pathlib import Path
+
+import certifi
+import httpx
 
 from application_service import AnalysisService
 from embeddings import LMStudioEmbeddingProvider, get_embedding_model_name
@@ -38,9 +42,20 @@ def build_security() -> APISecurity:
                 frozenset(Role(role) for role in record["roles"]),
             ))
         directory = ConfiguredMembershipDirectory(memberships)
+        transport = None
+        ca_file = os.environ.get("INDAI_OIDC_CA_FILE")
+        if ca_file is not None:
+            ca_path = Path(ca_file)
+            if not ca_path.is_absolute() or not ca_path.is_file():
+                raise ValueError("Invalid explicit CA path")
+            # Process-local trust configuration. Preserve the default public roots;
+            # neither the venv bundle nor Windows stores are modified.
+            tls = ssl.create_default_context(cafile=certifi.where())
+            tls.load_verify_locations(cafile=str(ca_path))
+            transport = httpx.HTTPTransport(verify=tls, trust_env=False)
     except (OSError, ValueError, TypeError, KeyError):
         raise IdentityInfrastructureError("Identity configuration is unavailable") from None
-    return APISecurity(OIDCAuthenticator(config), directory)
+    return APISecurity(OIDCAuthenticator(config, transport=transport), directory)
 
 
 def build_service(authorizer) -> tuple[AnalysisService, LLMRuntimeConfig]:

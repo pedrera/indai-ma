@@ -420,7 +420,7 @@ class ExecutionUXTests(unittest.TestCase):
     def test_business_api_render_path_wires_copy_all(self):
         copied = []
         with patch('llm_client.get_available_models', return_value=[]), patch(
-            'clipboard_ui.render_clipboard_button', side_effect=lambda text, label, **kw: copied.append((label, text))), patch('business_auth.render_business_auth', return_value=True):
+            'clipboard_ui.render_clipboard_button', side_effect=lambda text, label, **kw: copied.append((label, text))), patch('business_auth.render_business_auth', return_value=True), patch('business_auth.refresh_business_session'):
             app = AppTest.from_file(APP, default_timeout=20).run()
             app.radio(key='selected_mode').set_value('Business').run()
             payload = {
@@ -441,7 +441,7 @@ class ExecutionUXTests(unittest.TestCase):
             self.assertTrue(any(label == 'Copiar todo' for label, _ in copied))
 
     def test_business_api_renders_recommendation(self):
-        with patch('llm_client.get_available_models', return_value=[]), patch('business_auth.render_business_auth', return_value=True):
+        with patch('llm_client.get_available_models', return_value=[]), patch('business_auth.render_business_auth', return_value=True), patch('business_auth.refresh_business_session'):
             app = AppTest.from_file(APP, default_timeout=20).run()
             app.radio(key='selected_mode').set_value('Business').run()
             payload = {

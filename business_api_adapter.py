@@ -27,9 +27,26 @@ class ApiJobAdapter:
         raise AnalysisApiCredentialsError("Se requieren credenciales por operación.")
 
 
+class _BusinessApiJob(AgentJob):
+    """Release captured credentials and owned transport when the worker finishes."""
+
+    def __init__(self, adapter, request, timeout, owns_client):
+        super().__init__(adapter, request, timeout, None)
+        self._owns_client = owns_client
+
+    def _run(self):
+        try:
+            super()._run()
+        finally:
+            self.request = None
+            if self._owns_client:
+                self.agent.client.close()
+
+
 def create_business_api_job(request, client: AnalysisApiClient | None = None) -> AgentJob:
     if not isinstance(request, BusinessApiRequest):
         raise AnalysisApiCredentialsError("Se requieren credenciales por operación.")
     validate_operation_credentials(request.access_token, request.tenant_id)
+    owns_client = client is None
     client = client or AnalysisApiClient()
-    return AgentJob(ApiJobAdapter(client), request, client.config.analysis_timeout, None)
+    return _BusinessApiJob(ApiJobAdapter(client), request, client.config.analysis_timeout, owns_client)

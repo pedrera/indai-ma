@@ -7,6 +7,7 @@ from api.errors import analysis_service_error, unexpected_error, security_error,
 from api.routes import router
 from application_service import AnalysisServiceError
 from security.errors import SecurityError, IdentityInfrastructureError
+from security_audit import AuditMiddleware, configured_audit
 
 
 def create_app(service=None, runtime_config=None, use_llm_synthesis=False, *, security=None) -> FastAPI:
@@ -32,6 +33,7 @@ def create_app(service=None, runtime_config=None, use_llm_synthesis=False, *, se
     app.state.analysis_service = service
     app.state.runtime_config = runtime_config
     app.state.use_llm_synthesis = use_llm_synthesis
+    app.add_middleware(AuditMiddleware, sink=configured_audit())
     app.include_router(router)
     app.add_exception_handler(AnalysisServiceError, analysis_service_error)
     app.add_exception_handler(SecurityError, security_error)

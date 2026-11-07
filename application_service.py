@@ -9,7 +9,8 @@ from supervisor import Supervisor
 from security.models import SecurityContext
 from security.permissions import Permission
 from security.policy import TenantAuthorizer
-from security.errors import SecurityError
+from security.errors import SecurityError, PermissionDenied, TenantAccessDenied
+from security_audit import emit
 
 
 class AnalysisServiceError(RuntimeError):
@@ -33,8 +34,14 @@ class AnalysisService:
         return PerformanceRecorder(operation_id, "deterministic", "none", "supervisor")
 
     def analyze(self, request: AnalysisRequest, context: SecurityContext) -> AnalysisResult:
+        emit('analysis_service_entered', 'APPLICATION_SERVICE')
         # Never construct providers, recorders or Supervisor before authorization.
-        self._authorizer.authorize(context, Permission.ANALYSIS_RUN)
+        try:
+            self._authorizer.authorize(context, Permission.ANALYSIS_RUN)
+        except PermissionDenied as error:
+            emit('tenant_authorization_denied' if isinstance(error, TenantAccessDenied) else
+                 'permission_authorization_denied', 'APPLICATION_SERVICE', error=error)
+            raise
         if not request.text or not request.text.strip():
             raise AnalysisServiceError("La consulta de análisis no puede estar vacía.")
         operation_id = request.operation_id or uuid4().hex[:8]
@@ -51,12 +58,14 @@ class AnalysisService:
             return self._rag_factory(child_recorder, request.runtime)
 
         try:
+            emit('supervisor_construction_started', 'SUPERVISOR')
             supervisor = self._supervisor_factory(
                 recorder=recorder,
                 provider_factory=provider_factory if self._provider_factory else None,
                 rag_factory=rag_factory if self._rag_factory else None,
                 use_llm_synthesis=request.use_llm_synthesis,
             )
+            emit('supervisor_construction_completed', 'SUPERVISOR')
             supervisor_result = supervisor.run(request.text, request.runtime.timeout_seconds,
                                                evaluation_inputs=request.alternative_evaluation)
             executive = build_supervisor_executive_sections(supervisor_result)

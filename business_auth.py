@@ -5,6 +5,8 @@ never retained in session metadata, logs, prompts or diagnostics.
 """
 from dataclasses import dataclass, replace
 import math
+import logging
+import json
 from time import time
 from uuid import uuid4
 
@@ -12,6 +14,25 @@ from api_client import AnalysisApiClient, AnalysisApiClientError, AnalysisApiCre
 from business_api_adapter import BusinessApiRequest
 from security.models import PrincipalId
 from security.permissions import Permission
+
+
+class NativeAuthDiagnosticFilter(logging.Filter):
+    """Suppress provider messages and exception dumps, including query values."""
+    def filter(self, record):
+        record.msg = "NATIVE_OIDC_FRAMEWORK_EVENT: details suppressed"
+        record.args = ()
+        record.exc_info = None
+        record.exc_text = None
+        record.stack_info = None
+        return True
+
+
+def configure_native_auth_diagnostics():
+    logger = logging.getLogger("streamlit.web.server.starlette.starlette_auth_routes")
+    if not any(isinstance(f, NativeAuthDiagnosticFilter) for f in logger.filters):
+        logger.addFilter(NativeAuthDiagnosticFilter())
+    for name in ("authlib", "httpx", "httpx2", "httpcore", "httpcore2"):
+        logging.getLogger(name).setLevel(logging.CRITICAL)
 
 
 @dataclass(frozen=True)
@@ -39,7 +60,11 @@ def clear_business_state(state):
     if state.get("generation_kind") == "business_api":
         job = state.get("generation_job")
         if job is not None:
-            job.cancel()
+            try:
+                job.cancel()
+            except Exception:
+                # A failed local cancellation must not preserve authorization.
+                print('{"event":"BUSINESS_JOB_CANCEL_FAILED"}', flush=True)
         for key in ("generation_job", "generation_kind", "generation_notice", "operation_id", "operation_started_at"):
             state[key] = None
     ids = set(state.get("business_operation_ids", ()))
@@ -62,9 +87,14 @@ def clear_business_state(state):
 
 
 def _deny(state, message):
-    clear_business_state(state)
+    # Invalidate authorization before attempting cancellation/other cleanup.
     state["business_session"] = None
     state["business_auth_error"] = message
+    try:
+        clear_business_state(state)
+    finally:
+        state["business_session"] = None
+        state.pop("business_tenant_selection", None)
 
 
 def _timestamp(value):
@@ -77,10 +107,23 @@ def refresh_business_session(st):
     """Validate native identity against the API on every rerun, including polling."""
     state = st.session_state
     old = state.get("business_session")
+    if state.get("_business_logout_pending"):
+        _deny(state, None)
+        if not getattr(st.user, "is_logged_in", False):
+            state.pop("_business_logout_pending", None)
+        # Never read/reuse the old native token while logout is pending/failed.
+        return None
     if not getattr(st.user, "is_logged_in", False):
-        if old is not None:
+        # Clear residual results/jobs even if no session object survived the rerun.
+        residual = (state.get("generation_kind") == "business_api"
+                    or state.get("business_api_result") is not None
+                    or state.get("business_first_run_result") is not None
+                    or bool(state.get("business_operation_ids"))
+                    or "business_tenant_selection" in state
+                    or any(getattr(view, "mode", None) in {"Business", "Multi-Agent Supervisor"}
+                           for view in state.get("execution_views", {}).values()))
+        if old is not None or residual:
             _deny(state, None)
-            state.pop("business_tenant_selection", None)
         return None
     try:
         principal = PrincipalId(st.user["iss"], st.user["sub"])
@@ -144,16 +187,36 @@ def select_business_tenant(st):
 
 
 def logout_business(st):
-    _deny(st.session_state, None)
-    st.logout()
+    attempt = uuid4().hex
+    print(json.dumps({"event": "BUSINESS_LOGOUT_REQUESTED", "attempt": attempt}), flush=True)
+    st.session_state["_business_logout_pending"] = True
+    try:
+        _deny(st.session_state, None)
+    except Exception:
+        print(json.dumps({"event": "BUSINESS_LOGOUT_CLEANUP_FAILED", "attempt": attempt}), flush=True)
+    try:
+        st.logout()
+    except Exception:
+        print(json.dumps({"event": "NATIVE_LOGOUT_FAILED", "attempt": attempt}), flush=True)
+        return False
+    print(json.dumps({"event": "NATIVE_LOGOUT_RETURNED", "attempt": attempt,
+                      "native_logged_in": bool(getattr(st.user, "is_logged_in", False))}), flush=True)
+    return True
 
 
 def render_business_auth(st):
     session = st.session_state.get("business_session")
+    if st.session_state.get("_business_logout_pending"):
+        st.warning("El acceso local está cerrado. Falta completar el cierre o la renovación de la sesión nativa.")
+        st.button("Reintentar cierre nativo", key="business_logout_retry",
+                  on_click=logout_business, args=(st,))
+        if st.button("Iniciar sesión de nuevo", key="business_relogin"):
+            st.login()
+        return False
     if getattr(st.user, "is_logged_in", False):
-        if st.button("Cerrar sesión / renovar acceso", key="business_logout"):
-            logout_business(st)
-            return False
+        # Widget callbacks run before the script's backend session refresh.
+        st.button("Cerrar sesión / renovar acceso", key="business_logout",
+                  on_click=logout_business, args=(st,))
     else:
         try:
             auth = st.secrets.get("auth", {})
@@ -179,6 +242,48 @@ def render_business_auth(st):
     if not session.can_analyze:
         st.info("Selecciona un tenant autorizado para ejecutar Business.")
     return session.can_analyze
+
+
+def render_native_session_validation(st):
+    """Native login/session-only entry; never creates jobs or analysis requests."""
+    configure_native_auth_diagnostics()
+    st.subheader("Acceso Business")
+    refresh_business_session(st)
+    render_business_auth(st)
+    session = st.session_state.get("business_session")
+    if isinstance(session, BusinessSession):
+        st.success("Identidad OIDC y access token verificados por el backend: sesión HTTP 200.")
+        st.table([{"Tenant autorizado": tenant,
+                   "Permisos del backend": ", ".join(sorted(p.value for p in permissions))}
+                  for tenant, permissions in session.tenants])
+        if session.tenant_id is not None:
+            st.info("Tenant seleccionado explícitamente: " + session.tenant_id)
+        if not any(Permission.ANALYSIS_RUN in permissions for _, permissions in session.tenants):
+            if session.tenants:
+                st.selectbox("Tenant disponible (solo lectura)", [tenant for tenant, _ in session.tenants],
+                             index=None, key="business_readonly_tenant_selection")
+                st.info("Esta selección reconoce la pertenencia; no autoriza análisis ni crea un contexto de ejecución.")
+            else:
+                st.info("La identidad es válida, pero no tiene pertenencias en el backend.")
+            st.button("Analizar", key="session_validation_analysis_disabled", disabled=True)
+            try:
+                probe = st.secrets.get("business_denial_probe")
+            except Exception:
+                probe = None
+            if probe is not None:
+                from business_denial_probe import render_preparation
+                render_preparation(st, probe)
+            return
+    try:
+        pilot = st.secrets.get("business_first_run")
+    except Exception:
+        pilot = None  # Missing/invalid private config never enables an execution.
+    if pilot is not None:
+        from business_first_run import render_first_run
+        render_first_run(st, pilot)
+    else:
+        st.info("Validación de acceso: los análisis permanecen deshabilitados en esta etapa.")
+        st.button("Analizar", key="session_validation_analysis_disabled", disabled=True)
 
 
 def capture_business_request(st, text, alternative_evaluation=None):

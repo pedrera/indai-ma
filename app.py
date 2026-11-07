@@ -72,7 +72,8 @@ from api_client import AnalysisApiClient
 from api_client_models import ApiAnalysisResult
 from business_api_adapter import BusinessApiRequest, create_business_api_job
 from business_auth import (refresh_business_session, render_business_auth,
-                           capture_business_request, business_result_is_current)
+                           capture_business_request, business_result_is_current,
+                           render_native_session_validation)
 from presentation_normalization import normalize_supervisor_result
 from application_models import AnalysisRequest
 from application_service import AnalysisService
@@ -113,6 +114,12 @@ st.set_page_config(page_title="indAI MA", page_icon="🏭", layout="wide")
 
 st.title("indAI MA")
 st.caption("Asistente para el sector industrial")
+
+# Explicit local validation entry: stop before any workspace, RAG or job setup.
+# This narrows UI functionality; it never supplies identity or grants.
+if os.environ.get("INDAI_STREAMLIT_SESSION_ONLY") == "1":
+    render_native_session_validation(st)
+    st.stop()
 
 if "execution_views" not in st.session_state:
     st.session_state.execution_views = {}
@@ -1339,8 +1346,15 @@ def render_risk_agent() -> None:
                                      operation_id=st.session_state.risk_operation_id)
 
 
-def finish_generation(result: GenerationResult, *, business_binding=None) -> None:
+def finish_generation(result: GenerationResult, *, business_binding=None, source_job=None) -> None:
+    # A detached completion must neither publish data nor erase a newer job.
+    if source_job is not None and st.session_state.get("generation_job") is not source_job:
+        return
     generation_kind = st.session_state.generation_kind
+    if business_binding is not None and (
+            generation_kind != "business_api"
+            or not business_result_is_current(st.session_state, business_binding)):
+        return
     if generation_kind == "business_api" and not business_result_is_current(st.session_state, business_binding):
         st.session_state.generation_job = None
         st.session_state.generation_kind = None
@@ -1591,7 +1605,7 @@ def render_generation_status() -> None:
             st.info("Ejecución en curso...")
         return
 
-    finish_generation(result, business_binding=getattr(job, "business_binding", None))
+    finish_generation(result, business_binding=getattr(job, "business_binding", None), source_job=job)
     st.rerun()
 
 

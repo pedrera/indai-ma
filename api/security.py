@@ -11,6 +11,8 @@ from security.models import SecurityContext, TenantId
 from security.permissions import Permission
 from security.policy import SecurityContextFactory, TenantAuthorizer
 from security.ports import Authenticator
+from security.errors import SecurityError, TenantAccessDenied, PermissionDenied
+from security_audit import emit, correlation_id
 
 
 @dataclass(frozen=True)
@@ -38,13 +40,42 @@ def bearer_token(request: Request) -> str:
 
 
 def analysis_security_context(request: Request) -> SecurityContext:
-    token = bearer_token(request)
+    request.state.analysis_security_stage = "BEARER"
+    try:
+        token = bearer_token(request)
+    except SecurityError as error:
+        emit('authentication_denied', 'BEARER', error=error)
+        raise
     security = request.app.state.security
     if security is None:
         raise IdentityInfrastructureError("Identity configuration is unavailable")
     tenants = request.headers.getlist("x-tenant-id")
     if len(tenants) != 1 or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", tenants[0]) is None:
         raise HTTPException(400, "Selecciona un único X-Tenant-ID válido.")
-    context = security.context_factory.create(token, TenantId(tenants[0]), uuid4().hex)
-    security.authorizer.authorize(context, Permission.ANALYSIS_RUN)
+    request.state.analysis_security_stage = "CONTEXT_FACTORY"
+    class ObservedAuthenticator:
+        def authenticate(self, credentials):
+            try:
+                principal = security.authenticator.authenticate(credentials)
+            except SecurityError as error:
+                emit('authentication_denied', 'AUTHENTICATION', error=error)
+                raise
+            emit('authentication_succeeded', 'AUTHENTICATION', principal=principal)
+            return principal
+    try:
+        context = SecurityContextFactory(ObservedAuthenticator(), security.memberships).create(
+            token, TenantId(tenants[0]), correlation_id())
+    except TenantAccessDenied as error:
+        emit('tenant_authorization_denied', 'CONTEXT_FACTORY', tenant=tenants[0], error=error)
+        raise
+    emit('tenant_authorization_succeeded', 'CONTEXT_FACTORY', tenant=tenants[0])
+    request.state.analysis_security_stage = "OPERATION_AUTHORIZATION"
+    try:
+        security.authorizer.authorize(context, Permission.ANALYSIS_RUN)
+    except PermissionDenied as error:
+        emit('tenant_authorization_denied' if isinstance(error, TenantAccessDenied) else
+             'permission_authorization_denied', 'OPERATION_AUTHORIZATION', error=error)
+        raise
+    emit('permission_authorization_succeeded', 'OPERATION_AUTHORIZATION')
+    request.state.analysis_security_stage = "AUTHORIZED"
     return context

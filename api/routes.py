@@ -49,6 +49,7 @@ def authenticated_session(request: Request, response: Response):
 
 
 def service_dependency(request: Request, context: SecurityContext = Depends(analysis_security_context)) -> AnalysisService:
+    request.state.analysis_service_dependency_entered = True
     service = request.app.state.analysis_service
     if service is None:
         raise IdentityInfrastructureError("Analysis service is unavailable")
@@ -72,6 +73,7 @@ def ready(request: Request):
 @router.post("/api/v1/analysis", response_model=AnalysisResponseDTO)
 def analyze(payload: AnalysisRequestDTO, request: Request, context: SecurityContext = Depends(analysis_security_context),
             service: AnalysisService = Depends(service_dependency)):
+    request.state.analysis_handler_entered = True
     result = service.analyze(AnalysisRequest(
         text=payload.text,
         runtime=request.app.state.runtime_config,

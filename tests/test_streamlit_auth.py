@@ -79,6 +79,174 @@ def test_native_login_missing_configuration_stays_disabled(ui):
     st.login.assert_not_called()
 
 
+def test_native_session_only_entry_has_no_workspace_or_analysis(monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    import streamlit
+    import vector_store
+    monkeypatch.setenv("INDAI_STREAMLIT_SESSION_ONLY", "1")
+    user = native_user(logged=False)
+    monkeypatch.setattr(streamlit, "user", user)
+    client = Mock()
+    client.session.side_effect = lambda **kw: metadata(user)
+    monkeypatch.setattr(auth, "AnalysisApiClient", Mock(return_value=client))
+    rag = Mock(side_effect=AssertionError("Session-only entry touched RAG"))
+    monkeypatch.setattr(vector_store.LocalVectorStore, "from_environment", rag)
+    app = AppTest.from_file(str(Path("app.py").resolve()), default_timeout=20).run()
+    assert not app.exception
+    assert app.button(key="session_validation_analysis_disabled").disabled
+    assert len(app.radio) == 0 and len(app.text_area) == 0
+    assert "business_session" not in app.session_state
+    rag.assert_not_called()
+    client.session.assert_not_called()
+    user["is_logged_in"] = True
+    app.run()
+    assert not app.exception and len(app.success) == 1
+    assert app.selectbox(key="business_tenant_selection").value is None
+    assert app.button(key="session_validation_analysis_disabled").disabled
+    app.selectbox(key="business_tenant_selection").select("a").run()
+    assert app.session_state["business_session"].tenant_id == "a"
+    assert app.button(key="session_validation_analysis_disabled").disabled
+    client.analyze.assert_not_called()
+    rag.assert_not_called()
+    assert "private-access-token" not in " ".join(x.value for x in app.info)
+
+
+def test_native_framework_log_filter_discards_messages_and_tracebacks():
+    import logging
+    import sys
+    try:
+        raise ValueError("PRIVATE_EXCEPTION_SENTINEL")
+    except ValueError:
+        record = logging.LogRecord("native", logging.ERROR, "test", 1,
+                                   "private token: %s", ("PRIVATE_TOKEN_SENTINEL",), sys.exc_info())
+    record.exc_text = "PRIVATE_TRACEBACK_SENTINEL"
+    record.stack_info = "PRIVATE_STACK_SENTINEL"
+    assert auth.NativeAuthDiagnosticFilter().filter(record)
+    rendered = logging.Formatter().format(record)
+    assert rendered == "NATIVE_OIDC_FRAMEWORK_EVENT: details suppressed"
+
+
+def test_logout_clears_tenant_and_blocks_native_token_until_logout_completes(ui, capsys):
+    st, client = ui
+    original = activate(st)
+    st.session_state["business_first_run_result"] = (original.binding, "private result")
+    auth.logout_business(st)
+    assert st.session_state["business_session"] is None
+    assert "business_tenant_selection" not in st.session_state
+    assert "business_first_run_result" not in st.session_state
+    client.session.reset_mock()
+    st.user["tokens"] = Mock()
+    st.user["tokens"].get.side_effect = AssertionError("Old token was read")
+    assert auth.refresh_business_session(st) is None
+    with pytest.raises(AnalysisApiCredentialsError):
+        auth.capture_business_request(st, "q")
+    client.session.assert_not_called()
+    assert not auth.business_result_is_current(st.session_state, original.binding)
+    assert "private-access-token" not in capsys.readouterr().out
+
+
+def test_logout_failure_stays_closed_without_leaking_error(ui, capsys):
+    st, client = ui
+    original = activate(st)
+    st.logout.side_effect = RuntimeError("PRIVATE_NATIVE_ERROR_SENTINEL")
+    assert auth.logout_business(st) is False
+    assert st.session_state["_business_logout_pending"] is True
+    client.session.reset_mock()
+    assert auth.refresh_business_session(st) is None
+    client.session.assert_not_called()
+    with pytest.raises(AnalysisApiCredentialsError):
+        auth.capture_business_request(st, "q")
+    assert not auth.business_result_is_current(st.session_state, original.binding)
+    log = capsys.readouterr().out
+    assert "NATIVE_LOGOUT_FAILED" in log and "PRIVATE_" not in log
+
+
+def test_cancellation_failure_cannot_keep_security_context(ui, capsys):
+    st, _ = ui
+    original = activate(st)
+    job = Mock()
+    job.cancel.side_effect = RuntimeError("PRIVATE_JOB_ERROR_SENTINEL")
+    st.session_state.update(generation_kind="business_api", generation_job=job,
+                            business_api_result="private result", business_first_run_result="private result")
+    auth.logout_business(st)
+    assert st.session_state["generation_job"] is None
+    assert st.session_state["business_api_result"] is None
+    assert "business_first_run_result" not in st.session_state
+    assert not auth.business_result_is_current(st.session_state, original.binding)
+    st.logout.assert_called_once()
+    log = capsys.readouterr().out
+    assert "BUSINESS_JOB_CANCEL_FAILED" in log and "PRIVATE_" not in log
+
+
+def test_logout_then_fresh_native_login_requires_new_tenant_selection(ui):
+    st, _ = ui
+    original = activate(st)
+    auth.logout_business(st)
+    st.user["is_logged_in"] = False
+    assert auth.refresh_business_session(st) is None
+    assert "_business_logout_pending" not in st.session_state
+    st.user = native_user()
+    renewed = auth.refresh_business_session(st)
+    assert renewed.epoch != original.epoch
+    assert renewed.tenant_id is None and not renewed.can_analyze
+    assert not auth.business_result_is_current(st.session_state, original.binding)
+
+
+def test_logout_widget_callback_precedes_session_refresh(monkeypatch):
+    import streamlit
+    from streamlit.testing.v1 import AppTest
+    monkeypatch.setenv("INDAI_STREAMLIT_SESSION_ONLY", "1")
+    user = native_user()
+    events = []
+    monkeypatch.setattr(streamlit, "user", user)
+    def native_logout():
+        events.append("native_logout")
+        user["is_logged_in"] = False
+    monkeypatch.setattr(streamlit, "logout", native_logout)
+    client = Mock()
+    def session(**kwargs):
+        events.append("session_get")
+        return metadata(user)
+    client.session.side_effect = session
+    monkeypatch.setattr(auth, "AnalysisApiClient", Mock(return_value=client))
+    app = AppTest.from_file(str(Path("app.py").resolve()), default_timeout=20).run()
+    assert not app.exception
+    app.selectbox(key="business_tenant_selection").select("a").run()
+    events.clear()
+    app.button(key="business_logout").click().run()
+    assert not app.exception
+    assert events == ["native_logout"]
+    assert app.session_state["business_session"] is None
+    assert len(app.success) == 0
+    assert app.button(key="business_login") is not None
+
+
+@pytest.mark.parametrize("tenants", [[{"tenant_id": "tenant-alpha", "permissions": ["documents:read", "portfolio:read"]}], []])
+def test_readonly_tenant_selection_never_enables_analysis(monkeypatch, tenants):
+    import streamlit
+    from streamlit.testing.v1 import AppTest
+    monkeypatch.setenv("INDAI_STREAMLIT_SESSION_ONLY", "1")
+    user = native_user(subject="readonly-person")
+    monkeypatch.setattr(streamlit, "user", user)
+    client = Mock()
+    client.session.side_effect = lambda **kwargs: metadata(user, tenants)
+    monkeypatch.setattr(auth, "AnalysisApiClient", Mock(return_value=client))
+    app = AppTest.from_file(str(Path("app.py").resolve()), default_timeout=20).run()
+    assert not app.exception
+    assert app.button(key="session_validation_analysis_disabled").disabled
+    assert app.session_state["business_session"].tenant_id is None
+    if tenants:
+        selector = app.selectbox(key="business_readonly_tenant_selection")
+        assert selector.options == ["tenant-alpha"] and selector.value is None
+        selector.select("tenant-alpha").run()
+        assert app.session_state["business_session"].tenant_id is None
+        assert not app.session_state["business_session"].can_analyze
+        assert app.button(key="session_validation_analysis_disabled").disabled
+    else:
+        assert len(app.selectbox) == 0
+    client.analyze.assert_not_called()
+
+
 def test_authenticated_identity_is_bound_to_backend_and_requires_explicit_tenant(ui):
     st, client = ui
     session = auth.refresh_business_session(st)
@@ -213,7 +381,7 @@ def test_old_business_completion_is_discarded_before_rendering(ui):
     node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "finish_generation")
     namespace = {"st": st, "GenerationResult": object, "business_result_is_current": auth.business_result_is_current}
     exec(compile(ast.Module(body=[node], type_ignores=[]), "app.py", "exec"), namespace)
-    st.session_state.update(generation_kind="business_api", generation_job=Mock())
+    st.session_state.update(generation_kind="business_api", generation_job=Mock(), business_api_result=None)
     namespace["finish_generation"](object(), business_binding=(session.principal, "different-tenant", "old-epoch"))
     assert st.session_state["business_api_result"] is None
 

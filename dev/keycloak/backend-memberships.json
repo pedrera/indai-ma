@@ -1,0 +1,5 @@
+[
+  {"issuer": "https://localhost:8443/realms/indai-ma-dev", "subject": "11111111-1111-4111-8111-000000000001", "tenant_id": "tenant-alpha", "roles": ["analyst"]},
+  {"issuer": "https://localhost:8443/realms/indai-ma-dev", "subject": "11111111-1111-4111-8111-000000000002", "tenant_id": "tenant-beta", "roles": ["analyst"]},
+  {"issuer": "https://localhost:8443/realms/indai-ma-dev", "subject": "11111111-1111-4111-8111-000000000003", "tenant_id": "tenant-alpha", "roles": ["viewer"]}
+]

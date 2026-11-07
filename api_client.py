@@ -104,6 +104,8 @@ class AnalysisApiClient:
         except httpx.HTTPError as error:
             raise AnalysisApiConnectionError("El servicio de análisis no está disponible.") from error
         if response.status_code >= 400:
+            if response.status_code == 401:
+                raise AnalysisApiCredentialsError("La sesión requiere autenticación.")
             if response.status_code in (422, 500, 503, 504):
                 raise AnalysisApiResponseError("El servicio de análisis no pudo procesar la solicitud.")
             raise AnalysisApiResponseError("Respuesta HTTP no válida del servicio de análisis.")
