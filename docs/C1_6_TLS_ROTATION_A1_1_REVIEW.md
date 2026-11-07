@@ -1,5 +1,10 @@
 # C1.6 — A1.1 TLS y procedimiento A2
 
+Actualización del 07/11/2026. A1 y A1.1 fueron fases preparatorias. La
+sustitución operativa se completó en A2 (**PASSED**). El estado vigente
+figura en el [cierre A2](C1_6_TLS_ROTATION_A2_REVIEW.md). A continuación se
+conserva la evidencia original de A1.1.
+
 07/11/2026. Cadena preparada y validada en staging privado. A2 pendiente de
 confirmar la confianza de Chrome y autorizar la ventana operativa.
 

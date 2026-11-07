@@ -7,7 +7,21 @@ state is [PILOTO LOCAL VALIDADO CON LIMITACIONES](C1_6_FINAL_REVIEW.md).
 Detailed read-only inventory, staged renewal/rollback and natural-expiry observation
 criteria: [TLS and expiry maintenance plan](C1_6_TLS_EXPIRY_MAINTENANCE_PLAN.md).
 
-## TLS renewal plan — requires separate execution approval
+## TLS A2 complete — active chain and next renewal
+
+A2 **PASSED** on 2026-11-07. The new chain is **ACTIVE**. Chrome Default
+retains the old CA, and the A1 and A2 backups are preserved. Both approvals
+remain false. The live verification is recorded in the [A2 review](C1_6_TLS_ROTATION_A2_REVIEW.md).
+
+| Active material | Exact expiry UTC | Proposed renewal target |
+| --- | --- | --- |
+| localhost server certificate | 2027-02-05 14:25:35Z | By 2027-01-29 |
+| Local CA | 2027-11-07 14:25:35Z | By 2027-10-08 |
+
+These proposed dates allow seven days before leaf expiry and 30 days before
+CA expiry. They are planning dates. A future renewal requires separate approval.
+
+## Historical pre-A2 inventory and renewal plan
 
 | Material | Exact expiry UTC | Europe/Madrid | Proposed maintenance target |
 | --- | --- | --- | --- |
@@ -51,9 +65,9 @@ automatically and initial prepare_local.py must not overwrite existing secrets.
    bypass as a fallback. Record public fingerprints/dates and the validated
    outcome. Retire obsolete keys/trust only under the reviewed rollback plan.
 
-Current live configuration remains unchanged. The above is not a runnable key
-generation script and intentionally does not select new key lifetimes or replace
-trust without review.
+The preceding inventory and targets describe the pre-A2 chain. The procedure
+remains a reference for future maintenance. The active state and A2 outcome
+are recorded above.
 
 ## Private audit retention and deletion
 

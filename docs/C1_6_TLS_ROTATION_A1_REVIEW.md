@@ -1,5 +1,9 @@
 # C1.6 TLS — A1 joint CA/server staging review
 
+Status update, 2026-11-07. A1 and A1.1 were preparatory phases. The operational
+replacement completed in A2 (**PASSED**). See the [A2 review](C1_6_TLS_ROTATION_A2_REVIEW.md)
+for the active state. The original A1 evidence follows.
+
 Executed 2026-10-31: **A1 complete, operational substitution NOT executed**.
 The user selected joint CA/server rotation and explicitly confirmed CA=true for
 the root and CA=false for localhost. This report contains public metadata only.

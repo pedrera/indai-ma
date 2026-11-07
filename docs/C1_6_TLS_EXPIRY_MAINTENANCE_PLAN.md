@@ -7,12 +7,30 @@ Both private approvals were checked false. C1.3 and Keycloak remain unchanged.
 
 Subsequent approved A1 joint rotation preparation is recorded in the
 [A1 staging review](C1_6_TLS_ROTATION_A1_REVIEW.md). It generated private backup/new
-material only; the operational replacement and trust changes remain unexecuted.
+material only.
 
 The [A1.1 review and A2 runbook](C1_6_TLS_ROTATION_A1_1_REVIEW.md) supersede the
 original staging dates and rotation sequence for the joint CA/server change.
 
-## 1. Effective TLS inventory
+## 1. Active TLS inventory after A2
+
+A2 **PASSED** on 2026-11-07. The new chain is **ACTIVE** at the existing
+TLS paths. Chrome Default trusts the new public CA and retains the old CA.
+The A1 and A2 backups are preserved. Both approvals remain false.
+[A2 execution and verification](C1_6_TLS_ROTATION_A2_REVIEW.md)
+
+| Active certificate | SHA-256 | Expiry UTC | Proposed renewal target |
+| --- | --- | --- | --- |
+| Leaf | `0e834970d0230704297a308039a6211061651eac6e6a62acf42289e6417528e0` | 2027-02-05 14:25:35Z | 2027-01-29 |
+| CA | `b3933c69d2358a0b06cfdfb63dfc88cbed6d8d546c8359476ce1d166a5ba26db` | 2027-11-07 14:25:35Z | 2027-10-08 |
+
+The proposed targets allow seven days before leaf expiry and 30 days before CA
+expiry. Future maintenance requires separate approval.
+
+### Historical pre-A2 inventory
+
+The following observations and the original renewal dates in section 2 apply
+to the previous chain. A2 retained the physical paths and rotated the material.
 
 Private root on this machine:
 `C:\Users\pedre\AppData\Local\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\indai-ma-keycloak-dev`.
@@ -61,7 +79,7 @@ RS256/RFC9068/typ policy, memberships and explicit tenant selection. Server TLS
 certificates and OIDC JWT signing keys are separate; do not rotate realm JWT keys
 as a side effect of renewing the HTTPS certificate.
 
-### A. Approval, backup and generation (not executed)
+### A. Approval, backup and generation (original pre-A2 plan)
 
 1. Obtain approval separately for leaf renewal and later CA rotation, proposed
    validity dates, downtime, private backup and browser trust actions. Verify both
@@ -92,7 +110,7 @@ as a side effect of renewing the HTTPS certificate.
    Existing development strengths are CA RSA3072 and leaf RSA2048. No production
    PKI suitability is implied. Do not reuse an expired CA as fallback.
 
-### B. Offline validation and controlled replacement (not executed)
+### B. Offline validation and controlled replacement (original pre-A2 plan)
 
 1. Verify the private key's derived public key matches the new leaf without printing
    private bytes. Verify signature/issuer, leaf+CA order, positive serials, SAN,
@@ -130,7 +148,7 @@ as a side effect of renewing the HTTPS certificate.
 - Repeat the post-maintenance checks below. Preserve the old private backup only
   for an explicitly approved rollback period; record and enforce its deletion.
 
-## 4. Post-maintenance validation checklist (not executed)
+## 4. Post-maintenance validation checklist (procedure)
 
 | Check | Required evidence |
 | --- | --- |
@@ -143,7 +161,7 @@ as a side effect of renewing the HTTPS certificate.
 | Safety | Both approvals false; no Business POST, no TLS bypass, no secret logging |
 | Audit | Existing private policy respected; no fabricated request/execution events |
 
-No claim of a post-maintenance result is made until these are actually executed.
+For the executed checks and results on 2026-11-07, see the [A2 review](C1_6_TLS_ROTATION_A2_REVIEW.md).
 
 ## 5. Manual natural access-token expiry — no token handling or POST
 
