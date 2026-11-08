@@ -121,6 +121,22 @@ if os.environ.get("INDAI_STREAMLIT_SESSION_ONLY") == "1":
     render_native_session_validation(st)
     st.stop()
 
+with st.sidebar:
+    demo_views = st.expander("Developer / Demo views", expanded=False)
+    with demo_views:
+        selected_mode = st.radio(
+            "Workspace or specialized view",
+            ("indAI MA", "Business", "Healthcare Supply Assurance", "Food & Beverage Supply Assurance", "Supply Portfolio", "Chat", "Gas B2B Portfolio Analysis", "ProcurementAgent", "CommercialAgent", "RiskAgent", "Multi-Agent Supervisor", "Evaluation", "Licitaciones"),
+            key="selected_mode",
+            disabled=st.session_state.get("generation_job") is not None,
+        )
+
+if selected_mode == "Licitaciones":
+    from tenders_ui import render_tenders
+
+    render_tenders()
+    st.stop()
+
 if "execution_views" not in st.session_state:
     st.session_state.execution_views = {}
     st.session_state.execution_mode_ids = {}
@@ -217,13 +233,7 @@ default_provider_index = (
 )
 
 with st.sidebar:
-    with st.expander("Developer / Demo views", expanded=False):
-        selected_mode = st.radio(
-            "Workspace or specialized view",
-            ("indAI MA", "Business", "Healthcare Supply Assurance", "Food & Beverage Supply Assurance", "Supply Portfolio", "Chat", "Gas B2B Portfolio Analysis", "ProcurementAgent", "CommercialAgent", "RiskAgent", "Multi-Agent Supervisor", "Evaluation"),
-            key="selected_mode",
-            disabled=generation_active,
-        )
+    with demo_views:
         selected_provider = st.selectbox(
             "Proveedor LLM",
             provider_options,

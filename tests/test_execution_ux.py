@@ -192,11 +192,12 @@ class ExecutionUXTests(unittest.TestCase):
         with patch('llm_client.get_available_models', return_value=[]):
             app = AppTest.from_file(APP, default_timeout=20).run()
             modes = app.radio(key='selected_mode').options
-            self.assertEqual(len(modes), 12)
+            self.assertEqual(len(modes), 13)
             self.assertEqual(modes[0], 'indAI MA')
             self.assertIn('Healthcare Supply Assurance', modes)
             self.assertIn('Food & Beverage Supply Assurance', modes)
             self.assertIn('Supply Portfolio', modes)
+            self.assertIn('Licitaciones', modes)
             self.assertEqual(app.radio(key='selected_mode').value, 'indAI MA')
             self.assertTrue(any('Pregunta sobre operaciones' in item.placeholder for item in app.chat_input))
             for mode in modes:
